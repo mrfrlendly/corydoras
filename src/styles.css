@@ -2655,3 +2655,161 @@ textarea:focus-visible,
   margin: 4px 0 0;
   padding-left: 18px;
 }
+
+/* Screen capture shortcut */
+.shortcut-row {
+  align-items: center;
+  gap: 10px;
+}
+
+.shortcut-key {
+  min-width: 96px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.08em;
+}
+
+.shortcut-key.recording {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+  color: var(--accent);
+  letter-spacing: normal;
+}
+
+/* Canvas view of the Board */
+.seg button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.board-main.canvas-mode {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding-bottom: 16px;
+}
+
+.canvas-wrap {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  background-color: var(--panel-2);
+  background-image: radial-gradient(color-mix(in srgb, var(--ink) 14%, transparent) 1px, transparent 1px);
+  background-size: 22px 22px;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.canvas-wrap.panning {
+  cursor: grabbing;
+}
+
+.canvas-world {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform-origin: 0 0;
+  will-change: transform;
+}
+
+.canvas-card {
+  position: absolute;
+  left: 0;
+  top: 0;
+  margin: 0;
+  cursor: default;
+  box-shadow: var(--shadow);
+  /* The transform is the card's place: it must follow the pointer at once.
+     (The general .card rule animates transform.) */
+  transition:
+    border-color 0.12s ease-out,
+    box-shadow 0.12s ease-out;
+}
+
+.canvas-card img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+/* The handle keeps its screen size at every zoom. */
+.canvas-handle {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: calc(18px * var(--inv-z, 1));
+  height: calc(18px * var(--inv-z, 1));
+  cursor: nwse-resize;
+  opacity: 0;
+  background: linear-gradient(135deg, transparent 50%, var(--accent) 50%);
+  border-bottom-right-radius: 9px;
+  transition: opacity 120ms ease-out;
+}
+
+.canvas-card:hover .canvas-handle,
+.canvas-card.selected .canvas-handle {
+  opacity: 0.85;
+}
+
+.canvas-tools {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px;
+  border-radius: 9px;
+  background: var(--panel);
+  border: 1px solid var(--rule);
+  box-shadow: var(--shadow);
+  cursor: default;
+}
+
+.canvas-tools .icon-btn {
+  width: 28px;
+  height: 28px;
+}
+
+.canvas-zoom {
+  min-width: 52px;
+  border: 0;
+  background: none;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-2);
+  border-radius: 5px;
+  padding: 5px 4px;
+}
+
+.canvas-zoom:hover {
+  background: rgba(127, 127, 127, 0.15);
+}
+
+.canvas-sep {
+  width: 1px;
+  height: 18px;
+  margin: 0 4px;
+  background: var(--rule);
+}
+
+.canvas-help {
+  position: absolute;
+  left: 12px;
+  bottom: 12px;
+  pointer-events: none;
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--panel) 80%, transparent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .canvas-handle {
+    transition: none;
+  }
+}

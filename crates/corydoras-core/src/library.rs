@@ -26,7 +26,8 @@ const PENDING_SQL: &str = "SELECT COUNT(*) FROM jobs j WHERE
 
 const ITEM_COLS: &str = "i.id, i.language_id, i.kind, i.file_name, i.original_name, i.source, \
     i.width, i.height, i.added_at, i.tags, i.note, i.weight, i.anti, i.analysis_status, \
-    i.analysis_error, (SELECT COUNT(*) FROM regions r WHERE r.item_id = i.id)";
+    i.analysis_error, (SELECT COUNT(*) FROM regions r WHERE r.item_id = i.id), \
+    i.canvas_x, i.canvas_y, i.canvas_w";
 
 fn item_from_row(r: &Row) -> rusqlite::Result<Item> {
     let id: String = r.get(0)?;
@@ -51,6 +52,10 @@ fn item_from_row(r: &Row) -> rusqlite::Result<Item> {
         analysis_status: r.get(13)?,
         analysis_error: r.get(14)?,
         region_count: r.get(15)?,
+        canvas: match (r.get::<_, Option<f64>>(16)?, r.get::<_, Option<f64>>(17)?, r.get::<_, Option<f64>>(18)?) {
+            (Some(x), Some(y), Some(w)) => Some(CanvasPos { x, y, w }),
+            _ => None,
+        },
     })
 }
 
@@ -440,6 +445,37 @@ impl Library {
         self.touch_language(&before.language_id)?;
         self.enqueue_synth(&before.language_id)?;
         self.get_item(id)
+    }
+
+    /// Saves canvas places. Only items of `language_id` change; unknown IDs are
+    /// skipped. Places are layout, not references: no analysis or synthesis runs.
+    /// Returns the number of items that moved.
+    pub fn set_canvas(&self, language_id: &str, places: &[CanvasPlacement]) -> Result<usize> {
+        let mut c = self.c();
+        let tx = c.transaction()?;
+        let mut n = 0;
+        {
+            let mut st = tx.prepare(
+                "UPDATE items SET canvas_x = ?3, canvas_y = ?4, canvas_w = ?5 WHERE id = ?1 AND language_id = ?2",
+            )?;
+            for p in places {
+                if !(p.x.is_finite() && p.y.is_finite() && p.w.is_finite()) || p.w <= 0.0 {
+                    bail!("Bad canvas place for item {}.", p.id);
+                }
+                n += st.execute(params![p.id, language_id, p.x, p.y, p.w.clamp(40.0, 4000.0)])?;
+            }
+        }
+        tx.commit()?;
+        Ok(n)
+    }
+
+    /// Forgets all canvas places of a language, so the canvas lays the items out again.
+    pub fn clear_canvas(&self, language_id: &str) -> Result<()> {
+        self.c().execute(
+            "UPDATE items SET canvas_x = NULL, canvas_y = NULL, canvas_w = NULL WHERE language_id = ?1",
+            [language_id],
+        )?;
+        Ok(())
     }
 
     pub fn set_regions(&self, item_id: &str, regions: &[RegionInput]) -> Result<Vec<Region>> {
@@ -2140,5 +2176,32 @@ mod tests {
         lib.remove_source(&doc.id).unwrap();
         assert_eq!(lib.list_sources(&lang.id).unwrap().len(), 1);
         assert_eq!(lib.reanalyze_all(&lang.id).unwrap(), 1);
+    }
+
+    #[test]
+    fn canvas_places() {
+        let dir = tempfile::tempdir().unwrap();
+        let lib = Library::open(dir.path()).unwrap();
+        let a_lang = lib.create_language("A", "").unwrap();
+        let b_lang = lib.create_language("B", "").unwrap();
+        let a = lib.import_bytes(&a_lang.id, "a.png", &png_bytes(40, 30), None).unwrap();
+        let b = lib.import_bytes(&b_lang.id, "b.png", &png_bytes(30, 40), None).unwrap();
+        assert!(a.canvas.is_none());
+        let jobs = lib.job_count().unwrap();
+
+        let place = |id: &str, x: f64| CanvasPlacement { id: id.into(), x, y: -20.0, w: 300.0 };
+        // Only items of the language move; another language's item and unknown IDs are skipped.
+        let n = lib.set_canvas(&a_lang.id, &[place(&a.id, 10.0), place(&b.id, 99.0), place("nope", 1.0)]).unwrap();
+        assert_eq!(n, 1);
+        assert_eq!(lib.get_item(&a.id).unwrap().canvas, Some(CanvasPos { x: 10.0, y: -20.0, w: 300.0 }));
+        assert!(lib.get_item(&b.id).unwrap().canvas.is_none());
+        // Layout is not a reference change: no new jobs.
+        assert_eq!(lib.job_count().unwrap(), jobs);
+        // Widths are clamped; bad numbers are refused.
+        lib.set_canvas(&a_lang.id, &[CanvasPlacement { id: a.id.clone(), x: 0.0, y: 0.0, w: 1.0 }]).unwrap();
+        assert_eq!(lib.get_item(&a.id).unwrap().canvas.unwrap().w, 40.0);
+        assert!(lib.set_canvas(&a_lang.id, &[CanvasPlacement { id: a.id.clone(), x: f64::NAN, y: 0.0, w: 100.0 }]).is_err());
+        lib.clear_canvas(&a_lang.id).unwrap();
+        assert!(lib.list_items(&a_lang.id).unwrap()[0].canvas.is_none());
     }
 }

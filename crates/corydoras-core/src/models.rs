@@ -35,6 +35,27 @@ pub struct Item {
     pub analysis_status: String,
     pub analysis_error: Option<String>,
     pub region_count: i64,
+    /// Place on the canvas view. None: not placed yet (the canvas places it).
+    #[serde(default)]
+    pub canvas: Option<CanvasPos>,
+}
+
+/// Place of an item on the canvas, in canvas units (1 unit = 1 px at 100 %).
+/// The height follows from the width and the image proportions.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
+pub struct CanvasPos {
+    pub x: f64,
+    pub y: f64,
+    pub w: f64,
+}
+
+/// One item's new place, from the canvas view.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct CanvasPlacement {
+    pub id: String,
+    pub x: f64,
+    pub y: f64,
+    pub w: f64,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]

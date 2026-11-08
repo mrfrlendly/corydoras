@@ -19,7 +19,9 @@ use serde::Serialize;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
-use tauri::{Emitter, Manager, State};
+use tauri::{Emitter, Listener, Manager, RunEvent, State, WindowEvent};
+
+mod capture;
 
 // ----------------------------------------------------------------------
 // State
@@ -129,7 +131,7 @@ fn app_info(state: State<'_, AppState>) -> AppInfo {
 }
 
 #[tauri::command]
-fn set_library(state: State<'_, AppState>, path: String) -> CmdResult<AppInfo> {
+fn set_library(app: tauri::AppHandle, state: State<'_, AppState>, path: String) -> CmdResult<AppInfo> {
     let path = PathBuf::from(path.trim());
     if path.as_os_str().is_empty() {
         return Err("Choose a folder.".into());
@@ -146,6 +148,7 @@ fn set_library(state: State<'_, AppState>, path: String) -> CmdResult<AppInfo> {
     cfg.set_library(path);
     cfg.save().map_err(e2s)?;
     *state.lib.write().unwrap_or_else(|e| e.into_inner()) = Some(Arc::new(lib));
+    capture::refresh_tray(&app);
     Ok(app_info_of(&state))
 }
 
@@ -284,23 +287,38 @@ fn list_languages(state: State<'_, AppState>) -> CmdResult<Vec<Language>> {
 }
 
 #[tauri::command]
-fn create_language(state: State<'_, AppState>, name: String, description: String) -> CmdResult<Language> {
-    lib(&state)?.create_language(&name, &description).map_err(e2s)
+fn create_language(app: tauri::AppHandle, state: State<'_, AppState>, name: String, description: String) -> CmdResult<Language> {
+    let l = lib(&state)?.create_language(&name, &description).map_err(e2s)?;
+    capture::refresh_tray(&app);
+    Ok(l)
 }
 
 #[tauri::command]
 fn update_language(
+    app: tauri::AppHandle,
     state: State<'_, AppState>,
     id: String,
     name: String,
     description: String,
 ) -> CmdResult<Language> {
-    lib(&state)?.update_language(&id, &name, &description).map_err(e2s)
+    let l = lib(&state)?.update_language(&id, &name, &description).map_err(e2s)?;
+    capture::refresh_tray(&app);
+    Ok(l)
 }
 
 #[tauri::command]
 fn list_items(state: State<'_, AppState>, language_id: String) -> CmdResult<Vec<Item>> {
     lib(&state)?.list_items(&language_id).map_err(e2s)
+}
+
+#[tauri::command]
+fn set_canvas(state: State<'_, AppState>, language_id: String, places: Vec<CanvasPlacement>) -> CmdResult<usize> {
+    lib(&state)?.set_canvas(&language_id, &places).map_err(e2s)
+}
+
+#[tauri::command]
+fn clear_canvas(state: State<'_, AppState>, language_id: String) -> CmdResult<()> {
+    lib(&state)?.clear_canvas(&language_id).map_err(e2s)
 }
 
 #[tauri::command]
@@ -1090,6 +1108,24 @@ fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(
+            tauri_plugin_global_shortcut::Builder::new()
+                .with_handler(|app, _shortcut, event| {
+                    if event.state() == tauri_plugin_global_shortcut::ShortcutState::Pressed {
+                        capture::start(app);
+                    }
+                })
+                .build(),
+        )
+        // The menu bar icon keeps the app running: closing the window hides it.
+        .on_window_event(|window, event| {
+            if let WindowEvent::CloseRequested { api, .. } = event {
+                if window.label() == "main" {
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
+            }
+        })
         .manage(AppState::default())
         .register_uri_scheme_protocol("cory", |ctx, request| {
             let path = request.uri().path().to_string();
@@ -1109,6 +1145,13 @@ fn main() {
             }
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(worker_loop(handle));
+            if let Err(e) = capture::create_tray(app.handle()) {
+                eprintln!("Cannot make the menu bar icon: {e}");
+            }
+            capture::register_saved(app.handle());
+            // New, renamed or removed languages change the capture menu.
+            let h = app.handle().clone();
+            app.listen_any("library-changed", move |_| capture::refresh_tray(&h));
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -1119,6 +1162,8 @@ fn main() {
             update_language,
             list_items,
             item_detail,
+            set_canvas,
+            clear_canvas,
             import_files,
             import_video_bytes,
             import_bytes,
@@ -1177,8 +1222,17 @@ fn main() {
             folder_info,
             reveal_path,
             move_library,
-            status
+            status,
+            capture::get_capture,
+            capture::set_capture,
+            capture::capture_now
         ])
-        .run(tauri::generate_context!())
-        .expect("Corydoras failed to start");
+        .build(tauri::generate_context!())
+        .expect("Corydoras failed to start")
+        .run(|app, event| {
+            // A click on the Dock icon brings the hidden window back.
+            if let RunEvent::Reopen { has_visible_windows: false, .. } = event {
+                capture::show_main(app);
+            }
+        });
 }

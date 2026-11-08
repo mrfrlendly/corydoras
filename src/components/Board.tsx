@@ -1,8 +1,9 @@
 import { DragEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { open } from '@tauri-apps/plugin-dialog';
-import { ImagePlus, Loader } from 'lucide-react';
-import { api, DOC_EXT_RE, errText, fileToBase64, fileUrl, fmtDuration, IMAGE_URL_RE, Item, Language, VIDEO_EXT_RE, VIDEO_EXTENSIONS, VideoNote } from '../api';
+import { Grid2x2, ImagePlus, Loader, Move } from 'lucide-react';
+import { api, CanvasPlacement, DOC_EXT_RE, errText, fileToBase64, fileUrl, fmtDuration, IMAGE_URL_RE, Item, Language, VIDEO_EXT_RE, VIDEO_EXTENSIONS, VideoNote } from '../api';
 import ItemInspector from './ItemInspector';
+import CanvasView from './CanvasView';
 import { useToast } from './Toast';
 
 const IMAGE_EXT = /\.(png|jpe?g|webp|gif|bmp|tiff?)$/i;
@@ -22,6 +23,32 @@ function imgSrcFromHtml(html: string): string | null {
   const src = img?.getAttribute('src') ?? null;
   return src && /^https?:\/\//.test(src) ? src : null;
 }
+
+type BoardMode = 'grid' | 'canvas';
+
+function loadMode(languageId: string): BoardMode {
+  try {
+    return localStorage.getItem(`cory.boardMode.${languageId}`) === 'canvas' ? 'canvas' : 'grid';
+  } catch {
+    return 'grid';
+  }
+}
+
+function Caption({ item }: { item: Item }) {
+  return (
+    <>
+      <StatusDot item={item} />
+      <span className="weight" title={`Weight ${item.weight}/5`}>
+        {'●'.repeat(item.weight)}
+        <span className="weight-off">{'●'.repeat(5 - item.weight)}</span>
+      </span>
+      {item.region_count > 0 && <span className="cap-meta">{item.region_count} mark{item.region_count === 1 ? '' : 's'}</span>}
+      <span className="cap-tags">{item.tags.slice(0, 3).join(' · ')}</span>
+    </>
+  );
+}
+
+const renderCaption = (item: Item) => <Caption item={item} />;
 
 function StatusDot({ item }: { item: Item }) {
   const label =
@@ -53,6 +80,15 @@ export default function Board({
   const [busy, setBusy] = useState(0);
   const [filter, setFilter] = useState('');
   const [showAnti, setShowAnti] = useState(true);
+  const [mode, setModeState] = useState<BoardMode>(() => loadMode(language.id));
+  const setMode = (m: BoardMode) => {
+    setModeState(m);
+    try {
+      localStorage.setItem(`cory.boardMode.${language.id}`, m);
+    } catch {
+      // Storage is a convenience only.
+    }
+  };
   const dragDepth = useRef(0);
 
   const load = useCallback(() => {
@@ -258,6 +294,13 @@ export default function Board({
   );
   const selectedItem = items.find((i) => i.id === selected) ?? null;
 
+  // The canvas saved new places: keep the item list in step, so a switch to Grid
+  // and back (or any re-render) starts from the saved places.
+  const onPlaced = useCallback((places: CanvasPlacement[]) => {
+    const byId = new Map(places.map((p) => [p.id, { x: p.x, y: p.y, w: p.w }]));
+    setItems((list) => list.map((i) => (byId.has(i.id) ? { ...i, canvas: byId.get(i.id)! } : i)));
+  }, []);
+
   // Masonry: put each card in the shortest column. The image sizes are known, so the layout is stable.
   const [gridEl, setGridEl] = useState<HTMLDivElement | null>(null);
   const [cols, setCols] = useState(4);
@@ -298,7 +341,7 @@ export default function Board({
       }}
       onDrop={onDrop}
     >
-      <div className="board-main">
+      <div className={`board-main ${mode === 'canvas' && items.length > 0 ? 'canvas-mode' : ''}`}>
         <div className="toolbar">
           <button className="btn small primary" onClick={addFromDialog}>
             <ImagePlus size={13} /> Add images…
@@ -322,6 +365,14 @@ export default function Board({
             <input type="checkbox" checked={showAnti} onChange={(e) => setShowAnti(e.target.checked)} />
             Show "not this"
           </label>
+          <div className="seg" role="group" aria-label="Board view">
+            <button className={`seg-btn ${mode === 'grid' ? 'active' : ''}`} onClick={() => setMode('grid')} aria-pressed={mode === 'grid'} title="Grid">
+              <Grid2x2 size={13} /> Grid
+            </button>
+            <button className={`seg-btn ${mode === 'canvas' ? 'active' : ''}`} onClick={() => setMode('canvas')} aria-pressed={mode === 'canvas'} title="Canvas: arrange freely">
+              <Move size={13} /> Canvas
+            </button>
+          </div>
         </div>
 
         {items.length === 0 ? (
@@ -338,6 +389,15 @@ export default function Board({
               </button>
             </div>
           </div>
+        ) : mode === 'canvas' ? (
+          <CanvasView
+            languageId={language.id}
+            items={shown}
+            selected={selected}
+            onSelect={setSelected}
+            renderCaption={renderCaption}
+            onPlaced={onPlaced}
+          />
         ) : (
           <div className="masonry" ref={setGridEl}>
             {columns.map((col, ci) => (
@@ -357,13 +417,7 @@ export default function Board({
                 />
                 {item.anti && <span className="anti-badge">Not this</span>}
                 <figcaption>
-                  <StatusDot item={item} />
-                  <span className="weight" title={`Weight ${item.weight}/5`}>
-                    {'●'.repeat(item.weight)}
-                    <span className="weight-off">{'●'.repeat(5 - item.weight)}</span>
-                  </span>
-                  {item.region_count > 0 && <span className="cap-meta">{item.region_count} mark{item.region_count === 1 ? '' : 's'}</span>}
-                  <span className="cap-tags">{item.tags.slice(0, 3).join(' · ')}</span>
+                  <Caption item={item} />
                 </figcaption>
               </figure>
                 ))}

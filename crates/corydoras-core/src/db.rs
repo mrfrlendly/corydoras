@@ -181,10 +181,14 @@ fn has_column(conn: &Connection, table: &str, column: &str) -> Result<bool> {
 /// Adds the columns of later versions to a library made by an earlier version.
 /// Each step checks first, so the migration can run on every open.
 pub fn migrate(conn: &Connection) -> Result<()> {
-    let steps: [(&str, &str, &str); 3] = [
+    let steps: [(&str, &str, &str); 6] = [
         ("versions", "schema", "ALTER TABLE versions ADD COLUMN schema INTEGER NOT NULL DEFAULT 1"),
         ("versions", "warnings", "ALTER TABLE versions ADD COLUMN warnings TEXT NOT NULL DEFAULT '[]'"),
         ("projects", "process_id", "ALTER TABLE projects ADD COLUMN process_id TEXT"),
+        // Canvas view (0.6): place of each item; NULL until placed.
+        ("items", "canvas_x", "ALTER TABLE items ADD COLUMN canvas_x REAL"),
+        ("items", "canvas_y", "ALTER TABLE items ADD COLUMN canvas_y REAL"),
+        ("items", "canvas_w", "ALTER TABLE items ADD COLUMN canvas_w REAL"),
     ];
     for (table, column, sql) in steps {
         if !has_column(conn, table, column)? {

@@ -111,6 +111,19 @@ export interface Item {
   analysis_status: 'pending' | 'analyzing' | 'done' | 'error' | string;
   analysis_error: string | null;
   region_count: number;
+  /** Place on the canvas view; null until placed. */
+  canvas: CanvasPos | null;
+}
+
+/** Canvas units: 1 unit = 1 px at 100 %. The height follows from the image proportions. */
+export interface CanvasPos {
+  x: number;
+  y: number;
+  w: number;
+}
+
+export interface CanvasPlacement extends CanvasPos {
+  id: string;
 }
 
 export interface Region {
@@ -397,6 +410,57 @@ export const VIDEO_EXTENSIONS = ['mp4', 'mov', 'm4v'];
 export const VIDEO_EXT_RE = /\.(mp4|mov|m4v|webm|avi|mkv|flv|wmv)$/i;
 
 
+/** Screen capture from the menu bar and the keyboard shortcut. */
+export interface CaptureView {
+  /** The language that captures go to now. */
+  language_id: string | null;
+  language_name: string | null;
+  /** "Control+Alt+Super+KeyC", or null for no shortcut. */
+  shortcut: string | null;
+  /** Why the shortcut does not work, for example another app has it. */
+  shortcut_error: string | null;
+}
+
+export interface CaptureDone {
+  language_id: string;
+  language_name: string;
+  item_id: string;
+}
+
+const KEY_NAMES: Record<string, string> = {
+  Space: 'Space', Enter: '↩', Tab: '⇥', Backspace: '⌫', Escape: '⎋', Minus: '-', Equal: '=', BracketLeft: '[',
+  BracketRight: ']', Backslash: '\\', Semicolon: ';', Quote: "'", Comma: ',', Period: '.', Slash: '/', Backquote: '`',
+  ArrowUp: '↑', ArrowDown: '↓', ArrowLeft: '←', ArrowRight: '→',
+};
+
+/** "⌃⌥⌘C" for "Control+Alt+Super+KeyC". */
+export function shortcutLabel(s: string): string {
+  const parts = s.split('+');
+  const key = parts.pop() ?? '';
+  const mods = new Set(parts.map((p) => p.toLowerCase()));
+  let out = '';
+  if (mods.has('control') || mods.has('ctrl')) out += '⌃';
+  if (mods.has('alt') || mods.has('option')) out += '⌥';
+  if (mods.has('shift')) out += '⇧';
+  if (mods.has('super') || mods.has('cmd') || mods.has('command') || mods.has('meta')) out += '⌘';
+  const k = key.replace(/^Key/, '').replace(/^Digit/, '');
+  return out + (KEY_NAMES[key] ?? k);
+}
+
+/** The shortcut string of a key press, or null for a modifier alone or a press without a modifier. */
+export function shortcutFromEvent(e: KeyboardEvent): string | null {
+  if (['ShiftLeft', 'ShiftRight', 'ControlLeft', 'ControlRight', 'AltLeft', 'AltRight', 'MetaLeft', 'MetaRight'].includes(e.code)) return null;
+  const mods: string[] = [];
+  if (e.ctrlKey) mods.push('Control');
+  if (e.altKey) mods.push('Alt');
+  if (e.shiftKey) mods.push('Shift');
+  if (e.metaKey) mods.push('Super');
+  // Function keys work alone; other keys need a modifier other than Shift.
+  const isF = /^F\d{1,2}$/.test(e.code);
+  if (!isF && mods.filter((m) => m !== 'Shift').length === 0) return null;
+  return [...mods, e.code].join('+');
+}
+
 export const api = {
   appInfo: () => invoke<AppInfo>('app_info'),
   setLibrary: (path: string) => invoke<AppInfo>('set_library', { path }),
@@ -408,6 +472,8 @@ export const api = {
     invoke<Language>('update_language', { id, name, description }),
 
   listItems: (languageId: string) => invoke<Item[]>('list_items', { languageId }),
+  setCanvas: (languageId: string, places: CanvasPlacement[]) => invoke<number>('set_canvas', { languageId, places }),
+  clearCanvas: (languageId: string) => invoke<void>('clear_canvas', { languageId }),
   itemDetail: (itemId: string) => invoke<ItemDetail>('item_detail', { itemId }),
   importFiles: (languageId: string, paths: string[]) =>
     invoke<ImportReport>('import_files', { languageId, paths }),
@@ -482,6 +548,10 @@ export const api = {
   revealPath: (path: string) => invoke<void>('reveal_path', { path }),
   moveLibrary: (path: string, trashOld: boolean) => invoke<MoveResult>('move_library', { path, trashOld }),
   status: () => invoke<StatusReport>('status'),
+  getCapture: () => invoke<CaptureView>('get_capture'),
+  setCapture: (languageId: string | null, shortcut: string | null) =>
+    invoke<CaptureView>('set_capture', { languageId, shortcut }),
+  captureNow: () => invoke<void>('capture_now'),
   activity: () => invoke<ActivityReport>('activity'),
   cancelJob: (jobId: number) => invoke<void>('cancel_job', { jobId }),
   cancelAll: (languageId: string | null) => invoke<number>('cancel_all', { languageId }),

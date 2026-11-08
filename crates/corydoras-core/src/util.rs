@@ -143,3 +143,9 @@ mod tests {
         );
     }
 }
+
+/// File name of a screen capture, like macOS names screenshots:
+/// "Screen capture 2026-11-08 at 09.15.03.png" (local time).
+pub fn capture_name() -> String {
+    chrono::Local::now().format("Screen capture %Y-%m-%d at %H.%M.%S.png").to_string()
+}

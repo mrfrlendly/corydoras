@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { listen } from '@tauri-apps/api/event';
-import { api, AppInfo, errText, Language, Project, RuleSet, StatusReport } from './api';
+import { api, AppInfo, CaptureDone, errText, Language, Project, RuleSet, StatusReport } from './api';
 import Sidebar from './components/Sidebar';
 import LanguageView from './components/LanguageView';
 import ProjectView from './components/ProjectView';
@@ -56,6 +56,23 @@ function Shell() {
       un.then((f) => f());
     };
   }, [bump]);
+
+  // Screen captures from the menu bar or the shortcut.
+  useEffect(() => {
+    const uns = [
+      listen<CaptureDone>('capture-done', (e) =>
+        toast.info(`Screen capture added to “${e.payload.language_name}”.`, {
+          label: 'Show',
+          run: () => setView({ kind: 'language', id: e.payload.language_id }),
+        }),
+      ),
+      listen<string>('capture-error', (e) => toast.error(e.payload)),
+      listen('open-settings', () => setView({ kind: 'settings' })),
+    ];
+    return () => {
+      uns.forEach((u) => u.then((f) => f()));
+    };
+  }, [toast]);
 
   // Poll the queue status.
   useEffect(() => {

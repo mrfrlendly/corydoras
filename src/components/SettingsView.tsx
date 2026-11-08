@@ -3,6 +3,7 @@ import { api, AppInfo, errText, fmtTokens, Settings, StatusReport } from '../api
 import { Bot, SlidersHorizontal } from 'lucide-react';
 import ProvidersPanel from './ProvidersPanel';
 import StoragePanel from './StoragePanel';
+import CapturePanel from './CapturePanel';
 import { useToast } from './Toast';
 
 interface Props {
@@ -112,6 +113,8 @@ export default function SettingsView({ info, onInfo, status, onChanged }: Props)
             </div>
           </section>
         )}
+
+        <CapturePanel />
 
         <StoragePanel info={info} onInfo={onInfo} onChanged={onChanged} />
 

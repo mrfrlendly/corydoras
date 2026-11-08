@@ -13,6 +13,33 @@ pub struct AppConfig {
     /// Model providers. None until you change them (then the 0.4 setting is migrated).
     #[serde(default)]
     pub ai: Option<crate::ai::AiConfig>,
+    /// Screen capture from the menu bar and the keyboard shortcut.
+    #[serde(default)]
+    pub capture: CaptureConfig,
+}
+
+/// The shortcut that captures when nothing else is set: Control-Option-Command-C.
+pub const DEFAULT_CAPTURE_SHORTCUT: &str = "Control+Alt+Super+KeyC";
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct CaptureConfig {
+    /// The language that captures go to. None (or a language that is gone):
+    /// the language that changed last.
+    #[serde(default)]
+    pub language_id: Option<String>,
+    /// Global shortcut in the form "Control+Alt+Super+KeyC". None: no shortcut.
+    #[serde(default = "default_shortcut")]
+    pub shortcut: Option<String>,
+}
+
+fn default_shortcut() -> Option<String> {
+    Some(DEFAULT_CAPTURE_SHORTCUT.to_string())
+}
+
+impl Default for CaptureConfig {
+    fn default() -> Self {
+        CaptureConfig { language_id: None, shortcut: default_shortcut() }
+    }
 }
 
 /// ~/Library/Application Support/Corydoras on macOS.

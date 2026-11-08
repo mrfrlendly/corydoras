@@ -46,6 +46,37 @@ API keys are files in `~/Library/Application Support/Corydoras/keys/` (folder mo
 | Version | The app renders `language.md` from `tokens.json`, so the two cannot disagree. If the inputs did not change, the app saves no version. |
 | Your edit | In the Document tab you edit `tokens.json`. The same validation applies, and the app renders a new `language.md`. |
 
+## Canvas
+
+The Board has two views: **Grid** (the masonry of cards) and **Canvas**, a free board where you place references yourself.
+
+| Action | How |
+| --- | --- |
+| Pan | Drag the background, or scroll with two fingers |
+| Zoom | Pinch, or ⌘-scroll; the zoom follows the pointer. The toolbar has − / + and a click on the percentage goes to 100 % |
+| Move a card | Drag it |
+| Resize a card | Drag its bottom-right corner |
+| Open a card | Click it (the inspector opens as in the grid) |
+| Fit all | The fit button in the toolbar |
+| Arrange by weight | The grid button in the toolbar lays all cards out by weight; **Undo** in the message puts them back |
+
+- The app saves each card's place in the library, so the arrangement stays after a restart and a library move. The view (pan and zoom) and the chosen mode are remembered per language on this Mac.
+- New items, for example a drop, a capture or video frames, appear below the arrangement.
+- The canvas is layout only: moving cards does not start an analysis or a new version.
+
+## Screen capture
+
+The fish in the menu bar captures part of the screen into a language. The keyboard shortcut does the same, from any app; the default is **⌃⌥⌘C** (Control-Option-Command-C).
+
+1. Press the shortcut, or click the fish and choose **Capture to …**.
+2. Drag over a region, press Space to pick a window, or press Escape to cancel.
+3. The capture becomes an item of the capture language, named like `Screen capture 2026-11-08 at 09.15.03.png`, and the analysis starts.
+
+- **Capture Into** in the menu, or **Settings › Screen capture**, sets the language. Without a choice, captures go to the language that changed last.
+- In **Settings › Screen capture**, click the shortcut and press new keys (at least one of ⌃ ⌥ ⌘, or a function key). **Clear** removes it. A shortcut that another app holds is refused with a message.
+- Closing the window keeps Corydoras running in the menu bar. **Quit Corydoras** in the menu (or ⌘Q) quits; a click on the Dock icon shows the window again.
+- The first capture asks for Screen Recording access in System Settings › Privacy & Security. The app is ad-hoc signed, so macOS can ask again after an update.
+
 ## Videos
 
 Drag a video onto the Board, or choose it with **Add images…**. The app reads it with AVFoundation (macOS) and adds up to 20 key frames as images. They are analyzed like any other image.
@@ -221,7 +252,3 @@ cargo test -p corydoras-core             # unit tests
 CORYDORAS_API_KEY=… cargo run -p corydoras-core --example e2e -- /tmp/lib https://api.deepseek.com
 ```
 
-## Phase 2
-
-- Menu bar icon for capture
-- Canvas view

@@ -4,6 +4,18 @@ Corydoras is a macOS app that turns mood boards into design languages for agents
 
 You collect reference images in a language. A vision model analyzes each image. A second pass writes a versioned language document (`language.md` + `tokens.json`). Agents in Fusion 360, Blender, Rhino, or a concept-image tool read the document through an MCP server.
 
+## Built with AI assistance
+
+Corydoras is developed with a lot of help from AI coding assistants, mainly Anthropic's Claude (through Claude Code). Most of the code, tests and documentation were written by an AI under my direction: I decide what to build and how it should behave, review the changes, and test the app on my own Mac and library. I think it is fair to say this openly.
+
+What this means for you:
+
+- Treat it like any young open-source project: read the code before you depend on it, and keep backups of your library.
+- The tests cover the core library, but not every path. If something breaks, please open an issue.
+- Contributions are welcome, whether you write them by hand or with an assistant. Please test what you send.
+
+This is separate from the app's own use of AI: Corydoras sends your reference images and sources to the model provider that you choose (or a local model) to analyze them. See [Model providers](#model-providers).
+
 ## Install
 
 Double-click **Install Corydoras.command** in Finder, or run:
@@ -252,3 +264,6 @@ cargo test -p corydoras-core             # unit tests
 CORYDORAS_API_KEY=… cargo run -p corydoras-core --example e2e -- /tmp/lib https://api.deepseek.com
 ```
 
+## License
+
+[MIT](LICENSE) © 2026 Travis Forsyth

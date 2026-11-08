@@ -1454,7 +1454,7 @@ impl Library {
         Ok(())
     }
 
-    /// The starter rule set for Travis's printer.
+    /// The starter rule set: common FDM limits for PETG on a Bambu P1S.
     pub fn starter_rule_set() -> RuleSetInput {
         let v = |name: &str, value: f64, unit: &str, note: &str| Rule {
             name: name.into(),

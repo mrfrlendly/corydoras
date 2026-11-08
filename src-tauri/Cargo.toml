@@ -2,6 +2,7 @@
 name = "corydoras"
 version = "0.6.0"
 edition = "2021"
+license = "MIT"
 description = "Corydoras: mood boards that become design languages for agents"
 
 [build-dependencies]

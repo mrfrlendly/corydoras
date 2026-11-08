@@ -2,6 +2,7 @@
 name = "corydoras-mcp"
 version = "0.6.0"
 edition = "2021"
+license = "MIT"
 description = "MCP server (stdio) that gives agents read access to Corydoras design languages"
 
 [[bin]]

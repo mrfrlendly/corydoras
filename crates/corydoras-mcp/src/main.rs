@@ -18,7 +18,7 @@ use std::path::PathBuf;
 const SERVER_NAME: &str = "corydoras";
 const DEFAULT_PROTOCOL: &str = "2025-06-18";
 
-const INSTRUCTIONS: &str = "Corydoras holds Travis's visual design languages and his hard rule sets. \
+const INSTRUCTIONS: &str = "Corydoras holds the designer's visual design languages and their hard rule sets. \
 Each language is a versioned spec made from a mood board of reference images. A rule set holds hard \
 rules, for example 3D-printing limits; hard rules win over every language rule. When you work on a \
 project, call get_project_brief with the project name first: it returns the hard rules, then the \
@@ -27,7 +27,7 @@ list_languages, pick the family whose applies_to matches your object, and call g
 family. Each numeric language value has a basis: observed (seen in the references), preferred (a \
 starting value to adjust to scale and material) or process-dependent (take it from the hard rules). \
 Never apply one family's measures to another family. Call get_reference_images with item_ids to see \
-the evidence behind a rule. Rules with basis \"source\" come from tutorials or documents that Travis added; \
+the evidence behind a rule. Rules with basis \"source\" come from tutorials or documents that the designer added; \
 call get_sources with those IDs to read the technique behind them. Call search_items to find reference \
 images by what they show. When the references or the hard rules show that a rule or measure is wrong or \
 missing, call propose_amendment: the designer reviews the change in the app, and nothing changes until \

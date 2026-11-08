@@ -2,6 +2,7 @@
 name = "corydoras-core"
 version = "0.6.0"
 edition = "2021"
+license = "MIT"
 description = "Library, analysis pipeline and agent text for Corydoras"
 
 [dependencies]

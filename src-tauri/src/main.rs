@@ -523,6 +523,25 @@ fn save_edited_version(
 }
 
 #[tauri::command]
+fn list_proposals(
+    state: State<'_, AppState>,
+    language_id: String,
+    include_decided: bool,
+) -> CmdResult<Vec<corydoras_core::proposals::Proposal>> {
+    lib(&state)?.list_proposals(&language_id, include_decided).map_err(e2s)
+}
+
+#[tauri::command]
+fn accept_proposal(state: State<'_, AppState>, proposal_id: String) -> CmdResult<i64> {
+    lib(&state)?.accept_proposal(&proposal_id).map_err(e2s)
+}
+
+#[tauri::command]
+fn reject_proposal(state: State<'_, AppState>, proposal_id: String) -> CmdResult<()> {
+    lib(&state)?.reject_proposal(&proposal_id).map_err(e2s)
+}
+
+#[tauri::command]
 fn synthesize_now(state: State<'_, AppState>, language_id: String) -> CmdResult<()> {
     lib(&state)?.synthesize_now(&language_id).map_err(e2s)
 }
@@ -1006,7 +1025,9 @@ fn main() {
             serve_file(ctx.app_handle(), &path)
         })
         .setup(|app| {
-            if let Some(path) = AppConfig::load().library_path {
+            // CORYDORAS_LIBRARY opens another library for this run only (development);
+            // the saved setting does not change.
+            if let Some(path) = config::resolve_library_path(None) {
                 match Library::open(&path) {
                     Ok(lib) => {
                         let st = app.state::<AppState>();
@@ -1054,6 +1075,9 @@ fn main() {
             list_versions,
             get_version,
             save_edited_version,
+            list_proposals,
+            accept_proposal,
+            reject_proposal,
             synthesize_now,
             language_text,
             list_projects,

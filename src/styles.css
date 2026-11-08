@@ -2539,3 +2539,119 @@ textarea:focus-visible,
 .onboarding {
   background: var(--bg);
 }
+
+/* Proposed amendments (MCP propose_amendment) */
+.tab-dot {
+  margin-left: 6px;
+  min-width: 16px;
+  padding: 0 5px;
+  border-radius: 8px;
+  background: var(--accent-fill);
+  color: var(--accent-ink);
+  font-size: 10.5px;
+  font-weight: 600;
+  line-height: 16px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.proposals {
+  margin-bottom: 16px;
+}
+
+.proposals h3 {
+  margin: 0 0 8px;
+  font-size: 13px;
+}
+
+.proposal {
+  background: var(--panel);
+  border: 1px solid var(--rule);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  margin-bottom: 10px;
+}
+
+.proposal-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.proposal-summary {
+  font-weight: 600;
+  margin-bottom: 2px;
+}
+
+.proposal-rationale {
+  margin: 8px 0 0;
+  color: var(--ink-2);
+  font-size: 12.5px;
+}
+
+.proposal-changes {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.proposal-change {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 2px 8px;
+  align-items: baseline;
+  font-size: 12px;
+}
+
+.proposal-change code {
+  overflow-wrap: anywhere;
+}
+
+.proposal-values {
+  grid-column: 2;
+  overflow-wrap: anywhere;
+}
+
+.proposal-op {
+  font-size: 10.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--ink-3);
+}
+
+.proposal-op.op-add {
+  color: var(--ok);
+}
+
+.proposal-op.op-remove {
+  color: var(--err);
+}
+
+.proposal-before {
+  color: var(--err);
+  text-decoration: line-through;
+  text-decoration-color: color-mix(in srgb, var(--err) 60%, transparent);
+}
+
+.proposal-after {
+  color: var(--ok);
+}
+
+.proposal-notes {
+  margin-top: 8px;
+  padding: 8px 10px;
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--warn) 12%, transparent);
+  color: var(--warn);
+  font-size: 12px;
+}
+
+.proposal-notes ul {
+  margin: 4px 0 0;
+  padding-left: 18px;
+}

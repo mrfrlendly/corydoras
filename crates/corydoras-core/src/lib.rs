@@ -9,6 +9,7 @@ pub mod config;
 pub mod db;
 pub mod library;
 pub mod models;
+pub mod proposals;
 pub mod provider;
 pub mod secrets;
 pub mod sources;

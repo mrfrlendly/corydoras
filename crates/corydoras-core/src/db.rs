@@ -153,6 +153,21 @@ CREATE TABLE IF NOT EXISTS processes (
     created_at  TEXT NOT NULL,
     updated_at  TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS proposals (
+    id             TEXT PRIMARY KEY,
+    language_id    TEXT NOT NULL REFERENCES languages(id) ON DELETE CASCADE,
+    base_version   INTEGER NOT NULL,
+    summary        TEXT NOT NULL,
+    rationale      TEXT NOT NULL DEFAULT '',
+    author         TEXT NOT NULL DEFAULT '',
+    patch          TEXT NOT NULL,
+    status         TEXT NOT NULL DEFAULT 'pending',
+    created_at     TEXT NOT NULL,
+    decided_at     TEXT,
+    result_version INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_proposals_language ON proposals(language_id, status);
 "#;
 
 fn has_column(conn: &Connection, table: &str, column: &str) -> Result<bool> {

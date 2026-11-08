@@ -259,6 +259,11 @@ export default function LanguageView({ language, status, worker, current, paused
             {t === 'board' && language.item_count > 0 ? <span className="tab-badge">{language.item_count}</span> : null}
             {t === 'sources' && language.source_count > 0 ? <span className="tab-badge">{language.source_count}</span> : null}
             {t === 'document' && language.latest_version ? <span className="tab-badge">v{docVersion ?? language.latest_version}</span> : null}
+            {t === 'document' && status && status.open_proposals > 0 ? (
+              <span className="tab-dot" title={`${status.open_proposals} proposed amendment${status.open_proposals === 1 ? '' : 's'}`}>
+                {status.open_proposals}
+              </span>
+            ) : null}
           </button>
         ))}
       </nav>
@@ -271,6 +276,7 @@ export default function LanguageView({ language, status, worker, current, paused
             language={language}
             version={docVersion}
             tick={tick}
+            openProposals={status?.open_proposals ?? 0}
             onVersion={setDocVersion}
             onChanged={onChanged}
           />

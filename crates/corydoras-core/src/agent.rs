@@ -439,6 +439,168 @@ pub fn reference_image_base64(lib: &Library, item: &Item) -> Result<String> {
     Ok(analysis::base64_of(&jpeg))
 }
 
+/// Lower-case words of a search query or a text (letters and digits).
+fn search_words(s: &str) -> Vec<String> {
+    s.split(|c: char| !c.is_alphanumeric())
+        .filter(|w| !w.is_empty())
+        .map(|w| w.to_lowercase())
+        .collect()
+}
+
+/// All strings inside a JSON value, as "key: text" lines.
+fn json_strings(v: &Value, key: &str, out: &mut Vec<(String, String)>) {
+    match v {
+        Value::String(s) if !s.trim().is_empty() => out.push((key.to_string(), s.clone())),
+        Value::Number(n) => out.push((key.to_string(), n.to_string())),
+        Value::Array(a) => a.iter().for_each(|x| json_strings(x, key, out)),
+        Value::Object(o) => o.iter().for_each(|(k, x)| json_strings(x, if key.is_empty() { k } else { key }, out)),
+        _ => {}
+    }
+}
+
+/// One search hit: the item, the query words it matched and where.
+pub struct SearchHit {
+    pub language: Language,
+    pub item: Item,
+    pub matched: usize,
+    pub score: f64,
+    pub snippets: Vec<String>,
+}
+
+/// Finds items whose tags, note, region notes or analysis match the query words.
+/// Items that match more words come first, then the higher score and weight.
+pub fn search_items(lib: &Library, query: &str, language: Option<&str>, include_anti: bool, limit: usize) -> Result<Vec<SearchHit>> {
+    let terms = search_words(query);
+    if terms.is_empty() {
+        return Err(anyhow!("The query has no words to search for."));
+    }
+    let langs = match language.map(str::trim).filter(|l| !l.is_empty()) {
+        Some(key) => vec![lib.find_language(key)?],
+        None => lib.list_languages()?,
+    };
+    let mut hits = Vec::new();
+    for lang in &langs {
+        for item in lib.list_items(&lang.id)? {
+            if item.anti && !include_anti {
+                continue;
+            }
+            // (field, text, weight of a match in this field)
+            let mut fields: Vec<(String, String, f64)> = Vec::new();
+            for t in &item.tags {
+                fields.push(("tag".into(), t.clone(), 3.0));
+            }
+            if !item.note.is_empty() {
+                fields.push(("note".into(), item.note.clone(), 2.0));
+            }
+            if !item.original_name.is_empty() {
+                fields.push(("file".into(), item.original_name.clone(), 0.5));
+            }
+            for r in lib.get_regions(&item.id)? {
+                let text = format!("{} {}", r.tag, r.note).trim().to_string();
+                if !text.is_empty() {
+                    fields.push(("region".into(), text, 2.0));
+                }
+            }
+            if let Some((a, _)) = lib.get_analysis(&item.id)? {
+                let mut strs = Vec::new();
+                json_strings(&a, "", &mut strs);
+                for (k, text) in strs {
+                    let w = match k.as_str() {
+                        "object_family" | "features" => 3.0,
+                        "summary" => 1.5,
+                        _ => 1.0,
+                    };
+                    fields.push((k, text, w));
+                }
+            }
+            let mut matched = 0;
+            let mut score = 0.0;
+            let mut snippets: Vec<String> = Vec::new();
+            for term in &terms {
+                let mut found = false;
+                for (field, text, w) in &fields {
+                    let ws = search_words(text);
+                    let exact = ws.iter().any(|x| x == term);
+                    let partial = !exact && term.len() >= 3 && ws.iter().any(|x| x.starts_with(term.as_str()));
+                    if exact || partial {
+                        found = true;
+                        score += if exact { *w } else { w * 0.5 };
+                        let snip = format!("{field}: {}", text.chars().take(140).collect::<String>());
+                        if snippets.len() < 4 && !snippets.contains(&snip) {
+                            snippets.push(snip);
+                        }
+                    }
+                }
+                if found {
+                    matched += 1;
+                }
+            }
+            if matched > 0 {
+                score += item.weight as f64 * 0.1;
+                hits.push(SearchHit { language: lang.clone(), item, matched, score, snippets });
+            }
+        }
+    }
+    hits.sort_by(|a, b| {
+        b.matched
+            .cmp(&a.matched)
+            .then(b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal))
+            .then(b.item.added_at.cmp(&a.item.added_at))
+    });
+    hits.truncate(limit.clamp(1, 30));
+    Ok(hits)
+}
+
+/// Text answer of the search_items tool.
+pub fn search_items_text(lib: &Library, query: &str, language: Option<&str>, include_anti: bool, limit: usize) -> Result<String> {
+    let terms = search_words(query).len();
+    let hits = search_items(lib, query, language, include_anti, limit)?;
+    if hits.is_empty() {
+        return Ok(format!("No items match \"{query}\". Try fewer or other words, or list_languages to see the families."));
+    }
+    let mut s = format!(
+        "{} item(s) match \"{query}\", best first. Call get_reference_images with the language and item_ids to see them.\n",
+        hits.len()
+    );
+    for h in &hits {
+        let short: String = h.item.id.chars().take(8).collect();
+        s.push_str(&format!(
+            "\n## {short} · {} ({}) · matches {}/{terms} words\n{}\n",
+            h.language.name,
+            h.language.id,
+            h.matched,
+            reference_caption(lib, &h.item)
+        ));
+        for sn in &h.snippets {
+            s.push_str(&format!("- {sn}\n"));
+        }
+    }
+    Ok(s)
+}
+
+/// Text answer of the propose_amendment tool.
+pub fn proposal_text(lib: &Library, sub: &crate::proposals::Submitted) -> Result<String> {
+    let p = &sub.proposal;
+    let lang = lib.get_language(&p.language_id)?;
+    let mut s = format!(
+        "Proposal {} is saved for \"{}\" (based on v{}). The designer reviews it in the Corydoras app, in the Document tab; \
+the language does not change until they accept it. Changes:\n",
+        &p.id[..8],
+        lang.name,
+        p.base_version
+    );
+    for c in &p.changes {
+        s.push_str(&format!("- {} {}: {} → {}\n", c.op, c.path, c.before, c.after));
+    }
+    if !sub.warnings.is_empty() {
+        s.push_str("\nReview notes that the amendment adds (the spec is valid, but the designer will see these):\n");
+        for w in &sub.warnings {
+            s.push_str(&format!("- {w}\n"));
+        }
+    }
+    Ok(s)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

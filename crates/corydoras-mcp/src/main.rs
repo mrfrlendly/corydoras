@@ -1,7 +1,8 @@
 //! corydoras-mcp: a Model Context Protocol server on stdio.
 //!
 //! It reads the Corydoras library (query-only), so agents can use the design
-//! languages while the app is closed. Usage:
+//! languages while the app is closed. The one write is propose_amendment: it adds
+//! a proposal that the designer accepts or rejects in the app. Usage:
 //!
 //!     corydoras-mcp [--library /path/to/library]
 //!
@@ -10,6 +11,7 @@
 use anyhow::{anyhow, Result};
 use corydoras_core::{agent, config, Library};
 use serde_json::{json, Value};
+use std::cell::RefCell;
 use std::io::{BufRead, Write};
 use std::path::PathBuf;
 
@@ -26,7 +28,10 @@ family. Each numeric language value has a basis: observed (seen in the reference
 starting value to adjust to scale and material) or process-dependent (take it from the hard rules). \
 Never apply one family's measures to another family. Call get_reference_images with item_ids to see \
 the evidence behind a rule. Rules with basis \"source\" come from tutorials or documents that Travis added; \
-call get_sources with those IDs to read the technique behind them.";
+call get_sources with those IDs to read the technique behind them. Call search_items to find reference \
+images by what they show. When the references or the hard rules show that a rule or measure is wrong or \
+missing, call propose_amendment: the designer reviews the change in the app, and nothing changes until \
+they accept it.";
 
 fn tools() -> Value {
     json!([
@@ -97,12 +102,58 @@ fn tools() -> Value {
                 "required": ["language"],
                 "additionalProperties": false
             }
+        },
+        {
+            "name": "search_items",
+            "description": "Search the reference images by what they show: tags, the designer's notes, region notes and the analysis (object family, features, measurements, colours, summary). Returns the best matches with their 8-character evidence IDs and the matching text, no images; call get_reference_images with item_ids to see them.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Words to look for, for example \"fillet oak bench\""},
+                    "language": {"type": "string", "description": "Language ID or name (optional; without it, all languages)"},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 30, "description": "Number of results (default 10)"},
+                    "include_anti": {"type": "boolean", "description": "Include \"not this\" anti-references (default false)"}
+                },
+                "required": ["query"],
+                "additionalProperties": false
+            }
+        },
+        {
+            "name": "propose_amendment",
+            "description": "Propose a change to the latest version of a language spec (tokens.json, schema 2). The change does not apply by itself: the designer reviews it in the app and accepts or rejects it; an accepted proposal becomes a new version. The patch is a JSON Patch (RFC 6902) with add, remove and replace. A path segment into an array can be an index, \"-\" (append, with add), or the id, name or term of an element, for example /families/blade-field/measures/blade pitch/value or /principles/P2. The amended spec must pass the same validation as a manual edit; measures keep their unit, \"of\", basis and evidence, and text fields hold no numbers with units. Read the language with get_language first and pass its version as base_version.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "language": {"type": "string", "description": "Language ID or name"},
+                    "base_version": {"type": "integer", "minimum": 1, "description": "The version that you read; the proposal is refused if the language changed since (recommended)"},
+                    "summary": {"type": "string", "description": "One sentence: what the amendment changes"},
+                    "rationale": {"type": "string", "description": "Why: the evidence IDs, hard rules or observations behind it"},
+                    "patch": {
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": 50,
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "op": {"type": "string", "enum": ["add", "remove", "replace"]},
+                                "path": {"type": "string"},
+                                "value": {}
+                            },
+                            "required": ["op", "path"]
+                        }
+                    }
+                },
+                "required": ["language", "summary", "patch"],
+                "additionalProperties": false
+            }
         }
     ])
 }
 
 struct Server {
     library_path: Option<PathBuf>,
+    /// The client name from initialize, recorded as the author of proposals.
+    client: RefCell<String>,
 }
 
 impl Server {
@@ -170,6 +221,20 @@ impl Server {
                 }
                 Ok(out)
             }
+            "search_items" => {
+                let language = args.get("language").and_then(|v| v.as_str());
+                let limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(10) as usize;
+                let include_anti = args.get("include_anti").and_then(|v| v.as_bool()).unwrap_or(false);
+                Ok(vec![text(agent::search_items_text(&lib, &arg_str("query")?, language, include_anti, limit)?)])
+            }
+            "propose_amendment" => {
+                let patch = args.get("patch").cloned().ok_or_else(|| anyhow!("The argument \"patch\" is necessary."))?;
+                let base = args.get("base_version").and_then(|v| v.as_i64());
+                let rationale = args.get("rationale").and_then(|v| v.as_str()).unwrap_or("");
+                let author = self.client.borrow().clone();
+                let sub = lib.submit_proposal(&arg_str("language")?, base, &arg_str("summary")?, rationale, &patch, &author)?;
+                Ok(vec![text(agent::proposal_text(&lib, &sub)?)])
+            }
             other => Err(anyhow!("Unknown tool \"{other}\".")),
         }
     }
@@ -182,6 +247,9 @@ impl Server {
         let params = msg.get("params").cloned().unwrap_or(Value::Null);
         let result: std::result::Result<Value, (i64, String)> = match method {
             "initialize" => {
+                if let Some(name) = params.pointer("/clientInfo/name").and_then(|v| v.as_str()) {
+                    *self.client.borrow_mut() = name.chars().take(60).collect();
+                }
                 let version = params
                     .get("protocolVersion")
                     .and_then(|v| v.as_str())
@@ -238,6 +306,7 @@ fn parse_args() -> Option<PathBuf> {
 fn main() {
     let server = Server {
         library_path: parse_args(),
+        client: RefCell::new(String::new()),
     };
     eprintln!(
         "corydoras-mcp {} ready (library: {})",

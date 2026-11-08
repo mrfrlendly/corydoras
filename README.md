@@ -157,7 +157,7 @@ Calls stream from the provider. A call with no data for 2 minutes stops, and the
 
 ## MCP server
 
-The server is a separate binary that uses the stdio transport. It reads the library in query-only mode, so it works when the app is closed.
+The server is a separate binary that uses the stdio transport. It reads the library in query-only mode, so it works when the app is closed. Its one write is `propose_amendment`, which only adds a proposal for you to review.
 
 | Tool | Returns |
 | --- | --- |
@@ -168,6 +168,17 @@ The server is a separate binary that uses the stdio transport. It reads the libr
 | `get_language` | The document and `tokens.json`; with `family`, only that family and the rules that apply to it |
 | `get_sources` | Tutorials and documents of a language with the notes from each; with `ids`, only those sources |
 | `get_reference_images` | Images with the highest weight, or exact items by `item_ids` (the 8-character evidence IDs) |
+| `search_items` | Items whose tags, notes, region notes or analysis match the query words, best first, with the matching text and evidence IDs (no images) |
+| `propose_amendment` | Stores a proposed change to the latest spec of a language for your review; the language does not change |
+
+### Proposed amendments
+
+An agent can call `propose_amendment` with a JSON Patch (`add`, `remove`, `replace`) on `tokens.json`. A path segment into an array can be an index, `-` (append), or the `id`, `name` or `term` of an element, for example `/families/blade-field/measures/blade pitch/value`.
+
+- The server applies the patch to the latest version and runs the same validation as your own edit. An invalid patch, or a `base_version` that is not the latest version, is refused, and the agent gets the reason.
+- The Document tab shows open proposals with each change (old value → new value), the agent's reason and the client name. The tab shows how many proposals are open.
+- **Accept as new version** applies the patch to the latest version and saves it as an edited version. A proposal that no longer applies, for example after a new version, shows why and can only be rejected.
+- A language holds at most 20 open proposals.
 
 Without `--library`, the server reads the library that the app uses, also after a move. With `--library <path>`, it always reads that folder.
 
@@ -195,6 +206,7 @@ claude mcp add corydoras -- ~/.local/bin/corydoras-mcp
 ```bash
 npm install
 npm run tauri dev                        # app with hot reload
+CORYDORAS_LIBRARY=/tmp/lib npm run tauri dev   # same, on another library (the saved setting stays)
 cargo test -p corydoras-core             # unit tests
 CORYDORAS_API_KEY=… cargo run -p corydoras-core --example e2e -- /tmp/lib https://api.deepseek.com
 ```
@@ -204,4 +216,3 @@ CORYDORAS_API_KEY=… cargo run -p corydoras-core --example e2e -- /tmp/lib http
 - Menu bar icon for capture
 - Video import with keyframes (ffmpeg)
 - Canvas view
-- MCP tools `search_items` and `propose_amendment`

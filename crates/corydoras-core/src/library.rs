@@ -124,7 +124,7 @@ impl Library {
         Ok(r == "ok")
     }
 
-    fn c(&self) -> MutexGuard<'_, Connection> {
+    pub(crate) fn c(&self) -> MutexGuard<'_, Connection> {
         self.conn.lock().unwrap_or_else(|e| e.into_inner())
     }
 
@@ -1037,28 +1037,47 @@ impl Library {
         Ok(())
     }
 
+    /// The 8-character IDs of the items and sources of a language: the evidence
+    /// IDs that a spec may cite.
+    pub fn known_evidence_ids(&self, language_id: &str) -> Result<Vec<String>> {
+        let mut known: Vec<String> = self
+            .list_items(language_id)?
+            .iter()
+            .map(|i| i.id.chars().take(8).collect())
+            .collect();
+        known.extend(self.list_sources(language_id)?.iter().map(|x| x.id.chars().take(8).collect::<String>()));
+        Ok(known)
+    }
+
+    /// The input hash and item IDs that a manual version records.
+    fn manual_version_inputs(&self, language_id: &str) -> Result<(String, Vec<String>)> {
+        let inputs = self.synthesis_inputs(language_id, analysis::SYNTH_ITEM_LIMIT)?;
+        let srcs = self.source_inputs(language_id, analysis::SYNTH_SOURCE_LIMIT)?;
+        let hash = analysis::input_hash(&self.get_language(language_id)?, &inputs, &srcs);
+        let ids: Vec<String> = inputs.iter().map(|i| i.item.id.clone()).collect();
+        Ok((hash, ids))
+    }
+
+    /// Validates a schema 2 spec that a person (or an accepted proposal) wrote and
+    /// saves it as a new edited version. `model` is the label of the version.
+    pub fn save_manual_spec(&self, language_id: &str, tokens: &Value, model: &str) -> Result<i64> {
+        let check = spec::validate(tokens, &self.known_evidence_ids(language_id)?);
+        if !check.errors.is_empty() {
+            bail!("tokens.json: {}", check.errors.join(" "));
+        }
+        let (hash, ids) = self.manual_version_inputs(language_id)?;
+        self.save_spec_version(language_id, tokens, model, &ids, true, &hash, &check.warnings)
+    }
+
     /// Saves your own edit as a new version. For a schema 2 spec, only
     /// tokens.json counts: the app renders language.md from it.
     pub fn save_edited_version(&self, language_id: &str, markdown: &str, tokens_json: &str) -> Result<i64> {
         let tokens: Value = serde_json::from_str(tokens_json)
             .map_err(|e| anyhow!("tokens.json is not valid JSON: {e}"))?;
-        let inputs = self.synthesis_inputs(language_id, analysis::SYNTH_ITEM_LIMIT)?;
-        let srcs = self.source_inputs(language_id, analysis::SYNTH_SOURCE_LIMIT)?;
-        let hash = analysis::input_hash(&self.get_language(language_id)?, &inputs, &srcs);
-        let ids: Vec<String> = inputs.iter().map(|i| i.item.id.clone()).collect();
         if spec::schema_of(&tokens) >= 2 {
-            let mut known: Vec<String> = self
-                .list_items(language_id)?
-                .iter()
-                .map(|i| i.id.chars().take(8).collect())
-                .collect();
-            known.extend(self.list_sources(language_id)?.iter().map(|x| x.id.chars().take(8).collect::<String>()));
-            let check = spec::validate(&tokens, &known);
-            if !check.errors.is_empty() {
-                bail!("tokens.json: {}", check.errors.join(" "));
-            }
-            return self.save_spec_version(language_id, &tokens, "edited by you", &ids, true, &hash, &check.warnings);
+            return self.save_manual_spec(language_id, &tokens, "edited by you");
         }
+        let (hash, ids) = self.manual_version_inputs(language_id)?;
         analysis::validate_tokens(&tokens).map_err(|e| anyhow!("tokens.json: {e}"))?;
         self.save_version(language_id, markdown, &tokens, "edited by you", &ids, true, &hash)
     }
@@ -1808,11 +1827,17 @@ impl Library {
                     |r| r.get(0),
                 )
                 .optional()?;
+            let open_proposals: i64 = c.query_row(
+                "SELECT COUNT(*) FROM proposals WHERE language_id = ?1 AND status = 'pending'",
+                [&l.id],
+                |r| r.get(0),
+            )?;
             out.push(LanguageStatus {
                 language_id: l.id,
                 pending_items,
                 error_items,
                 synth_due_in: synth.map(|t| (t - now).max(0)),
+                open_proposals,
             });
         }
         Ok(out)

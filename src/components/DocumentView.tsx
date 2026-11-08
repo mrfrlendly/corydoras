@@ -4,11 +4,14 @@ import remarkGfm from 'remark-gfm';
 import { api, errText, fmtDate, Language, VersionContent, VersionInfo } from '../api';
 import { Check, Copy, Pencil } from 'lucide-react';
 import { useToast } from './Toast';
+import ProposalsPanel from './ProposalsPanel';
 
 interface Props {
   language: Language;
   version: number | null;
   tick: number;
+  /** Open amendment proposals (from the status poll). */
+  openProposals: number;
   onVersion: (v: number | null) => void;
   onChanged: () => void;
 }
@@ -76,7 +79,7 @@ function CmfSwatches({ tokens }: { tokens: unknown }) {
   );
 }
 
-export default function DocumentView({ language, version, tick, onVersion, onChanged }: Props) {
+export default function DocumentView({ language, version, tick, openProposals, onVersion, onChanged }: Props) {
   const toast = useToast();
   const [versions, setVersions] = useState<VersionInfo[]>([]);
   const [content, setContent] = useState<VersionContent | null>(null);
@@ -199,6 +202,18 @@ export default function DocumentView({ language, version, tick, onVersion, onCha
         <div className="notice">
           You see an older version. <button className="link-btn" onClick={() => onVersion(null)}>Show the latest (v{latest})</button>
         </div>
+      )}
+
+      {!editing && (
+        <ProposalsPanel
+          language={language}
+          openCount={openProposals}
+          tick={tick}
+          onAccepted={() => {
+            onVersion(null);
+            onChanged();
+          }}
+        />
       )}
 
       {content && content.info.schema < 2 && !editing && (

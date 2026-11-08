@@ -219,6 +219,9 @@ pub struct LanguageStatus {
     pub error_items: i64,
     /// Seconds until the synthesis pass, if one is in the queue.
     pub synth_due_in: Option<i64>,
+    /// Amendment proposals from agents that wait for a decision.
+    #[serde(default)]
+    pub open_proposals: i64,
 }
 
 /// One item and its inputs for the synthesis pass.

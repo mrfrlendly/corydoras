@@ -235,6 +235,34 @@ export interface LanguageStatus {
   pending_items: number;
   error_items: number;
   synth_due_in: number | null;
+  /** Amendment proposals from agents that wait for a decision. */
+  open_proposals: number;
+}
+
+export interface ProposalChange {
+  op: 'add' | 'remove' | 'replace';
+  path: string;
+  before: unknown;
+  after: unknown;
+}
+
+/** A change to a language spec that an agent proposed through the MCP server. */
+export interface Proposal {
+  id: string;
+  language_id: string;
+  base_version: number;
+  summary: string;
+  rationale: string;
+  author: string;
+  status: 'pending' | 'accepted' | 'rejected';
+  created_at: string;
+  decided_at: string | null;
+  result_version: number | null;
+  /** The changes against the latest version (pending proposals only). */
+  changes: ProposalChange[];
+  /** Why the proposal cannot be accepted now. */
+  problem: string | null;  /** Review notes that accepting would add. */
+  new_notes: string[];
 }
 
 export interface CurrentJob {
@@ -394,6 +422,10 @@ export const api = {
     invoke<VersionContent>('get_version', { languageId, version }),
   saveEditedVersion: (languageId: string, markdown: string, tokens: string) =>
     invoke<number>('save_edited_version', { languageId, markdown, tokens }),
+  listProposals: (languageId: string, includeDecided = false) =>
+    invoke<Proposal[]>('list_proposals', { languageId, includeDecided }),
+  acceptProposal: (proposalId: string) => invoke<number>('accept_proposal', { proposalId }),
+  rejectProposal: (proposalId: string) => invoke<void>('reject_proposal', { proposalId }),
   synthesizeNow: (languageId: string) => invoke<void>('synthesize_now', { languageId }),
   languageText: (languageId: string, version: number | null) =>
     invoke<string>('language_text', { languageId, version }),

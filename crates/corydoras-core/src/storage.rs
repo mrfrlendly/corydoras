@@ -78,7 +78,25 @@ pub fn cloud_warning(path: &Path) -> Option<String> {
 
 /// Checks that `dst` can receive the library that is at `src`.
 pub fn check_move_target(src: &Path, dst: &Path) -> Result<()> {
-    let norm = |p: &Path| p.canonicalize().unwrap_or_else(|_| p.to_path_buf());
+    // Resolve symlinks through the nearest folder that exists: a new target folder
+    // does not exist yet, and comparing it unresolved against a resolved library
+    // path (for example /var against /private/var) would miss a move into itself.
+    let norm = |p: &Path| {
+        let mut rest = Vec::new();
+        let mut base = p.to_path_buf();
+        loop {
+            if let Ok(real) = base.canonicalize() {
+                return rest.iter().rev().fold(real, |acc: PathBuf, part| acc.join(part));
+            }
+            match (base.file_name().map(|n| n.to_os_string()), base.parent()) {
+                (Some(name), Some(parent)) => {
+                    rest.push(name);
+                    base = parent.to_path_buf();
+                }
+                _ => return p.to_path_buf(),
+            }
+        }
+    };
     let (s, d) = (norm(src), norm(dst));
     if s == d {
         bail!("The library is in that folder already.");

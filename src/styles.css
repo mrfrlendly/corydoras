@@ -6,13 +6,14 @@
   --panel-2: #e7e4de;
   --ink: #1d1d1b;
   --ink-2: #5f5e59;
-  --ink-3: #8f8d86;
+  --ink-3: #68665f;
   --rule: #d8d4cc;
-  --accent: #e2561b;
+  --accent: #c2410c;
+  --accent-fill: #c8440f;
   --accent-ink: #ffffff;
   --accent-soft: rgba(226, 86, 27, 0.12);
-  --ok: #4f8a5b;
-  --warn: #c98a12;
+  --ok: #3d7249;
+  --warn: #8f6200;
   --err: #c2412d;
   --busy: #3c78b5;
   --shadow: 0 1px 2px rgba(0, 0, 0, 0.06), 0 6px 24px rgba(0, 0, 0, 0.06);
@@ -29,7 +30,10 @@
     --panel-2: #262623;
     --ink: #ecebe6;
     --ink-2: #a9a79f;
-    --ink-3: #75736c;
+    --ink-3: #8f8d86;
+    --accent: #e2561b;
+    --ok: #5aa468;
+    --warn: #d9a21b;
     --rule: #33322e;
     --accent-soft: rgba(226, 86, 27, 0.18);
     --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 6px 24px rgba(0, 0, 0, 0.3);
@@ -94,18 +98,20 @@ h3 {
 
 h1 {
   font-size: 22px;
+  line-height: 1.2;
+  letter-spacing: -0.022em;
 }
 
 h2 {
   font-size: 17px;
+  line-height: 1.25;
+  letter-spacing: -0.014em;
 }
 
 h3 {
-  font-size: 11px;
-  font-family: var(--mono);
-  font-weight: 500;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0;
   color: var(--ink-2);
   margin-bottom: 10px;
 }
@@ -139,11 +145,9 @@ h3 {
 }
 
 .eyebrow {
-  font-family: var(--mono);
-  font-size: 11px;
-  letter-spacing: 0.05em;
+  font-size: 12px;
+  font-weight: 500;
   color: var(--ink-3);
-  text-transform: uppercase;
   margin-bottom: 4px;
 }
 
@@ -212,10 +216,8 @@ h3 {
   align-items: center;
   justify-content: space-between;
   padding: 14px 8px 6px;
-  font-family: var(--mono);
-  font-size: 10.5px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  font-size: 12px;
+  font-weight: 600;
   color: var(--ink-3);
 }
 
@@ -237,8 +239,8 @@ h3 {
 }
 
 .side-item.active {
-  background: var(--panel);
-  box-shadow: inset 2px 0 0 var(--accent);
+  background: color-mix(in srgb, var(--ink) 11%, transparent);
+  font-weight: 500;
 }
 
 .side-name {
@@ -252,8 +254,8 @@ h3 {
   display: flex;
   align-items: center;
   gap: 5px;
-  font-family: var(--mono);
-  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
   color: var(--ink-3);
   white-space: nowrap;
 }
@@ -312,8 +314,8 @@ h3 {
 
 .usage {
   padding: 0 8px 6px 24px;
-  font-family: var(--mono);
-  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
   color: var(--ink-3);
 }
 
@@ -356,14 +358,14 @@ h3 {
 }
 
 .btn.primary {
-  background: var(--accent);
-  border-color: var(--accent);
+  background: var(--accent-fill);
+  border-color: var(--accent-fill);
   color: var(--accent-ink);
 }
 
 .btn.primary:hover:not(:disabled) {
   filter: brightness(1.06);
-  border-color: var(--accent);
+  border-color: var(--accent-fill);
 }
 
 .btn.danger {
@@ -387,6 +389,13 @@ h3 {
   color: var(--ink-2);
   font-size: 16px;
   line-height: 1;
+  position: relative;
+}
+
+.icon-btn::after {
+  content: '';
+  position: absolute;
+  inset: -4px;
 }
 
 .icon-btn:hover {
@@ -635,7 +644,7 @@ textarea {
   border-radius: 4px;
   background: var(--accent-soft);
   color: var(--accent);
-  font-size: 10px;
+  font-size: 11px;
 }
 
 /* ---------------------------------------------------------------- Toasts */
@@ -654,10 +663,12 @@ textarea {
 .toast {
   padding: 10px 14px;
   border-radius: 9px;
-  background: var(--ink);
+  background: color-mix(in srgb, var(--ink) 88%, transparent);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  backdrop-filter: blur(20px) saturate(180%);
   color: var(--panel);
   box-shadow: var(--shadow);
-  font-size: 12.5px;
+  font-size: 13px;
   overflow-wrap: anywhere;
 }
 
@@ -787,8 +798,8 @@ textarea {
 
 .tab-badge {
   margin-left: 6px;
-  font-family: var(--mono);
-  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
   color: var(--ink-3);
 }
 
@@ -870,10 +881,8 @@ textarea {
   border-radius: 5px;
   background: var(--err);
   color: #fff;
-  font-size: 10.5px;
+  font-size: 11px;
   font-weight: 600;
-  letter-spacing: 0.03em;
-  text-transform: uppercase;
 }
 
 .card figcaption {
@@ -896,7 +905,7 @@ textarea {
 }
 
 .cap-meta {
-  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
 }
 
 .cap-tags {
@@ -1017,7 +1026,7 @@ textarea {
   background: #1d1d1b;
   color: #fff;
   font-family: var(--mono);
-  font-size: 10px;
+  font-size: 11px;
   border-bottom-right-radius: 4px;
 }
 
@@ -1082,7 +1091,7 @@ textarea {
   align-items: center;
   gap: 5px;
   font-family: var(--mono);
-  font-size: 10.5px;
+  font-size: 11px;
   color: var(--ink-2);
 }
 
@@ -1284,7 +1293,7 @@ textarea {
 
 .vtable th {
   font-family: var(--mono);
-  font-size: 10.5px;
+  font-size: 11px;
   font-weight: 500;
   color: var(--ink-3);
   text-transform: uppercase;
@@ -1383,7 +1392,7 @@ textarea {
 .ctable th {
   text-align: left;
   font-family: var(--mono);
-  font-size: 10.5px;
+  font-size: 11px;
   font-weight: 500;
   color: var(--ink-3);
   text-transform: uppercase;
@@ -1600,7 +1609,7 @@ button.chip {
   grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
   gap: 10px 16px;
   margin-bottom: 8px;
-  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
   font-size: 13px;
 }
 
@@ -1648,7 +1657,7 @@ button.chip {
 
 .log-time {
   flex: none;
-  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
   font-size: 11px;
   color: var(--ink-3);
   width: 92px;
@@ -1687,9 +1696,8 @@ button.chip {
   border-radius: 4px;
   background: var(--ink);
   color: var(--panel);
-  font-size: 9.5px;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
+  font-size: 11px;
+  font-weight: 600;
 }
 
 .rtable th:nth-child(1) {
@@ -2072,7 +2080,7 @@ svg.lucide {
 
 .src-tile-label {
   font-family: var(--mono);
-  font-size: 10.5px;
+  font-size: 11px;
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--ink-3);
@@ -2153,7 +2161,7 @@ svg.lucide {
 
 .src-notes h4 {
   font-family: var(--mono);
-  font-size: 10.5px;
+  font-size: 11px;
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--ink-3);
@@ -2430,4 +2438,89 @@ svg.lucide {
   flex: 1;
   min-width: 0;
   overflow-wrap: anywhere;
+}
+
+
+/* ---------------------------------------------------------------- Apple HIG pass
+   Feedback on press, a visible keyboard focus ring, short springy-feeling
+   transitions, and the three accessibility preferences. */
+
+.btn,
+.icon-btn,
+.side-item,
+.tab,
+.seg button,
+.chip,
+.card {
+  transition:
+    background-color 0.12s ease-out,
+    border-color 0.12s ease-out,
+    color 0.12s ease-out,
+    box-shadow 0.12s ease-out,
+    transform 0.12s ease-out;
+}
+
+/* Respond on press, not on release. */
+.btn:active:not(:disabled),
+.icon-btn:active,
+.seg button:active {
+  transform: scale(0.97);
+}
+
+.side-item:active {
+  background: color-mix(in srgb, var(--ink) 16%, transparent);
+}
+
+/* Keyboard focus is always visible; mouse clicks do not draw a ring. */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+input:focus-visible,
+textarea:focus-visible,
+.select:focus-visible {
+  outline: none;
+}
+
+.tab:focus-visible,
+.seg button:focus-visible {
+  outline-offset: -2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+  .btn:active:not(:disabled),
+  .icon-btn:active,
+  .seg button:active {
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .toast {
+    background: var(--ink);
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+}
+
+@media (prefers-contrast: more) {
+  :root {
+    --rule: #8f8d86;
+    --ink-2: var(--ink);
+    --ink-3: var(--ink-2);
+  }
+  .btn,
+  .chip,
+  .card {
+    border-width: 1.5px;
+  }
 }

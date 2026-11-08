@@ -343,6 +343,49 @@ fn pdf_text(bytes: &[u8]) -> Result<String> {
     }
 }
 
+/// Pages of a PDF that a vision model reads when the text is missing or thin.
+pub const PDF_IMAGE_PAGES: usize = 8;
+/// Longest side, in pixels, of a rendered PDF page.
+pub const PDF_PAGE_SIDE: u32 = 1400;
+/// A PDF with fewer text characters per page than this is read from page images.
+pub const PDF_SPARSE_CHARS_PER_PAGE: i64 = 300;
+
+/// Renders the first `max_pages` pages of a PDF as JPEG images. Returns the
+/// images and the number of pages in the file.
+pub fn pdf_pages(bytes: &[u8], max_pages: usize, max_side: u32) -> Result<(Vec<Vec<u8>>, usize)> {
+    use hayro::hayro_interpret::InterpreterSettings;
+    use hayro::hayro_syntax::Pdf;
+    use hayro::vello_cpu::color::palette::css::WHITE;
+    use hayro::{render, PixmapSettings, RenderCache, RenderSettings};
+
+    let owned = bytes.to_vec();
+    // The renderer can panic on unusual files; keep the app alive.
+    let result = std::panic::catch_unwind(move || -> Result<(Vec<Vec<u8>>, usize)> {
+        let pdf = Pdf::new(owned).map_err(|e| anyhow!("Cannot open the PDF: {e:?}"))?;
+        let pages = pdf.pages();
+        let total = pages.len();
+        let cache = RenderCache::new();
+        let interp = InterpreterSettings::default();
+        let rs = RenderSettings::default();
+        let mut out = Vec::new();
+        for page in pages.iter().take(max_pages) {
+            let (w, h) = page.render_dimensions();
+            let scale = (max_side as f32 / w.max(h).max(1.0)).clamp(0.1, 4.0);
+            let ps = PixmapSettings { x_scale: scale, y_scale: scale, bg_color: WHITE };
+            let png = render(page, &cache, &interp, &rs, &ps)
+                .into_png()
+                .map_err(|e| anyhow!("Cannot encode a PDF page: {e:?}"))?;
+            let img = crate::analysis::decode_oriented(&png)?;
+            out.push(crate::analysis::encode_jpeg(&img, max_side, 85)?);
+        }
+        Ok((out, total))
+    });
+    match result {
+        Ok(r) => r,
+        Err(_) => Err(anyhow!("Cannot draw the PDF pages (the file has an unusual structure).")),
+    }
+}
+
 /// macOS: converts doc, docx, rtf and odt to text with textutil.
 #[cfg(target_os = "macos")]
 fn textutil(name: &str, bytes: &[u8]) -> Result<String> {
@@ -412,17 +455,27 @@ pub fn extract_document(name: &str, bytes: &[u8], saved: Option<&Path>) -> Resul
         bail!("\"{name}\" is larger than 80 MB.");
     }
     let ext = extension(name);
+    let is_pdf = ext == "pdf" || bytes.starts_with(b"%PDF");
     let (media, text) = match ext.as_str() {
-        "pdf" => ("pdf", pdf_text(bytes)?),
+        "pdf" => ("pdf", pdf_text(bytes).unwrap_or_default()),
         "txt" | "md" | "markdown" | "csv" => ("text", String::from_utf8_lossy(bytes).into_owned()),
         "html" | "htm" => ("text", html_to_text(&String::from_utf8_lossy(bytes))),
         "doc" | "docx" | "rtf" | "odt" => ("doc", textutil(name, bytes)?),
-        _ if bytes.starts_with(b"%PDF") => ("pdf", pdf_text(bytes)?),
+        _ if is_pdf => ("pdf", pdf_text(bytes).unwrap_or_default()),
         _ => bail!("\"{name}\" is not a document type that Corydoras can read ({}).", DOC_EXTENSIONS.join(", ")),
     };
     let text = cap_text(clean_ws(&text));
+    // A scanned PDF has no text. The model reads its page images instead.
+    let mut first_page = None;
     if text.trim().len() < 20 {
-        bail!("\"{name}\" has no readable text. A scanned PDF needs text recognition (OCR) first.");
+        if !is_pdf {
+            bail!("\"{name}\" has no readable text.");
+        }
+        match pdf_pages(bytes, 1, 640) {
+            Ok((mut pages, _)) if !pages.is_empty() => first_page = pages.pop(),
+            Ok(_) => bail!("\"{name}\" has no pages."),
+            Err(e) => bail!("\"{name}\" has no readable text, and its pages cannot be drawn: {e}"),
+        }
     }
     let stem = Path::new(name)
         .file_stem()
@@ -445,7 +498,7 @@ pub fn extract_document(name: &str, bytes: &[u8], saved: Option<&Path>) -> Resul
         media: media.into(),
         text,
         final_url: String::new(),
-        preview: saved.and_then(quicklook_preview),
+        preview: saved.and_then(quicklook_preview).or(first_page),
         file: None,
     })
 }
@@ -481,5 +534,47 @@ mod tests {
         assert!(extract_document("a.xyz", b"some text here that is long enough", None).is_err());
         assert!(is_youtube("https://youtu.be/abc") && is_youtube("https://www.youtube.com/watch?v=x"));
         assert!(!is_youtube("https://example.com/youtube"));
+    }
+
+    /// A one-page PDF with a drawn rectangle and no text, like a scan.
+    fn blank_pdf() -> Vec<u8> {
+        let objs = [
+            "<< /Type /Catalog /Pages 2 0 R >>".to_string(),
+            "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_string(),
+            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 100] /Contents 4 0 R /Resources << >> >>".to_string(),
+            {
+                let c = "0 0 0 rg 20 20 160 60 re f";
+                format!("<< /Length {} >>\nstream\n{c}\nendstream", c.len())
+            },
+        ];
+        let mut out = b"%PDF-1.4\n".to_vec();
+        let mut offsets = Vec::new();
+        for (i, o) in objs.iter().enumerate() {
+            offsets.push(out.len());
+            out.extend(format!("{} 0 obj\n{o}\nendobj\n", i + 1).bytes());
+        }
+        let xref = out.len();
+        out.extend(format!("xref\n0 {}\n0000000000 65535 f \n", objs.len() + 1).bytes());
+        for off in offsets {
+            out.extend(format!("{off:010} 00000 n \n").bytes());
+        }
+        out.extend(format!("trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n", objs.len() + 1).bytes());
+        out
+    }
+
+    #[test]
+    fn scanned_pdf_is_accepted_and_drawn() {
+        let pdf = blank_pdf();
+        let (pages, total) = pdf_pages(&pdf, 8, 400).unwrap();
+        assert_eq!((pages.len(), total), (1, 1));
+        assert!(pages[0].starts_with(&[0xFF, 0xD8]), "a JPEG");
+        let ex = extract_document("scan.pdf", &pdf, None).unwrap();
+        assert_eq!(ex.media, "pdf");
+        assert!(ex.text.is_empty());
+        assert!(ex.preview.is_some());
+        assert_eq!(ex.title, "scan");
+        // Broken PDF bytes give an error and do not panic.
+        assert!(pdf_pages(b"%PDF-1.4 not a pdf", 8, 400).is_err());
+        assert!(extract_document("bad.pdf", b"%PDF-1.4 not a pdf", None).is_err());
     }
 }

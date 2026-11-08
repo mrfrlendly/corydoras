@@ -103,7 +103,8 @@ The Sources tab of a language holds links and documents that teach technique: tu
 | Web page | The main text, the title, the description, the site name and the preview image (`og:image`) |
 | Video (YouTube) | Only the title, the channel and the description. The app cannot read the speech. |
 | Link to a PDF or a text file | The file. The app keeps a copy. |
-| PDF, TXT, MD, CSV, HTML | The text. A scanned PDF has no text: run text recognition (OCR) on it first. |
+| PDF | The text. A PDF with little or no text (a scan, or a drawing sheet) goes to the model as page images, up to 8 pages. This needs a provider that reads images. |
+| TXT, MD, CSV, HTML | The text |
 | DOC, DOCX, RTF, ODT | The text, through the macOS `textutil` tool |
 
 To add a source:

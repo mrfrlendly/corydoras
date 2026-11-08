@@ -281,7 +281,34 @@ pub async fn analyze_source(lib: &Library, provider: &Provider, source_id: &str,
     let language = lib.get_language(&src.language_id)?;
     act.phase("Preparing the text");
     let text = lib.source_text(source_id)?;
-    let parts = vec![Part::Text(analysis::source_user_text(&language, &src, &text))];
+    // A PDF with little or no text goes in as page images.
+    let mut images: Vec<String> = Vec::new();
+    let mut pages = None;
+    if src.media == "pdf" {
+        let file = src.file_rel.as_deref().and_then(|r| lib.abs(r).ok()).filter(|p| p.exists());
+        if let Some(path) = file {
+            let bytes = std::fs::read(&path)?;
+            let chars = text.chars().count() as i64;
+            let rendered = tokio::task::spawn_blocking(move || {
+                crate::sources::pdf_pages(&bytes, crate::sources::PDF_IMAGE_PAGES, crate::sources::PDF_PAGE_SIDE)
+            })
+            .await;
+            match rendered {
+                Ok(Ok((jpegs, total))) if !jpegs.is_empty() => {
+                    if chars < crate::sources::PDF_SPARSE_CHARS_PER_PAGE * total as i64 {
+                        act.phase(&format!("Drawing {} PDF page{}", jpegs.len(), if jpegs.len() == 1 { "" } else { "s" }));
+                        pages = Some((jpegs.len(), total));
+                        images = jpegs.iter().map(|j| analysis::data_url_jpeg(j)).collect();
+                    }
+                }
+                Ok(Err(e)) if text.trim().is_empty() => return Err(e),
+                Ok(Err(e)) => act.log("warn", Some(&src.language_id), format!("Could not draw the pages of \"{}\": {e} Using the text only.", src.title)),
+                _ => {}
+            }
+        }
+    }
+    let mut parts = vec![Part::Text(analysis::source_user_text(&language, &src, &text, pages))];
+    parts.extend(images.into_iter().map(Part::Image));
     let (mut tin, mut tout) = (0, 0);
     let mut budget = ITEM_TOKENS;
     for attempt in 1..=2u32 {

@@ -451,6 +451,7 @@ Rules:
 - Summarize in your own words. Do not copy long passages.
 - Be specific and practical. Skip menus, advertising, comments and content that has nothing to do with design or making.
 - The text can be cut off. Note when the source looks incomplete.
+- Some PDFs come as page images, with little or no text. Read the pages in order. Take values, labels and dimensions from drawings and diagrams only when you can read them.
 - Write in clear, simple technical English: short sentences, active voice.
 - Return only one JSON object. No markdown, no commentary."#;
 
@@ -471,7 +472,8 @@ pub fn source_output_shape() -> Value {
     })
 }
 
-pub fn source_user_text(language: &Language, source: &Source, text: &str) -> String {
+/// `pages` is (images attached, pages in the file) when the PDF goes in as page images.
+pub fn source_user_text(language: &Language, source: &Source, text: &str, pages: Option<(usize, usize)>) -> String {
     let mut s = String::new();
     s.push_str(&format!("Design language: {}\n", language.name));
     if !language.description.trim().is_empty() {
@@ -492,14 +494,27 @@ pub fn source_user_text(language: &Language, source: &Source, text: &str) -> Str
     if !source.note.trim().is_empty() {
         s.push_str(&format!("Designer note (what to look for): {}\n", source.note.trim()));
     }
+    if let Some((shown, total_pages)) = pages {
+        s.push_str(&format!(
+            "\nThis PDF has {total_pages} page{}. {} follow{} as images, in page order.{}\n",
+            if total_pages == 1 { "" } else { "s" },
+            if shown == total_pages { format!("All {shown} pages") } else { format!("The first {shown} pages") },
+            if shown == 1 { "s" } else { "" },
+            if text.trim().is_empty() { " The file has no text layer." } else { " The text layer is below; the images show drawings, figures and layout." },
+        ));
+    }
     let total = text.chars().count();
     let body: String = text.chars().take(SOURCE_TEXT_LIMIT).collect();
+    if text.trim().is_empty() {
+        s.push_str("\nSOURCE TEXT: none. Use the page images.\n");
+    } else {
     s.push_str(&format!(
         "\nSOURCE TEXT ({} characters{}):\n<<<\n{}\n>>>\n",
         total,
         if total > SOURCE_TEXT_LIMIT { format!(", the first {SOURCE_TEXT_LIMIT} shown") } else { String::new() },
         body
     ));
+    }
     if source.media == "video" {
         s.push_str("\nThis is a video. Only its title and description are available, not the spoken content. Keep the notes short, and set a low confidence.\n");
     }

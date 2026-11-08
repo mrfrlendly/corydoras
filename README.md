@@ -25,12 +25,12 @@ To also add the MCP server to Claude Desktop, run `bash scripts/setup-mac.sh --r
 ## First launch
 
 1. Select the library folder (default `~/Corydoras`).
-2. Open **Settings**. Under **Model providers**, open a provider, paste its API key, and click **Test**. The key goes into the macOS Keychain.
+2. Open **Settings**. Under **Model providers**, open a provider, paste its API key, and click **Test**. The key is saved in a file that only your user account can read.
 3. Choose the provider for **Images and sources** and the provider for the **Language document**.
 4. Click **+** next to **Languages**, type a name, and press Return.
 5. Drag images into the board, or paste a screenshot with ⌘V.
 
-macOS can ask for Keychain access after a rebuild, because the app has a new signature. Click **Always Allow**.
+API keys are files in `~/Library/Application Support/Corydoras/keys/` (folder mode 0700, files mode 0600), so a rebuild never asks for your password. Keys that earlier versions saved in the Keychain move into these files the first time the app uses them; macOS can ask for Keychain access that one last time.
 
 ## How it works
 
@@ -75,7 +75,7 @@ Corydoras works with your own API key from any of these providers, or with a mod
 | Ollama, LM Studio | OpenAI-compatible, on this Mac | No key. Set a context length of 32 k or more. |
 | Other | OpenAI-compatible or Messages API | Any address |
 
-- Each provider keeps its own key in the Keychain. The provider settings are app settings, so they stay the same when you move or switch the library.
+- Each provider keeps its own key file. The provider settings are app settings, so they stay the same when you move or switch the library.
 - **Images and sources** need a model that reads images. **Test** sends a small red image and records whether the model reads it.
 - **Load models** asks the provider for its model list.
 - **Output limit** caps the answer size. A model with a small limit needs a small value.

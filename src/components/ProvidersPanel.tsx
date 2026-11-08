@@ -72,7 +72,7 @@ function Editor({
       await onSave(d); // The profile must exist before its key.
       await api.setProviderKey(d.id, key);
       setKey('');
-      toast.info(`Key for ${d.name} saved in the macOS Keychain.`);
+      toast.info(`Key for ${d.name} saved.`);
       onKeyChanged();
     } catch (e) {
       toast.error(errText(e));
@@ -290,7 +290,7 @@ export default function ProvidersPanel({ onChanged }: { onChanged: () => void })
         <Cpu size={15} /> Model providers
       </h3>
       <p className="muted small">
-        Use any provider with your own key, or a model on this Mac. Each provider keeps its key in the macOS Keychain. Choose one provider for
+        Use any provider with your own key, or a model on this Mac. Each provider keeps its key in a file that only your user account can read. Choose one provider for
         the image and source analysis and one for the language document; they can be the same.
       </p>
 

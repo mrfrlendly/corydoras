@@ -4,7 +4,7 @@
 //! and a stronger model for the writing.
 //!
 //! Profiles are app settings (config.json), not library data, so they stay the same
-//! when you switch or move the library. The keys are in the Keychain.
+//! when you switch or move the library. The keys are key files (see secrets.rs).
 
 use crate::models::Settings;
 use crate::secrets;
@@ -189,7 +189,7 @@ pub struct ProviderProfile {
     /// The result of the last connection test: does the model read images?
     #[serde(default)]
     pub vision: Option<bool>,
-    /// The Keychain account of the key.
+    /// The account (key file name) of the key.
     pub key_account: String,
     pub needs_key: bool,
 }
@@ -280,7 +280,7 @@ pub enum Role {
 
 impl AiConfig {
     /// The 0.4 setting (one DeepSeek-compatible provider in the library settings) as a
-    /// profile. It keeps the old Keychain account, so the saved key stays valid.
+    /// profile. It keeps the old key account, so the saved key stays valid.
     pub fn migrated(s: &Settings) -> Self {
         let lower = s.base_url.to_ascii_lowercase();
         let kind = if lower.contains("deepseek") {

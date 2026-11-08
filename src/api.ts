@@ -49,7 +49,7 @@ export interface Preset {
   note: string;
 }
 
-/** One provider plus one model, with its own key in the Keychain. */
+/** One provider plus one model, with its own key file. */
 export interface ProviderProfile {
   id: string;
   name: string;

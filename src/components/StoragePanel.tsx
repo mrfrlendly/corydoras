@@ -94,7 +94,7 @@ export default function StoragePanel({ info, onInfo, onChanged }: { info: AppInf
         <HardDrive size={15} /> Library location
       </h3>
       <p className="muted small">
-        The library folder holds the images, documents, analyses and versions of all languages. API keys stay in the Keychain, and the provider
+        The library folder holds the images, documents, analyses and versions of all languages. API keys stay in the app's own folder, and the provider
         settings stay with the app, so they do not change when you move or switch the library.
       </p>
       <div className="lib-path">

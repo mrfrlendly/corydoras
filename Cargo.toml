@@ -1,0 +1,7 @@
+[workspace]
+resolver = "2"
+members = ["crates/corydoras-core", "crates/corydoras-mcp", "src-tauri"]
+
+[profile.release]
+strip = true
+codegen-units = 4

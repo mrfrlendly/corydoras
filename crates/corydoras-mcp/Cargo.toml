@@ -1,0 +1,14 @@
+[package]
+name = "corydoras-mcp"
+version = "0.5.0"
+edition = "2021"
+description = "MCP server (stdio) that gives agents read access to Corydoras design languages"
+
+[[bin]]
+name = "corydoras-mcp"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+corydoras-core = { path = "../corydoras-core" }
+serde_json = "1"

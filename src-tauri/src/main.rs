@@ -11,7 +11,7 @@ use corydoras_core::{
     provider::{self, CheckReport, Provider},
     secrets,
     storage::{self, FolderInfo, MoveReport},
-    worker, Library,
+    video, worker, Library,
 };
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -312,22 +312,93 @@ fn item_detail(state: State<'_, AppState>, item_id: String) -> CmdResult<ItemDet
 struct ImportReport {
     added: Vec<Item>,
     errors: Vec<String>,
+    /// One line for each video: its name, the number of frames and its length.
+    videos: Vec<VideoNote>,
 }
 
+#[derive(Serialize)]
+struct VideoNote {
+    name: String,
+    frames: usize,
+    duration: f64,
+}
+
+/// Images and videos from disk. Videos give their key frames. Runs off the main
+/// thread, because a video takes seconds.
 #[tauri::command]
-fn import_files(state: State<'_, AppState>, language_id: String, paths: Vec<String>) -> CmdResult<ImportReport> {
+async fn import_files(state: State<'_, AppState>, language_id: String, paths: Vec<String>) -> CmdResult<ImportReport> {
     let lib = lib(&state)?;
-    let mut report = ImportReport {
-        added: vec![],
-        errors: vec![],
-    };
-    for p in paths {
-        match lib.import_path(&language_id, &PathBuf::from(&p)) {
-            Ok(item) => report.added.push(item),
-            Err(e) => report.errors.push(e.to_string()),
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut report = ImportReport {
+            added: vec![],
+            errors: vec![],
+            videos: vec![],
+        };
+        for p in paths {
+            let path = PathBuf::from(&p);
+            let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+            if video::is_video_name(&name) {
+                match lib.import_video(&language_id, &path, &name, Some(&p)) {
+                    Ok(v) => {
+                        report.videos.push(VideoNote { name, frames: v.items.len(), duration: v.duration });
+                        report.added.extend(v.items);
+                    }
+                    Err(e) => report.errors.push(e.to_string()),
+                }
+                continue;
+            }
+            match lib.import_path(&language_id, &path) {
+                Ok(item) => report.added.push(item),
+                Err(e) => report.errors.push(e.to_string()),
+            }
         }
+        report
+    })
+    .await
+    .map_err(e2s)
+}
+
+/// Largest video that a drop can send (bytes).
+const MAX_VIDEO_BYTES: usize = 2 * 1024 * 1024 * 1024;
+
+/// A video dropped from Finder. The body is the raw file; the headers carry
+/// x-language-id and x-file-name (URI-encoded). The file goes to a temporary
+/// file for AVFoundation and is removed afterwards.
+#[tauri::command]
+async fn import_video_bytes(state: State<'_, AppState>, request: tauri::ipc::Request<'_>) -> CmdResult<VideoImport> {
+    let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else {
+        return Err("The video data is missing.".into());
+    };
+    if bytes.len() > MAX_VIDEO_BYTES {
+        return Err("The video is larger than 2 GB.".into());
     }
-    Ok(report)
+    let header = |k: &str| -> CmdResult<String> {
+        let v = request
+            .headers()
+            .get(k)
+            .and_then(|v| v.to_str().ok())
+            .ok_or_else(|| format!("The header {k} is missing."))?;
+        urlencoding::decode(v).map(|s| s.into_owned()).map_err(e2s)
+    };
+    let language_id = header("x-language-id")?;
+    let name = header("x-file-name")?;
+    let lib = lib(&state)?;
+    let ext = std::path::Path::new(&name)
+        .extension()
+        .map(|e| e.to_string_lossy().to_lowercase())
+        .unwrap_or_else(|| "mov".into());
+    let tmp_dir = lib.root().join(".tmp");
+    std::fs::create_dir_all(&tmp_dir).map_err(e2s)?;
+    let tmp = tmp_dir.join(format!("{}.{ext}", uuid::Uuid::new_v4()));
+    std::fs::write(&tmp, bytes).map_err(e2s)?;
+    let result = tauri::async_runtime::spawn_blocking({
+        let tmp = tmp.clone();
+        move || lib.import_video(&language_id, &tmp, &name, None)
+    })
+    .await
+    .map_err(e2s);
+    let _ = std::fs::remove_file(&tmp);
+    result?.map_err(e2s)
 }
 
 #[tauri::command]
@@ -1049,6 +1120,7 @@ fn main() {
             list_items,
             item_detail,
             import_files,
+            import_video_bytes,
             import_bytes,
             import_url,
             update_item,

@@ -16,6 +16,7 @@ pub mod sources;
 pub mod spec;
 pub mod storage;
 pub mod util;
+pub mod video;
 pub mod worker;
 
 pub use library::Library;

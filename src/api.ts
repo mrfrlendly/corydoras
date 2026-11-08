@@ -373,10 +373,29 @@ export const DOC_EXTENSIONS = ['pdf', 'txt', 'md', 'markdown', 'csv', 'html', 'h
 export const DOC_EXT_RE = new RegExp(`\\.(${DOC_EXTENSIONS.join('|')})$`, 'i');
 export const IMAGE_URL_RE = /\.(png|jpe?g|webp|gif|bmp|tiff?|avif)(\?.*)?$/i;
 
+export interface VideoNote {
+  name: string;
+  frames: number;
+  /** Length of the video in seconds. */
+  duration: number;
+}
+
 export interface ImportReport {
   added: Item[];
   errors: string[];
+  /** One entry for each video: its key frames became items. */
+  videos: VideoNote[];
 }
+
+export interface VideoImport {
+  items: Item[];
+  duration: number;
+}
+
+/** Videos that macOS (AVFoundation) reads; their key frames become items. */
+export const VIDEO_EXTENSIONS = ['mp4', 'mov', 'm4v'];
+export const VIDEO_EXT_RE = /\.(mp4|mov|m4v|webm|avi|mkv|flv|wmv)$/i;
+
 
 export const api = {
   appInfo: () => invoke<AppInfo>('app_info'),
@@ -392,6 +411,11 @@ export const api = {
   itemDetail: (itemId: string) => invoke<ItemDetail>('item_detail', { itemId }),
   importFiles: (languageId: string, paths: string[]) =>
     invoke<ImportReport>('import_files', { languageId, paths }),
+  /** A dropped video, sent as raw bytes (no base64). */
+  importVideoBytes: async (languageId: string, file: File) =>
+    invoke<VideoImport>('import_video_bytes', new Uint8Array(await file.arrayBuffer()), {
+      headers: { 'x-language-id': encodeURIComponent(languageId), 'x-file-name': encodeURIComponent(file.name || 'video.mov') },
+    }),
   importBytes: (languageId: string, name: string, data: string, source: string | null) =>
     invoke<Item>('import_bytes', { languageId, name, data, source }),
   importUrl: (languageId: string, url: string, source: string | null) =>

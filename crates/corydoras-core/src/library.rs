@@ -324,11 +324,8 @@ impl Library {
             Ok(f) => f,
             Err(_) => {
                 let lower = original_name.to_lowercase();
-                if [".mp4", ".mov", ".m4v", ".webm", ".avi", ".mkv"]
-                    .iter()
-                    .any(|e| lower.ends_with(e))
-                {
-                    bail!("Video import comes in phase 2. \"{original_name}\" was not added.");
+                if crate::video::is_video_name(&lower) {
+                    bail!("\"{original_name}\" is a video. Add it with Add images… or drag it from Finder, and the app takes its key frames.");
                 }
                 if lower.ends_with(".heic") || lower.ends_with(".heif") {
                     bail!("HEIC is not supported yet. Export \"{original_name}\" as JPEG or PNG.");
@@ -386,6 +383,28 @@ impl Library {
         self.enqueue(JOB_ANALYZE, &id, 0)?;
         self.enqueue_synth(language_id)?;
         self.get_item(&id)
+    }
+
+    /// Takes the key frames of a video and adds each one as an item. `name` is the
+    /// video's file name, `source` where it came from (a path or a link). Each
+    /// frame is named and sourced with its position, for example "clip.mov · 0:12".
+    pub fn import_video(&self, language_id: &str, path: &Path, name: &str, source: Option<&str>) -> Result<VideoImport> {
+        self.get_language(language_id)?;
+        let x = crate::video::extract(path, crate::video::MAX_FRAMES)?;
+        let stem = Path::new(name).file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| "video".into());
+        let source = source.map(str::trim).filter(|s| !s.is_empty()).unwrap_or(name);
+        let mut items = Vec::new();
+        for f in &x.frames {
+            let tc = crate::video::timecode(f.time);
+            let item = self.import_bytes(
+                language_id,
+                &format!("{stem} · {tc}.jpg"),
+                &f.jpeg,
+                Some(&format!("{source} · {tc}")),
+            )?;
+            items.push(item);
+        }
+        Ok(VideoImport { items, duration: x.duration })
     }
 
     /// Imports a file from disk. The source is the file path.
@@ -1875,9 +1894,14 @@ mod tests {
         assert_eq!(again.id, item.id);
         assert_eq!(lib.list_items(&lang.id).unwrap().len(), 1);
 
-        // Video is refused with a clear message.
+        // Video bytes are not an image: the message points to the video import.
         let err = lib.import_bytes(&lang.id, "clip.mov", b"not an image", None).unwrap_err();
-        assert!(err.to_string().contains("phase 2"));
+        assert!(err.to_string().contains("key frames"), "{err}");
+        // A video that macOS cannot read gets a clear message too.
+        let mkv = dir.path().join("clip.mkv");
+        std::fs::write(&mkv, b"x").unwrap();
+        let err = lib.import_video(&lang.id, &mkv, "clip.mkv", None).unwrap_err();
+        assert!(err.to_string().contains("Convert"), "{err}");
 
         // Annotation change queues analysis.
         let updated = lib

@@ -1,12 +1,11 @@
 import { DragEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { open } from '@tauri-apps/plugin-dialog';
 import { ImagePlus, Loader } from 'lucide-react';
-import { api, DOC_EXT_RE, errText, fileToBase64, fileUrl, IMAGE_URL_RE, Item, Language } from '../api';
+import { api, DOC_EXT_RE, errText, fileToBase64, fileUrl, fmtDuration, IMAGE_URL_RE, Item, Language, VIDEO_EXT_RE, VIDEO_EXTENSIONS, VideoNote } from '../api';
 import ItemInspector from './ItemInspector';
 import { useToast } from './Toast';
 
 const IMAGE_EXT = /\.(png|jpe?g|webp|gif|bmp|tiff?)$/i;
-const VIDEO_EXT = /\.(mp4|mov|m4v|webm|avi|mkv)$/i;
 
 function firstUri(list: string): string | null {
   const line = list
@@ -66,9 +65,17 @@ export default function Board({
   useEffect(load, [load, tick]);
 
   const afterImport = useCallback(
-    (added: number, errors: string[]) => {
+    (added: number, errors: string[], videos: VideoNote[] = []) => {
       errors.forEach((e) => toast.error(e));
-      if (added > 0) toast.info(`${added} image${added === 1 ? '' : 's'} added. The analysis starts now.`);
+      for (const v of videos) {
+        toast.info(
+          v.frames > 0
+            ? `${v.frames} key frame${v.frames === 1 ? '' : 's'} from “${v.name}” (${fmtDuration(v.duration * 1000)}) added. The analysis starts now.`
+            : `No usable frames in “${v.name}”.`,
+        );
+      }
+      const stills = added - videos.reduce((n, v) => n + v.frames, 0);
+      if (stills > 0) toast.info(`${stills} image${stills === 1 ? '' : 's'} added. The analysis starts now.`);
       load();
       onChanged();
     },
@@ -79,6 +86,7 @@ export default function Board({
     async (files: File[], source: string | null) => {
       let added = 0;
       const errors: string[] = [];
+      const videos: VideoNote[] = [];
       setBusy((b) => b + 1);
       try {
         let docs = 0;
@@ -93,8 +101,15 @@ export default function Board({
             }
             continue;
           }
-          if (VIDEO_EXT.test(f.name) || f.type.startsWith('video/')) {
-            errors.push(`Video import comes in phase 2. "${f.name}" was not added.`);
+          if (VIDEO_EXT_RE.test(f.name) || f.type.startsWith('video/')) {
+            toast.info(`Reading key frames from “${f.name}”…`);
+            try {
+              const v = await api.importVideoBytes(language.id, f);
+              videos.push({ name: f.name, frames: v.items.length, duration: v.duration });
+              added += v.items.length;
+            } catch (e) {
+              errors.push(errText(e));
+            }
             continue;
           }
           if (!f.type.startsWith('image/') && !IMAGE_EXT.test(f.name)) {
@@ -113,7 +128,7 @@ export default function Board({
       } finally {
         setBusy((b) => b - 1);
       }
-      afterImport(added, errors);
+      afterImport(added, errors, videos);
     },
     [afterImport, language.id, toast],
   );
@@ -212,15 +227,18 @@ export default function Board({
   const addFromDialog = async () => {
     const picked = await open({
       multiple: true,
-      title: 'Add images',
-      filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp', 'tif', 'tiff'] }],
+      title: 'Add images or videos',
+      filters: [
+        { name: 'Images and videos', extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp', 'tif', 'tiff', ...VIDEO_EXTENSIONS] },
+      ],
     });
     const paths = Array.isArray(picked) ? picked : typeof picked === 'string' ? [picked] : [];
     if (paths.length === 0) return;
+    if (paths.some((p) => VIDEO_EXT_RE.test(p))) toast.info('Reading key frames from the video…');
     setBusy((b) => b + 1);
     try {
       const r = await api.importFiles(language.id, paths);
-      afterImport(r.added.length, r.errors);
+      afterImport(r.added.length, r.errors, r.videos);
     } catch (e) {
       afterImport(0, [errText(e)]);
     } finally {
@@ -285,7 +303,7 @@ export default function Board({
           <button className="btn small primary" onClick={addFromDialog}>
             <ImagePlus size={13} /> Add images…
           </button>
-          <span className="hint">Drag from Finder or a browser · Paste a screenshot with ⌘V · Links and documents go to Sources</span>
+          <span className="hint">Drag from Finder or a browser · Videos give their key frames · Paste a screenshot with ⌘V · Links and documents go to Sources</span>
           <div className="spacer" />
           {busy > 0 && (
             <span className="chip chip-busy">

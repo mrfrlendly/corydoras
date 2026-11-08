@@ -291,3 +291,11 @@ pub struct SynthSource {
     pub source: Source,
     pub analysis: Value,
 }
+
+/// The frames that a video import added.
+#[derive(Serialize, Clone, Debug)]
+pub struct VideoImport {
+    pub items: Vec<Item>,
+    /// Length of the video (seconds).
+    pub duration: f64,
+}

@@ -28,7 +28,7 @@ To also add the MCP server to Claude Desktop, run `bash scripts/setup-mac.sh --r
 2. Open **Settings**. Under **Model providers**, open a provider, paste its API key, and click **Test**. The key is saved in a file that only your user account can read.
 3. Choose the provider for **Images and sources** and the provider for the **Language document**.
 4. Click **+** next to **Languages**, type a name, and press Return.
-5. Drag images into the board, or paste a screenshot with ⌘V.
+5. Drag images into the board, or paste a screenshot with ⌘V. A video (MP4, MOV, M4V) adds its key frames.
 
 API keys are files in `~/Library/Application Support/Corydoras/keys/` (folder mode 0700, files mode 0600), so a rebuild never asks for your password. Keys that earlier versions saved in the Keychain move into these files the first time the app uses them; macOS can ask for Keychain access that one last time.
 
@@ -45,6 +45,16 @@ API keys are files in `~/Library/Application Support/Corydoras/keys/` (folder mo
 | Review | The app looks for numbers in text fields, unknown evidence IDs, observed values without evidence, and exceptions that point at no rule. The findings go back to the model one time. Findings that remain are saved with the version and shown at the top of the document. |
 | Version | The app renders `language.md` from `tokens.json`, so the two cannot disagree. If the inputs did not change, the app saves no version. |
 | Your edit | In the Document tab you edit `tokens.json`. The same validation applies, and the app renders a new `language.md`. |
+
+## Videos
+
+Drag a video onto the Board, or choose it with **Add images…**. The app reads it with AVFoundation (macOS) and adds up to 20 key frames as images. They are analyzed like any other image.
+
+- A key frame is a distinct view, not a codec frame. The app scans the video with small samples (every 0.5 s, or at most 300 samples), starts a new segment at each cut or when a pan has changed the picture enough, and keeps the middle frame of each segment at up to 2048 px.
+- Dark or flat frames (fades), one-sample transitions and repeats of an earlier view are left out. With more than 20 segments, the longest ones win.
+- Each frame is named after the video and its position, for example `demo · 0:12.jpg`, and that is also its source.
+- macOS reads MP4, MOV and M4V. Convert WebM, MKV or AVI first, for example with QuickTime Player › File › Export As.
+- The app does not keep the video.
 
 ## Spec format (schema 2)
 
@@ -214,5 +224,4 @@ CORYDORAS_API_KEY=… cargo run -p corydoras-core --example e2e -- /tmp/lib http
 ## Phase 2
 
 - Menu bar icon for capture
-- Video import with keyframes (ffmpeg)
 - Canvas view

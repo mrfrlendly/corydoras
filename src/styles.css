@@ -1808,13 +1808,12 @@ svg.lucide {
   --logo-ring: var(--panel-2);
 }
 
+/* The app icon as an image; the art has its own depth and margin. */
 .logo {
-  --logo-tile: var(--panel);
-  color: var(--ink);
-}
-
-.logo-tile {
-  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.12));
+  display: block;
+  flex: none;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .brand-word {

@@ -3,3 +3,6 @@ dist
 target
 src-tauri/gen
 .DS_Store
+
+# TypeScript incremental build cache (changes on every build)
+tsconfig.tsbuildinfo

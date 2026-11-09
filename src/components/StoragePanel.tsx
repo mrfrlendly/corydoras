@@ -149,7 +149,7 @@ export default function StoragePanel({ info, onInfo, onChanged }: { info: AppInf
               {moving && (
                 <div className="move-progress">
                   <div className="bar">
-                    <div style={{ width: `${pct}%` }} />
+                    <div style={{ transform: `translateX(${pct - 100}%)` }} />
                   </div>
                   <span className="small muted">
                     <Loader size={12} className="spin" /> {progress ? `${fmtBytes(progress.done)} of ${fmtBytes(progress.total)}` : 'Stopping the queue…'}

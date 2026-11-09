@@ -75,7 +75,7 @@ function NowCard({ c, now, onCancel }: { c: CurrentJob; now: number; onCancel: (
       {inCall && (
         <>
           <div className="meter" title="Output tokens so far, compared with the limit for this call">
-            <div className={`meter-fill ${c.stream === 'thinking' ? 'thinking' : ''}`} style={{ width: `${Math.max(pct, 1.5)}%` }} />
+            <div className={`meter-fill ${c.stream === 'thinking' ? 'thinking' : ''}`} style={{ transform: `translateX(${Math.max(pct, 1.5) - 100}%)` }} />
           </div>
           <div className="metrics">
             <div>

@@ -1,6 +1,10 @@
 /* Corydoras — quiet instrument UI: warm grey surfaces, charcoal ink, one orange accent. */
 
 :root {
+  /* Motion curves: a strong ease-out for things that respond or enter, and an
+     ease-in-out for things that move across the screen. */
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
   --bg: #efede8;
   --panel: #f8f7f4;
   --panel-2: #e7e4de;
@@ -657,9 +661,44 @@ textarea {
   bottom: 18px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
   z-index: 100;
   max-width: 420px;
+}
+
+/* Each toast sits in a slot that collapses when it leaves, so the toasts
+   around it slide together instead of jumping. The gap is padding inside
+   the slot, so it collapses too. */
+.toast-slot {
+  display: grid;
+  grid-template-rows: 1fr;
+  opacity: 1;
+  transform: none;
+  transition:
+    opacity 200ms var(--ease-out),
+    transform 200ms var(--ease-out),
+    grid-template-rows 200ms var(--ease-out);
+
+  @starting-style {
+    opacity: 0;
+    transform: translateY(8px) scale(0.97);
+  }
+}
+
+.toast-slot.leaving {
+  grid-template-rows: 0fr;
+  opacity: 0;
+  transform: translateX(12px);
+  pointer-events: none;
+  transition-duration: 160ms;
+}
+
+.toast-clip {
+  min-height: 0;
+  padding-top: 8px;
+}
+
+.toast-slot.leaving .toast-clip {
+  overflow: hidden;
 }
 
 .toast {
@@ -1595,11 +1634,13 @@ button.chip {
   margin-bottom: 12px;
 }
 
+/* Progress fills are full width and slide in from the left (transform, not
+   width, so a change costs no layout). The track clips them. */
 .meter-fill {
   height: 100%;
   background: var(--busy);
   border-radius: 3px;
-  transition: width 0.4s ease;
+  transition: transform 200ms var(--ease-out);
 }
 
 .meter-fill.thinking {
@@ -2420,7 +2461,7 @@ svg.lucide {
 .move-progress .bar > div {
   height: 100%;
   background: var(--accent);
-  transition: width 0.2s;
+  transition: transform 200ms var(--ease-out);
 }
 
 .recent-libs {
@@ -2726,6 +2767,16 @@ textarea:focus-visible,
   /* The transform is the card's place: it must follow the pointer at once.
      (The general .card rule animates transform.) */
   transition:
+    border-color 0.12s ease-out,
+    box-shadow 0.12s ease-out;
+}
+
+/* Arrange by weight: the cards glide to their new places, so you can see
+   where each one went. Only for that moment; a dragged card never lags. */
+.canvas-world.arranging .canvas-card {
+  transition:
+    transform 320ms var(--ease-in-out),
+    width 320ms var(--ease-in-out),
     border-color 0.12s ease-out,
     box-shadow 0.12s ease-out;
 }

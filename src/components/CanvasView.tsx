@@ -32,6 +32,8 @@ interface Props {
 
 /** Share of the remaining distance that an animated zoom covers per frame. */
 const EASE = 0.22;
+/** Length of the glide after Arrange by weight (.canvas-world.arranging in styles.css). */
+const ARRANGE_MS = 320;
 
 const reducedMotion = () => window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
 
@@ -94,6 +96,16 @@ export default function CanvasView({ languageId, items, selected, onSelect, rend
   const gesture = useRef<Gesture | null>(null);
   const fitted = useRef(loadView(languageId) !== null);
   const [panning, setPanning] = useState(false);
+  // True for a moment after Arrange by weight (and its Undo): the cards glide to
+  // their new places. At other times a card's place follows the pointer at once.
+  const [arranging, setArranging] = useState(false);
+  const arrangeTimer = useRef<number | undefined>(undefined);
+  const glide = useCallback(() => {
+    setArranging(true);
+    window.clearTimeout(arrangeTimer.current);
+    arrangeTimer.current = window.setTimeout(() => setArranging(false), ARRANGE_MS + 50);
+  }, []);
+  useEffect(() => () => window.clearTimeout(arrangeTimer.current), []);
 
   const save = useCallback(
     (places: CanvasPlacement[]) => {
@@ -293,6 +305,7 @@ export default function CanvasView({ languageId, items, selected, onSelect, rend
     const order = [...items].sort((a, b) => b.weight - a.weight || b.added_at.localeCompare(a.added_at));
     const cols = Math.max(3, Math.round(Math.sqrt(order.length) * 1.3));
     const places = masonry(order, cols, 0, 0);
+    glide();
     setPos((p) => {
       const next = { ...p };
       for (const pl of places) next[pl.id] = { x: pl.x, y: pl.y, w: pl.w };
@@ -303,6 +316,7 @@ export default function CanvasView({ languageId, items, selected, onSelect, rend
     toast.info('Arranged by weight.', {
       label: 'Undo',
       run: () => {
+        glide();
         setPos((p) => {
           const next = { ...p };
           for (const pl of before) next[pl.id] = { x: pl.x, y: pl.y, w: pl.w };
@@ -356,7 +370,7 @@ export default function CanvasView({ languageId, items, selected, onSelect, rend
       onPointerCancel={onPointerUp}
     >
       <div
-        className="canvas-world"
+        className={`canvas-world ${arranging ? 'arranging' : ''}`}
         style={{ transform: `translate(${view.tx}px, ${view.ty}px) scale(${view.z})`, ['--inv-z' as string]: 1 / view.z }}
       >
         {cards}

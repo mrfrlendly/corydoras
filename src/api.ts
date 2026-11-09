@@ -276,6 +276,8 @@ export interface ConformanceReport {
   family: string | null;
   findings: ConformanceFinding[];
   not_reported: string[];
+  /** Rule sets that were applied; empty means no hard rule judged anything. */
+  rule_sets: string[];
   pass: number;
   fail: number;
   warn: number;

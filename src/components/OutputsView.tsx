@@ -60,11 +60,16 @@ function OutputCard({ o, busy, onDecide, onRemove }: { o: Output; busy: boolean;
               Check: {c.pass} pass · {c.fail} fail · {c.warn} warn · {c.unknown} unknown {open ? '▾' : '▸'}
             </button>
             {open && (
-              <ul className="findings">
-                {c.findings.map((f, i) => (
-                  <FindingRow key={i} f={f} />
-                ))}
-              </ul>
+              <>
+                <ul className="findings">
+                  {c.findings.map((f, i) => (
+                    <FindingRow key={i} f={f} />
+                  ))}
+                </ul>
+                <div className="small muted">
+                  {c.rule_sets && c.rule_sets.length > 0 ? `Hard rules from ${c.rule_sets.join(', ')}.` : 'No hard rule set applied, so no hard rule judged anything.'}
+                </div>
+              </>
             )}
           </div>
         )}

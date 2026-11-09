@@ -42,6 +42,9 @@ pub struct Report {
     pub findings: Vec<Finding>,
     /// Measures of the family that the agent did not report.
     pub not_reported: Vec<String>,
+    /// Names of the rule sets that were applied. Empty: no hard rule judged anything.
+    #[serde(default)]
+    pub rule_sets: Vec<String>,
     pub pass: usize,
     pub fail: usize,
     pub warn: usize,
@@ -212,6 +215,7 @@ pub fn check(
         unknown: count("unknown"),
         findings,
         not_reported,
+        rule_sets: sets.iter().map(|r| r.name.clone()).collect(),
     })
 }
 
@@ -237,6 +241,11 @@ pub fn report_text(r: &Report) -> String {
             if f.detail.is_empty() { String::new() } else { format!(" · {}", f.detail) },
             ""
         ));
+    }
+    if r.rule_sets.is_empty() {
+        s.push_str("\nNo hard rule set applied, so no hard rule judged anything. Pass \"project\" (a project that selects rule sets), or ask the designer to mark a rule set \"Apply to every project\".\n");
+    } else {
+        s.push_str(&format!("\nHard rules from: {}.\n", r.rule_sets.join(", ")));
     }
     if !r.not_reported.is_empty() {
         s.push_str(&format!("\nNot reported (measures of the family): {}.\n", r.not_reported.join(", ")));
@@ -358,6 +367,7 @@ mod tests {
         assert_eq!(r.version, 1);
         assert_eq!(r.fail + r.pass + r.unknown + r.warn, 1);
         assert!(report_text(&r).contains("CONFORMANCE"));
+        assert!(report_text(&r).contains("No hard rule set applied"));
 
         // The report is saved with an output, through a query-only connection.
         let img = image::RgbImage::from_fn(32, 24, |x, y| image::Rgb([x as u8, y as u8, 9]));

@@ -631,6 +631,26 @@ fn reject_proposal(state: State<'_, AppState>, proposal_id: String) -> CmdResult
 }
 
 #[tauri::command]
+fn list_outputs(state: State<'_, AppState>, language_id: String) -> CmdResult<Vec<corydoras_core::outputs::Output>> {
+    lib(&state)?.list_outputs(&language_id).map_err(e2s)
+}
+
+#[tauri::command]
+fn set_output_verdict(
+    state: State<'_, AppState>,
+    output_id: String,
+    verdict: String,
+    note: String,
+) -> CmdResult<corydoras_core::outputs::Output> {
+    lib(&state)?.set_output_verdict(&output_id, &verdict, &note).map_err(e2s)
+}
+
+#[tauri::command]
+fn remove_output(state: State<'_, AppState>, output_id: String) -> CmdResult<()> {
+    lib(&state)?.remove_output(&output_id).map_err(e2s)
+}
+
+#[tauri::command]
 fn synthesize_now(state: State<'_, AppState>, language_id: String) -> CmdResult<()> {
     lib(&state)?.synthesize_now(&language_id).map_err(e2s)
 }
@@ -1195,6 +1215,9 @@ fn main() {
             list_proposals,
             accept_proposal,
             reject_proposal,
+            list_outputs,
+            set_output_verdict,
+            remove_output,
             synthesize_now,
             language_text,
             list_projects,

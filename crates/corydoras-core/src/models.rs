@@ -243,6 +243,9 @@ pub struct LanguageStatus {
     /// Amendment proposals from agents that wait for a decision.
     #[serde(default)]
     pub open_proposals: i64,
+    /// Agent outputs that wait for the designer's verdict.
+    #[serde(default)]
+    pub pending_outputs: i64,
 }
 
 /// One item and its inputs for the synthesis pass.

@@ -2863,3 +2863,134 @@ textarea:focus-visible,
     transition: none;
   }
 }
+
+/* Outputs tab: designs that agents made from the language */
+.outputs {
+  display: grid;
+  gap: 12px;
+  padding-bottom: 24px;
+}
+
+.output {
+  display: grid;
+  grid-template-columns: 160px minmax(0, 1fr);
+  gap: 14px;
+  background: var(--panel);
+  border: 1px solid var(--rule);
+  border-left: 3px solid var(--rule);
+  border-radius: var(--radius);
+  padding: 12px;
+}
+
+.output-pending {
+  border-left-color: var(--accent);
+}
+.output-accepted {
+  border-left-color: var(--ok);
+}
+.output-rejected {
+  border-left-color: var(--err);
+}
+
+.output-thumb img {
+  display: block;
+  width: 100%;
+  border-radius: 6px;
+  background: var(--bg);
+}
+
+.output-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.output-name {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.output-state {
+  font-size: 10.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--ink-3);
+}
+.output-state.state-accepted {
+  color: var(--ok);
+}
+.output-state.state-rejected {
+  color: var(--err);
+}
+
+.output-note {
+  margin: 8px 0 0;
+  color: var(--ink-2);
+  font-size: 12.5px;
+}
+
+.output-check {
+  margin-top: 8px;
+}
+
+.findings {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+  font-size: 12px;
+}
+
+.finding {
+  display: grid;
+  grid-template-columns: 56px minmax(0, 1fr);
+  gap: 8px;
+  align-items: baseline;
+}
+
+.finding-verdict {
+  font-size: 10.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--ink-3);
+}
+.finding-pass .finding-verdict {
+  color: var(--ok);
+}
+.finding-fail .finding-verdict {
+  color: var(--err);
+}
+.finding-warn .finding-verdict {
+  color: var(--accent);
+}
+
+.finding-body {
+  overflow-wrap: anywhere;
+}
+
+.output-actions {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-top: 10px;
+}
+
+.output-note-input {
+  flex: 1 1 200px;
+  min-width: 0;
+}
+
+@media (max-width: 720px) {
+  .output {
+    grid-template-columns: 1fr;
+  }
+  .output-thumb img {
+    max-height: 220px;
+    object-fit: contain;
+  }
+}

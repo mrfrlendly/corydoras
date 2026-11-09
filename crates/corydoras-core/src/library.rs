@@ -1887,12 +1887,18 @@ impl Library {
                 [&l.id],
                 |r| r.get(0),
             )?;
+            let pending_outputs: i64 = c.query_row(
+                "SELECT COUNT(*) FROM outputs WHERE language_id = ?1 AND verdict = 'pending'",
+                [&l.id],
+                |r| r.get(0),
+            )?;
             out.push(LanguageStatus {
                 language_id: l.id,
                 pending_items,
                 error_items,
                 synth_due_in: synth.map(|t| (t - now).max(0)),
                 open_proposals,
+                pending_outputs,
             });
         }
         Ok(out)

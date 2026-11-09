@@ -9,7 +9,8 @@
 //! Without --library it uses CORYDORAS_LIBRARY, then the app configuration.
 
 use anyhow::{anyhow, Result};
-use corydoras_core::{agent, config, Library};
+use corydoras_core::conformance::{self, Measurement};
+use corydoras_core::{agent, analysis, config, outputs, Library};
 use serde_json::{json, Value};
 use std::cell::RefCell;
 use std::io::{BufRead, Write};
@@ -31,7 +32,9 @@ the evidence behind a rule. Rules with basis \"source\" come from tutorials or d
 call get_sources with those IDs to read the technique behind them. Call search_items to find reference \
 images by what they show. When the references or the hard rules show that a rule or measure is wrong or \
 missing, call propose_amendment: the designer reviews the change in the app, and nothing changes until \
-they accept it.";
+they accept it. When you have made a design from a language, call submit_output with a render of it so the designer \
+can accept or reject it (that teaches the language), and call check_against_language with the numbers you measured on \
+the design: it compares them with the hard rules and the language's measures and lists every fail to fix.";
 
 fn tools() -> Value {
     json!([
@@ -119,6 +122,62 @@ fn tools() -> Value {
             }
         },
         {
+            "name": "check_against_language",
+            "description": "Check numbers that you measured on a design against the hard rules and the language's measures. Send each measurement with its name (use the names of the rules and measures: \"minimum wall\", \"blade pitch\"), value and unit. Hard rules are checked first and win: a number that breaks one is a FAIL and must change. Then the measures of the family are compared (observed range: FAIL outside it; preferred value: WARN). UNKNOWN means the name or unit matched nothing, so nothing was judged: it is not a pass. Without \"family\", only hard rules can judge. The check uses numbers only; it does not look at images. Pass \"output\" to save the report with a submitted output.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "language": {"type": "string", "description": "Language ID or name"},
+                    "family": {"type": "string", "description": "Family ID or name of the object (list_languages shows the families)"},
+                    "project": {"type": "string", "description": "Project name or ID, so that the rule sets of the project apply (optional)"},
+                    "measurements": {
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": 100,
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "name": {"type": "string"},
+                                "value": {"type": "number"},
+                                "unit": {"type": "string", "description": "mm, deg, percent, count or ratio"}
+                            },
+                            "required": ["name", "value", "unit"]
+                        }
+                    },
+                    "output": {"type": "string", "description": "ID (or first 8 characters) of a submitted output to save the report with (optional)"}
+                },
+                "required": ["language", "measurements"],
+                "additionalProperties": false
+            }
+        },
+        {
+            "name": "submit_output",
+            "description": "Send the designer a render of a design that you made from a language. The designer accepts or rejects it in the app (Outputs tab): an accepted output supports the language, a rejected one becomes an anti-reference, so the next version avoids it. Nothing in the language changes until they decide. Send an image file by path (PNG, JPEG or WebP, up to 20 MB) or as base64. Add the measurements you took, so the designer sees them with the picture.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "language": {"type": "string", "description": "Language ID or name"},
+                    "path": {"type": "string", "description": "Absolute path of the image file on this computer"},
+                    "image_base64": {"type": "string", "description": "The image as base64, instead of path"},
+                    "name": {"type": "string", "description": "Short name of the design, for example \"twisted rib shade v2\""},
+                    "family": {"type": "string", "description": "Family of the object (optional)"},
+                    "project": {"type": "string", "description": "Project the design belongs to (optional)"},
+                    "note": {"type": "string", "description": "What you made and which choices you took (optional)"},
+                    "measurements": {
+                        "type": "array",
+                        "maxItems": 100,
+                        "items": {
+                            "type": "object",
+                            "properties": {"name": {"type": "string"}, "value": {"type": "number"}, "unit": {"type": "string"}},
+                            "required": ["name", "value"]
+                        }
+                    }
+                },
+                "required": ["language"],
+                "additionalProperties": false
+            }
+        },
+        {
             "name": "propose_amendment",
             "description": "Propose a change to the latest version of a language spec (tokens.json, schema 2). The change does not apply by itself: the designer reviews it in the app and accepts or rejects it; an accepted proposal becomes a new version. The patch is a JSON Patch (RFC 6902) with add, remove and replace. A path segment into an array can be an index, \"-\" (append, with add), or the id, name or term of an element, for example /families/blade-field/measures/blade pitch/value or /principles/P2. The amended spec must pass the same validation as a manual edit; measures keep their unit, \"of\", basis and evidence, and text fields hold no numbers with units. Read the language with get_language first and pass its version as base_version.",
             "inputSchema": {
@@ -148,6 +207,11 @@ fn tools() -> Value {
             }
         }
     ])
+}
+
+fn measurements_arg(args: &Value) -> Result<Vec<Measurement>> {
+    let v = args.get("measurements").cloned().ok_or_else(|| anyhow!("The argument \"measurements\" is necessary."))?;
+    serde_json::from_value(v).map_err(|e| anyhow!("The measurements are not valid: {e}. Each one is {{\"name\", \"value\" (number), \"unit\"}}."))
 }
 
 struct Server {
@@ -234,6 +298,46 @@ impl Server {
                 let author = self.client.borrow().clone();
                 let sub = lib.submit_proposal(&arg_str("language")?, base, &arg_str("summary")?, rationale, &patch, &author)?;
                 Ok(vec![text(agent::proposal_text(&lib, &sub)?)])
+            }
+            "check_against_language" => {
+                let ms = measurements_arg(args)?;
+                let family = args.get("family").and_then(|v| v.as_str());
+                let project = args.get("project").and_then(|v| v.as_str());
+                let output = args.get("output").and_then(|v| v.as_str());
+                let report = conformance::run(&lib, &arg_str("language")?, family, project, &ms, output)?;
+                Ok(vec![text(conformance::report_text(&report))])
+            }
+            "submit_output" => {
+                let bytes = if let Some(p) = args.get("path").and_then(|v| v.as_str()).filter(|p| !p.trim().is_empty()) {
+                    let path = std::path::Path::new(p.trim());
+                    if !path.is_absolute() {
+                        return Err(anyhow!("The path must be absolute."));
+                    }
+                    let meta = std::fs::metadata(path).map_err(|e| anyhow!("Cannot read {}: {e}", path.display()))?;
+                    if meta.len() as usize > outputs::MAX_OUTPUT_BYTES {
+                        return Err(anyhow!("The image is larger than 20 MB. Send a smaller render."));
+                    }
+                    std::fs::read(path).map_err(|e| anyhow!("Cannot read {}: {e}", path.display()))?
+                } else if let Some(b) = args.get("image_base64").and_then(|v| v.as_str()) {
+                    analysis::base64_decode(b)?
+                } else {
+                    return Err(anyhow!("Send the image as \"path\" or \"image_base64\"."));
+                };
+                let default_name = args
+                    .get("path")
+                    .and_then(|v| v.as_str())
+                    .and_then(|p| std::path::Path::new(p).file_name())
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_default();
+                let name = args.get("name").and_then(|v| v.as_str()).filter(|n| !n.trim().is_empty()).map(|n| n.to_string()).unwrap_or(default_name);
+                let get = |k: &str| args.get(k).and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let ms = if args.get("measurements").is_some() { measurements_arg(args)? } else { Vec::new() };
+                let author = self.client.borrow().clone();
+                let out = lib.submit_output(&arg_str("language")?, &name, &bytes, &get("family"), &get("project"), &author, &get("note"), &ms)?;
+                Ok(vec![text(format!(
+                    "Output {} is saved for the designer to review in the Corydoras app (Outputs tab). It supports or changes the language only after they accept or reject it.",
+                    &out.id[..8]
+                ))])
             }
             other => Err(anyhow!("Unknown tool \"{other}\".")),
         }

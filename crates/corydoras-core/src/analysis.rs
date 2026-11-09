@@ -53,6 +53,15 @@ pub fn data_url_jpeg(bytes: &[u8]) -> String {
     )
 }
 
+/// Decodes base64 (standard alphabet; whitespace and a data-URL prefix are ignored).
+pub fn base64_decode(text: &str) -> anyhow::Result<Vec<u8>> {
+    let body = text.rsplit_once(',').map(|(_, b)| b).unwrap_or(text);
+    let clean: String = body.chars().filter(|c| !c.is_whitespace()).collect();
+    base64::engine::general_purpose::STANDARD
+        .decode(clean.as_bytes())
+        .map_err(|e| anyhow::anyhow!("The image data is not valid base64: {e}"))
+}
+
 pub fn base64_of(bytes: &[u8]) -> String {
     base64::engine::general_purpose::STANDARD.encode(bytes)
 }

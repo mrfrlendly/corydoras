@@ -222,7 +222,19 @@ The server is a separate binary that uses the stdio transport. It reads the libr
 | `get_sources` | Tutorials and documents of a language with the notes from each; with `ids`, only those sources |
 | `get_reference_images` | Images with the highest weight, or exact items by `item_ids` (the 8-character evidence IDs) |
 | `search_items` | Items whose tags, notes, region notes or analysis match the query words, best first, with the matching text and evidence IDs (no images) |
+| `check_against_language` | Compares numbers that an agent measured on a design with the hard rules (first, and they win) and the measures of a family. Each number is PASS, FAIL, WARN or UNKNOWN; the check uses numbers only |
+| `submit_output` | Stores a render of a design that the agent made, for your verdict in the **Outputs** tab (see below) |
 | `propose_amendment` | Stores a proposed change to the latest spec of a language for your review; the language does not change |
+
+### Outputs
+
+An agent that made a design from a language sends a render with `submit_output` (an image file by path, or base64; PNG, JPEG or WebP up to 20 MB), optionally with the numbers it measured. The **Outputs** tab of the language lists them.
+
+- **Accept** turns the output into a reference of weight 2, tagged `agent-output`. It supports the language but weighs less than your own references.
+- **Reject** turns it into an anti-reference (weight 3) with your note, so the next version avoids it.
+- **Undo** removes the verdict and the reference it made. You can change your mind at any time; the next synthesis follows.
+- Without a verdict, an output changes nothing. A language holds at most 50 outputs without a verdict.
+- `check_against_language` can save its report with an output (`output` argument); the tab shows the result per measure.
 
 ### Proposed amendments
 

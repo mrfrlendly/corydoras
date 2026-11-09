@@ -250,6 +250,59 @@ export interface LanguageStatus {
   synth_due_in: number | null;
   /** Amendment proposals from agents that wait for a decision. */
   open_proposals: number;
+  /** Agent outputs that wait for a verdict. */
+  pending_outputs: number;
+}
+
+export interface Measurement {
+  name: string;
+  value: number;
+  unit: string | null;
+}
+
+export interface ConformanceFinding {
+  measure: string;
+  value: number;
+  unit: string | null;
+  verdict: 'pass' | 'fail' | 'warn' | 'unknown';
+  source: string;
+  expected: string;
+  detail: string;
+}
+
+export interface ConformanceReport {
+  language: string;
+  version: number;
+  family: string | null;
+  findings: ConformanceFinding[];
+  not_reported: string[];
+  pass: number;
+  fail: number;
+  warn: number;
+  unknown: number;
+}
+
+/** A design that an agent made from a language and sent back for a verdict. */
+export interface Output {
+  id: string;
+  language_id: string;
+  project: string;
+  name: string;
+  file_rel: string;
+  thumb_rel: string;
+  width: number;
+  height: number;
+  language_version: number | null;
+  author: string;
+  note: string;
+  family: string;
+  measurements: Measurement[];
+  check: ConformanceReport | null;
+  verdict: 'pending' | 'accepted' | 'rejected';
+  verdict_note: string;
+  item_id: string | null;
+  created_at: string;
+  decided_at: string | null;
 }
 
 export interface ProposalChange {
@@ -516,6 +569,10 @@ export const api = {
     invoke<Proposal[]>('list_proposals', { languageId, includeDecided }),
   acceptProposal: (proposalId: string) => invoke<number>('accept_proposal', { proposalId }),
   rejectProposal: (proposalId: string) => invoke<void>('reject_proposal', { proposalId }),
+  listOutputs: (languageId: string) => invoke<Output[]>('list_outputs', { languageId }),
+  setOutputVerdict: (outputId: string, verdict: Output['verdict'], note: string) =>
+    invoke<Output>('set_output_verdict', { outputId, verdict, note }),
+  removeOutput: (outputId: string) => invoke<void>('remove_output', { outputId }),
   synthesizeNow: (languageId: string) => invoke<void>('synthesize_now', { languageId }),
   languageText: (languageId: string, version: number | null) =>
     invoke<string>('language_text', { languageId, version }),

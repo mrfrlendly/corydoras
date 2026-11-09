@@ -21,7 +21,8 @@ Items 5, 8, 9, 11 and 12 do not depend on the loop and can be picked up at any t
 - Attach a render or model to a language version. Store it in the library next to `items/`.
 - Mark each output accepted or rejected, with an optional note.
 - A rejected output becomes an anti-reference. Pass 2 reads accepted outputs as supporting evidence and rejected ones as "do not" evidence.
-- Done when: an output can be added from the app and from an MCP tool, and a rejection changes the next synthesis.
+- Done when: an output can be added from an MCP tool and decided in the app, and a rejection changes the next synthesis.
+- Decided: images only for now. Outputs are sent with the MCP tool `submit_output`; there is no add button in the app yet.
 
 **2. Conformance-check MCP tool (`check_against_language`)**
 - An agent submits measurements and/or a screenshot for a family.
@@ -29,6 +30,7 @@ Items 5, 8, 9, 11 and 12 do not depend on the loop and can be picked up at any t
 - Hard rules are checked first and win over language rules.
 - Read-only, like the other MCP tools, except that results can be saved as an output record.
 - Done when: an agent can check a finished model and get a per-rule verdict.
+- Decided: the check uses submitted numbers only, not the vision model. A name or unit that matches nothing is UNKNOWN, never a pass. Without a family, only hard rules can judge.
 
 ## 3.2 Geometry and print feedback
 
@@ -84,8 +86,7 @@ Items 5, 8, 9, 11 and 12 do not depend on the loop and can be picked up at any t
 
 ## Open questions
 
-- Which output formats count in 3.1: images only, or also STL and STEP from the start?
-- Should the conformance check use the vision model, or only submitted numbers?
+- Should a vision-model check (render against the references) join the number check later?
 - Is inheritance (7) worth the resolution complexity, or is copy-and-edit enough?
 - Does the library schema need a migration for outputs, and how does that interact with the library move?
 

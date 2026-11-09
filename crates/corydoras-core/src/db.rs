@@ -168,6 +168,29 @@ CREATE TABLE IF NOT EXISTS proposals (
     result_version INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_proposals_language ON proposals(language_id, status);
+
+CREATE TABLE IF NOT EXISTS outputs (
+    id               TEXT PRIMARY KEY,
+    language_id      TEXT NOT NULL REFERENCES languages(id) ON DELETE CASCADE,
+    project          TEXT NOT NULL DEFAULT '',
+    name             TEXT NOT NULL,
+    file_name        TEXT NOT NULL,
+    width            INTEGER NOT NULL DEFAULT 0,
+    height           INTEGER NOT NULL DEFAULT 0,
+    hash             TEXT NOT NULL DEFAULT '',
+    language_version INTEGER,
+    author           TEXT NOT NULL DEFAULT '',
+    note             TEXT NOT NULL DEFAULT '',
+    family           TEXT NOT NULL DEFAULT '',
+    measurements     TEXT NOT NULL DEFAULT '[]',
+    check_json       TEXT,
+    verdict          TEXT NOT NULL DEFAULT 'pending',
+    verdict_note     TEXT NOT NULL DEFAULT '',
+    item_id          TEXT REFERENCES items(id) ON DELETE SET NULL,
+    created_at       TEXT NOT NULL,
+    decided_at       TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_outputs_language ON outputs(language_id, verdict);
 "#;
 
 fn has_column(conn: &Connection, table: &str, column: &str) -> Result<bool> {

@@ -1,17 +1,19 @@
 import { useEffect, useState } from 'react';
 import { api, CurrentJob, errText, Language, LanguageStatus, shortStatus, StatusReport } from '../api';
-import { BookOpen, FileText, History, LayoutGrid, Pencil, RefreshCw, Sparkles, X } from 'lucide-react';
+import { BookOpen, ClipboardCheck, FileText, History, LayoutGrid, Pencil, RefreshCw, Sparkles, X } from 'lucide-react';
 import Board from './Board';
 import SourcesView from './SourcesView';
 import DocumentView from './DocumentView';
 import VersionsView from './VersionsView';
+import OutputsView from './OutputsView';
 import { useToast } from './Toast';
 
-type Tab = 'board' | 'sources' | 'document' | 'versions';
+type Tab = 'board' | 'sources' | 'outputs' | 'document' | 'versions';
 
 const TABS: { id: Tab; label: string; icon: typeof LayoutGrid }[] = [
   { id: 'board', label: 'Board', icon: LayoutGrid },
   { id: 'sources', label: 'Sources', icon: BookOpen },
+  { id: 'outputs', label: 'Outputs', icon: ClipboardCheck },
   { id: 'document', label: 'Document', icon: FileText },
   { id: 'versions', label: 'Versions', icon: History },
 ];
@@ -258,6 +260,11 @@ export default function LanguageView({ language, status, worker, current, paused
             {label}
             {t === 'board' && language.item_count > 0 ? <span className="tab-badge">{language.item_count}</span> : null}
             {t === 'sources' && language.source_count > 0 ? <span className="tab-badge">{language.source_count}</span> : null}
+            {t === 'outputs' && status && status.pending_outputs > 0 ? (
+              <span className="tab-dot" title={`${status.pending_outputs} output${status.pending_outputs === 1 ? '' : 's'} waiting for a verdict`}>
+                {status.pending_outputs}
+              </span>
+            ) : null}
             {t === 'document' && language.latest_version ? <span className="tab-badge">v{docVersion ?? language.latest_version}</span> : null}
             {t === 'document' && status && status.open_proposals > 0 ? (
               <span className="tab-dot" title={`${status.open_proposals} proposed amendment${status.open_proposals === 1 ? '' : 's'}`}>
@@ -271,6 +278,7 @@ export default function LanguageView({ language, status, worker, current, paused
       <div className="lang-body">
         {tab === 'board' && <Board language={language} tick={tick} onChanged={onChanged} onSources={() => setTab('sources')} />}
         {tab === 'sources' && <SourcesView language={language} tick={tick} onChanged={onChanged} />}
+        {tab === 'outputs' && <OutputsView language={language} tick={tick} pending={status?.pending_outputs ?? 0} onChanged={onChanged} />}
         {tab === 'document' && (
           <DocumentView
             language={language}

@@ -59,6 +59,9 @@ if [[ -f package-lock.json ]]; then npm ci --no-audit --no-fund; else npm instal
 say "3/6  Build the MCP server"
 cargo build --release -p corydoras-mcp
 mkdir -p "$HOME/.local/bin"
+# Remove first: overwriting a running or cached signed binary in place makes macOS
+# kill the new file (exit 137) because the old file's signature is still cached.
+rm -f "$HOME/.local/bin/corydoras-mcp"
 cp target/release/corydoras-mcp "$HOME/.local/bin/corydoras-mcp"
 chmod 755 "$HOME/.local/bin/corydoras-mcp"
 echo "Installed: $HOME/.local/bin/corydoras-mcp"

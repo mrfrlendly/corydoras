@@ -88,6 +88,11 @@ pub fn start(app: &AppHandle) {
             }
             Ok(None) => {}
             Err(e) => {
+                // A capture from the shortcut may start with the window hidden;
+                // show it so that the access message is seen.
+                if e == screen_access::DENIED {
+                    show_main(&app);
+                }
                 let _ = app.emit("capture-error", e);
             }
         }
@@ -98,6 +103,7 @@ fn run(app: &AppHandle) -> Result<Option<CaptureDone>, String> {
     let lib = current_lib(app).ok_or("Choose a library folder in Corydoras first.")?;
     let lang = target_language(&lib, &AppConfig::load().capture)
         .ok_or("Make a language in Corydoras first; captures go into a language.")?;
+    screen_access::check()?;
     let dir = lib.root().join(".tmp");
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let tmp = dir.join(format!("capture-{}.png", uuid::Uuid::new_v4()));
@@ -116,6 +122,47 @@ fn run(app: &AppHandle) -> Result<Option<CaptureDone>, String> {
         .import_bytes(&lang.id, &util::capture_name(), &bytes?, Some("screen capture"))
         .map_err(|e| e.to_string())?;
     Ok(Some(CaptureDone { language_id: lang.id, language_name: lang.name, item_id: item.id }))
+}
+
+/// Screen Recording access. `screencapture` runs as a child of Corydoras, so
+/// macOS checks Corydoras's own access; without it every capture would bring
+/// up the system's "would like to record this computer's screen" dialog.
+mod screen_access {
+    pub(super) const DENIED: &str = "Corydoras has no Screen Recording access. Turn on Corydoras in \
+System Settings > Privacy & Security > Screen & System Audio Recording, then quit and reopen Corydoras. \
+If it is on already, remove it with the minus button and add it again.";
+
+    #[cfg(target_os = "macos")]
+    pub(super) fn check() -> Result<(), String> {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        #[link(name = "CoreGraphics", kind = "framework")]
+        extern "C" {
+            fn CGPreflightScreenCaptureAccess() -> bool;
+            fn CGRequestScreenCaptureAccess() -> bool;
+        }
+        /// The system dialog is asked for once per run, not at every press.
+        static ASKED: AtomicBool = AtomicBool::new(false);
+
+        // SAFETY: both functions take no arguments and only read or request
+        // the access of this process (macOS 10.15 and newer).
+        if unsafe { CGPreflightScreenCaptureAccess() } {
+            return Ok(());
+        }
+        if !ASKED.swap(true, Ordering::SeqCst) {
+            // SAFETY: as above.
+            unsafe { CGRequestScreenCaptureAccess() };
+        } else {
+            let _ = std::process::Command::new("/usr/bin/open")
+                .arg("x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")
+                .status();
+        }
+        Err(DENIED.into())
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    pub(super) fn check() -> Result<(), String> {
+        Ok(())
+    }
 }
 
 // ----------------------------------------------------------------------

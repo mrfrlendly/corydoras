@@ -5,8 +5,10 @@
 #   bash scripts/setup-mac.sh                    build and install
 #   bash scripts/setup-mac.sh --register-claude  also add the MCP server to Claude Desktop
 #
-# The script changes nothing outside the project, ~/Applications/Corydoras.app
-# and ~/.local/bin/corydoras-mcp, unless you pass --register-claude.
+# The script changes nothing outside the project, ~/Applications/Corydoras.app,
+# ~/.local/bin/corydoras-mcp and, once, a "Corydoras Local Signing" certificate
+# in the login keychain (it keeps the Screen Recording grant across builds),
+# unless you pass --register-claude.
 
 set -euo pipefail
 
@@ -73,8 +75,49 @@ npx tauri build --bundles app
 APP_SRC="$ROOT/target/release/bundle/macos/Corydoras.app"
 [[ -d "$APP_SRC" ]] || fail "The build did not make $APP_SRC"
 
+# Sign with a local certificate. Tauri's ad-hoc signature changes with every
+# build, and macOS ties privacy grants (Screen Recording for captures) to it,
+# so each new build lost the grant while System Settings still showed it on.
+# A certificate signature keeps the same identity from build to build.
+SIGN_ID="Corydoras Local Signing"
+if ! security find-certificate -c "$SIGN_ID" >/dev/null 2>&1; then
+  echo "Make the signing certificate \"$SIGN_ID\" in the login keychain (once)…"
+  TMPD="$(mktemp -d)"
+  cat > "$TMPD/cfg" <<'EOF'
+[req]
+distinguished_name=dn
+prompt=no
+x509_extensions=ext
+[dn]
+CN=Corydoras Local Signing
+[ext]
+basicConstraints=critical,CA:false
+keyUsage=critical,digitalSignature
+extendedKeyUsage=critical,codeSigning
+EOF
+  P12_PASS="$(uuidgen)"
+  /usr/bin/openssl req -x509 -newkey rsa:2048 -nodes -days 7300 -config "$TMPD/cfg" \
+    -keyout "$TMPD/key.pem" -out "$TMPD/cert.pem" >/dev/null 2>&1 || { rm -rf "$TMPD"; fail "Cannot make the signing certificate."; }
+  /usr/bin/openssl pkcs12 -export -inkey "$TMPD/key.pem" -in "$TMPD/cert.pem" -name "$SIGN_ID" \
+    -out "$TMPD/id.p12" -passout "pass:$P12_PASS" || { rm -rf "$TMPD"; fail "Cannot make the signing certificate."; }
+  security import "$TMPD/id.p12" -k "$HOME/Library/Keychains/login.keychain-db" -P "$P12_PASS" -T /usr/bin/codesign \
+    || { rm -rf "$TMPD"; fail "Cannot add the signing certificate to the login keychain."; }
+  rm -rf "$TMPD"
+fi
+echo "Sign with \"$SIGN_ID\" (if macOS asks for the keychain, click Always Allow)…"
+codesign --force --deep --sign "$SIGN_ID" "$APP_SRC" || fail "Signing failed."
+NEW_REQ="$(codesign -d -r- "$APP_SRC" 2>&1 | sed -n 's/^designated => //p')"
+
 say "5/6  Install the app in ~/Applications"
 mkdir -p "$HOME/Applications"
+# A grant made for a differently signed copy (an ad-hoc build) no longer matches:
+# clear it so that macOS asks once, cleanly, instead of at every capture.
+OLD_REQ=""
+[[ -d "$HOME/Applications/Corydoras.app" ]] && OLD_REQ="$(codesign -d -r- "$HOME/Applications/Corydoras.app" 2>&1 | sed -n 's/^designated => //p')"
+if [[ "$OLD_REQ" != "$NEW_REQ" ]]; then
+  tccutil reset ScreenCapture com.travisforsyth.corydoras >/dev/null 2>&1 || true
+  echo "The signature changed: macOS will ask once for Screen Recording at the next capture."
+fi
 if [[ -d "$HOME/Applications/Corydoras.app" ]]; then
   osascript -e 'tell application "Corydoras" to quit' >/dev/null 2>&1 || true
   rm -rf "$HOME/Applications/Corydoras.app"

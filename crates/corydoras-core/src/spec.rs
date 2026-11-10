@@ -1027,6 +1027,56 @@ fn sec_summary(t: &Value, out: &mut String) {
     out.push_str("\n\n");
 }
 
+fn short_json(v: &Value) -> String {
+    let s = match v {
+        Value::Null => "nothing".to_string(),
+        Value::String(x) => format!("\"{x}\""),
+        other => other.to_string(),
+    };
+    if s.chars().count() > 140 {
+        format!("{}…", s.chars().take(140).collect::<String>())
+    } else {
+        s
+    }
+}
+
+/// For a language that extends a base: the base and what this language changes.
+fn sec_inheritance(t: &Value, out: &mut String) {
+    let Some(e) = t.get("extends").filter(|e| e.is_object()) else { return };
+    out.push_str(&format!(
+        "## Inheritance\n\nThis language extends **{}** (`{}`), built on {} v{}. Everything in this document comes from that version, except the changes below. The changes are part of this document already.\n\n",
+        s(e, "name"),
+        s(e, "language"),
+        s(e, "name"),
+        e.get("version").and_then(|v| v.as_i64()).unwrap_or(0)
+    ));
+    let overrides = arr(e, "overrides");
+    if overrides.is_empty() {
+        out.push_str("No changes: the document is the same as the base.\n\n");
+        return;
+    }
+    for o in overrides {
+        let (op, path) = (s(o, "op"), s(o, "path"));
+        let (before, after) = (o.get("before").unwrap_or(&Value::Null), o.get("after").unwrap_or(&Value::Null));
+        out.push_str(&match (op, before, after) {
+            ("add", _, _) => format!("- added `{path}`: {}\n", short_json(after)),
+            ("remove", _, _) => format!("- removed `{path}` (the base has {})\n", short_json(before)),
+            // Two long texts: start where they differ, so the change is in view.
+            (_, Value::String(a), Value::String(b)) if a.chars().count() > 130 || b.chars().count() > 130 => {
+                let same = a.chars().zip(b.chars()).take_while(|(x, y)| x == y).count();
+                let from = same.saturating_sub(40);
+                let cut = |t: &str| {
+                    let n = t.chars().count();
+                    format!("\"{}{}{}\"", if from > 0 { "…" } else { "" }, t.chars().skip(from).take(130).collect::<String>(), if n > from + 130 { "…" } else { "" })
+                };
+                format!("- changed `{path}`: {} → {}\n", cut(a), cut(b))
+            }
+            _ => format!("- changed `{path}`: {} → {}\n", short_json(before), short_json(after)),
+        });
+    }
+    out.push('\n');
+}
+
 fn sec_principles(t: &Value, out: &mut String) {
     let mut ps: Vec<&Value> = arr(t, "principles").iter().collect();
     if ps.is_empty() {
@@ -1290,6 +1340,7 @@ pub fn render_markdown(name: &str, t: &Value, warnings: &[String]) -> String {
         out.push('\n');
     }
     sec_summary(t, &mut out);
+    sec_inheritance(t, &mut out);
     sec_principles(t, &mut out);
     sec_definitions(t, &mut out);
     sec_families(t, &mut out, None, true);
@@ -1312,6 +1363,7 @@ pub fn render_family_brief(name: &str, t: &Value, family: &str) -> Option<String
     }
     let mut out = format!("# {name} · family `{family}`\n\n");
     sec_summary(t, &mut out);
+    sec_inheritance(t, &mut out);
     sec_principles(t, &mut out);
     sec_definitions(t, &mut out);
     sec_families(t, &mut out, Some(family), true);

@@ -191,6 +191,44 @@ CREATE TABLE IF NOT EXISTS outputs (
     decided_at       TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_outputs_language ON outputs(language_id, verdict);
+
+-- What happened when a design was printed (Phase 3.2).
+CREATE TABLE IF NOT EXISTS print_results (
+    id          TEXT PRIMARY KEY,
+    result      TEXT NOT NULL,
+    material    TEXT NOT NULL DEFAULT '',
+    rule        TEXT NOT NULL DEFAULT '',
+    rule_set_id TEXT,
+    value       REAL,
+    unit        TEXT,
+    note        TEXT NOT NULL DEFAULT '',
+    language_id TEXT,
+    output_id   TEXT,
+    author      TEXT NOT NULL DEFAULT '',
+    created_at  TEXT NOT NULL
+);
+
+-- What agents fetched through the MCP server (Phase 3.4).
+CREATE TABLE IF NOT EXISTS agent_events (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    at          TEXT NOT NULL,
+    tool        TEXT NOT NULL,
+    language_id TEXT NOT NULL DEFAULT '',
+    version     INTEGER,
+    family      TEXT NOT NULL DEFAULT '',
+    project     TEXT NOT NULL DEFAULT '',
+    client      TEXT NOT NULL DEFAULT '',
+    detail      TEXT NOT NULL DEFAULT '[]'
+);
+CREATE INDEX IF NOT EXISTS idx_agent_events_language ON agent_events(language_id, at);
+
+-- Tokens that each kind of model call used, for cost estimates (Phase 3.4).
+CREATE TABLE IF NOT EXISTS job_stats (
+    kind          TEXT PRIMARY KEY,
+    calls         INTEGER NOT NULL DEFAULT 0,
+    input_tokens  INTEGER NOT NULL DEFAULT 0,
+    output_tokens INTEGER NOT NULL DEFAULT 0
+);
 "#;
 
 fn has_column(conn: &Connection, table: &str, column: &str) -> Result<bool> {
@@ -204,7 +242,7 @@ fn has_column(conn: &Connection, table: &str, column: &str) -> Result<bool> {
 /// Adds the columns of later versions to a library made by an earlier version.
 /// Each step checks first, so the migration can run on every open.
 pub fn migrate(conn: &Connection) -> Result<()> {
-    let steps: [(&str, &str, &str); 6] = [
+    let steps: &[(&str, &str, &str)] = &[
         ("versions", "schema", "ALTER TABLE versions ADD COLUMN schema INTEGER NOT NULL DEFAULT 1"),
         ("versions", "warnings", "ALTER TABLE versions ADD COLUMN warnings TEXT NOT NULL DEFAULT '[]'"),
         ("projects", "process_id", "ALTER TABLE projects ADD COLUMN process_id TEXT"),
@@ -212,8 +250,15 @@ pub fn migrate(conn: &Connection) -> Result<()> {
         ("items", "canvas_x", "ALTER TABLE items ADD COLUMN canvas_x REAL"),
         ("items", "canvas_y", "ALTER TABLE items ADD COLUMN canvas_y REAL"),
         ("items", "canvas_w", "ALTER TABLE items ADD COLUMN canvas_w REAL"),
+        // Phase 3: 3D model references, colour palettes, geometry reports, inheritance.
+        ("items", "model_file", "ALTER TABLE items ADD COLUMN model_file TEXT"),
+        ("items", "palette", "ALTER TABLE items ADD COLUMN palette TEXT"),
+        ("outputs", "geometry_json", "ALTER TABLE outputs ADD COLUMN geometry_json TEXT"),
+        ("languages", "base_id", "ALTER TABLE languages ADD COLUMN base_id TEXT"),
+        ("languages", "base_version", "ALTER TABLE languages ADD COLUMN base_version INTEGER"),
+        ("languages", "overrides", "ALTER TABLE languages ADD COLUMN overrides TEXT NOT NULL DEFAULT '[]'"),
     ];
-    for (table, column, sql) in steps {
+    for &(table, column, sql) in steps {
         if !has_column(conn, table, column)? {
             conn.execute_batch(sql)?;
         }

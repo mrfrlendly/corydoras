@@ -10,7 +10,9 @@
 
 use anyhow::{anyhow, Result};
 use corydoras_core::conformance::{self, Measurement};
-use corydoras_core::{agent, analysis, config, outputs, Library};
+use corydoras_core::insight::Event;
+use corydoras_core::printlog::PrintResultInput;
+use corydoras_core::{agent, analysis, config, coverage, diff, export, geometry, outputs, printlog, Library};
 use serde_json::{json, Value};
 use std::cell::RefCell;
 use std::io::{BufRead, Write};
@@ -34,7 +36,14 @@ images by what they show. When the references or the hard rules show that a rule
 missing, call propose_amendment: the designer reviews the change in the app, and nothing changes until \
 they accept it. When you have made a design from a language, call submit_output with a render of it so the designer \
 can accept or reject it (that teaches the language), and call check_against_language with the numbers you measured on \
-the design: it compares them with the hard rules and the language's measures and lists every fail to fix.";
+the design: it compares them with the hard rules and the language's measures and lists every fail to fix. \
+When you have the model as a file (STL, 3MF, OBJ or STEP), call check_geometry: it measures the thinnest wall, the \
+steepest overhang, the longest bridge, the gap between bodies and the part size, and judges them against the hard rules. \
+The hard rules come with a print-feedback table: results of real prints. When the designer tells you how a print came \
+out, call log_print_result, so the next design does not repeat a failure. Call get_coverage before you rely on a family: \
+it lists what the language cannot answer yet. Call compare_versions to see what changed between two versions, for example \
+after the designer updated a language. Call export_tokens for the measures and colours as CSS variables, design tokens or \
+Grasshopper parameters. A language can extend a base language; its document is complete and says what it changes.";
 
 fn tools() -> Value {
     json!([
@@ -178,6 +187,102 @@ fn tools() -> Value {
             }
         },
         {
+            "name": "check_geometry",
+            "description": "Measure a model file and judge it against the hard rules. Reads STL, 3MF, OBJ and STEP (STEP needs FreeCAD on this computer). It measures: the thinnest wall (material between two near-parallel faces), the steepest overhang from the vertical (faces in the first two layers and bridged ceilings do not count), the longest bridge between two supports, the smallest open gap between separate bodies, and the largest side of a body. Spots under about 1 mm2 are ignored. Overhangs and bridges depend on the build direction: pass \"up\" when the part does not print with +Z up. A model with several bodies is an assembly: its overhangs are judged only when you pass \"up\". Numbers that another tool measured (for example ScanRuler's thickness or clearance) go in \"measurements\": a number with the name of a measured value replaces it. With \"language\" and \"family\", the language's measures are judged too. Pass \"output\" to save the report with a submitted output.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "Absolute path of the model file on this computer"},
+                    "project": {"type": "string", "description": "Project name or ID, so that its rule sets apply (optional)"},
+                    "up": {"type": "string", "enum": ["+z", "-z", "+y", "-y", "+x", "-x"], "description": "Build direction: the axis that points up on the printer (default +z)"},
+                    "clearance": {"type": "string", "description": "The rule that the gap between bodies is compared with (default \"sliding clearance\"; for a press fit, \"press-fit clearance\")"},
+                    "language": {"type": "string", "description": "Language ID or name, to judge the language's measures too (optional)"},
+                    "family": {"type": "string", "description": "Family ID or name of the object (with language)"},
+                    "measurements": {
+                        "type": "array",
+                        "maxItems": 60,
+                        "items": {
+                            "type": "object",
+                            "properties": {"name": {"type": "string"}, "value": {"type": "number"}, "unit": {"type": "string"}},
+                            "required": ["name", "value", "unit"]
+                        },
+                        "description": "Numbers from another tool, to judge with the measured ones (optional)"
+                    },
+                    "output": {"type": "string", "description": "ID (or first 8 characters) of a submitted output to save the report with (optional)"}
+                },
+                "required": ["path"],
+                "additionalProperties": false
+            }
+        },
+        {
+            "name": "log_print_result",
+            "description": "Record what happened when a design was printed, as the designer told you. The entry goes into the print log: it appears with the hard rules in every later brief, and the conformance check warns when a new design is at or past a value that failed. Give the material, the rule (the name of a hard rule), or both. With \"value\", say the value that was printed, for example a wall of 1.0 mm that failed. Do not guess a result: record only what the designer reported. The designer can remove an entry in the app.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "result": {"type": "string", "enum": ["failed", "warped", "frosted", "fine", "other"], "description": "What happened. \"other\" needs a note."},
+                    "material": {"type": "string", "description": "The material, for example \"PETG, clear\" (optional when a rule is given)"},
+                    "rule": {"type": "string", "description": "The hard rule that the result is about, for example \"minimum wall\" (optional when a material is given)"},
+                    "rule_set": {"type": "string", "description": "Rule set ID or name (optional; without it the entry applies everywhere)"},
+                    "value": {"type": "number", "description": "The value that was printed (optional)"},
+                    "unit": {"type": "string", "description": "mm, deg, percent, count or ratio (with value)"},
+                    "note": {"type": "string", "description": "What the designer saw, in one or two sentences"},
+                    "language": {"type": "string", "description": "Language of the design (optional)"},
+                    "output": {"type": "string", "description": "ID (or first 8 characters) of the output that was printed (optional)"}
+                },
+                "required": ["result"],
+                "additionalProperties": false
+            }
+        },
+        {
+            "name": "get_print_log",
+            "description": "Get the print-feedback log: results of real prints (failed, warped, frosted, fine) against hard rules and materials. With \"project\", the entries that count for the rule sets of that project.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {"project": {"type": "string", "description": "Project name or ID (optional)"}},
+                "additionalProperties": false
+            }
+        },
+        {
+            "name": "compare_versions",
+            "description": "List what changed between two versions of a language, in words: measures (old value → new value), rules, principles, families, colours, prompts, do and do not, and references. Use it when a project pins an older version than the latest, or when the designer updated a language and you must redo a design: the changes say what to do differently.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "language": {"type": "string", "description": "Language ID or name"},
+                    "from": {"type": "integer", "minimum": 1, "description": "The older version"},
+                    "to": {"type": "integer", "minimum": 1, "description": "The newer version (default: the latest)"}
+                },
+                "required": ["language", "from"],
+                "additionalProperties": false
+            }
+        },
+        {
+            "name": "get_coverage",
+            "description": "Get the coverage report of a language: what it cannot answer yet. It lists families that rest on one reference, views that no reference shows, measures with weak evidence, process-dependent measures that no hard rule fills, and references that disagree. Where the language has a gap, do not invent a value: ask the designer.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {"language": {"type": "string", "description": "Language ID or name"}},
+                "required": ["language"],
+                "additionalProperties": false
+            }
+        },
+        {
+            "name": "export_tokens",
+            "description": "Export the measures and colours of a language version as CSS variables (css), design tokens for Figma in the W3C form (figma), or a parameter list for Grasshopper sliders (grasshopper). A measure with a range gives a minimum and a maximum. A process-dependent measure takes its value from the hard rule with the same name.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "language": {"type": "string", "description": "Language ID or name"},
+                    "format": {"type": "string", "enum": ["css", "figma", "grasshopper"]},
+                    "version": {"type": "integer", "minimum": 1, "description": "Version number (default: the latest)"},
+                    "project": {"type": "string", "description": "Project name or ID, so that its rule sets fill the process-dependent measures (optional)"}
+                },
+                "required": ["language", "format"],
+                "additionalProperties": false
+            }
+        },
+        {
             "name": "propose_amendment",
             "description": "Propose a change to the latest version of a language spec (tokens.json, schema 2). The change does not apply by itself: the designer reviews it in the app and accepts or rejects it; an accepted proposal becomes a new version. The patch is a JSON Patch (RFC 6902) with add, remove and replace. A path segment into an array can be an index, \"-\" (append, with add), or the id, name or term of an element, for example /families/blade-field/measures/blade pitch/value or /principles/P2. The amended spec must pass the same validation as a manual edit; measures keep their unit, \"of\", basis and evidence, and text fields hold no numbers with units. Read the language with get_language first and pass its version as base_version.",
             "inputSchema": {
@@ -241,15 +346,36 @@ impl Server {
                 .ok_or_else(|| anyhow!("The argument \"{k}\" is necessary."))
         };
         let lib = self.lib()?;
+        let client = self.client.borrow().clone();
+        // One record for each call that reads or checks a language, so the app can
+        // show which parts agents use. A failed record must not fail the call.
+        let record = |language_key: &str, version: Option<i64>, family: &str, project: &str, detail: Vec<String>| {
+            if let Ok(lang) = lib.find_language(language_key) {
+                let _ = lib.record_event(&Event { tool: name, language_id: &lang.id, version: version.or(lang.latest_version), family, project, client: &client, detail });
+            }
+        };
+        let opt = |k: &str| args.get(k).and_then(|v| v.as_str()).map(str::trim).filter(|s| !s.is_empty());
         match name {
             "list_languages" => Ok(vec![text(agent::languages_json(&lib)?)]),
             "list_projects" => Ok(vec![text(agent::projects_json(&lib)?)]),
             "list_rule_sets" => Ok(vec![text(agent::rule_sets_json(&lib)?)]),
-            "get_project_brief" => Ok(vec![text(agent::project_brief_text(&lib, &arg_str("project")?)?)]),
+            "get_project_brief" => {
+                let key = arg_str("project")?;
+                let out = agent::project_brief_text(&lib, &key)?;
+                if let Ok(project) = lib.find_project(&key) {
+                    for pin in &project.pins {
+                        record(&pin.language_id, Some(pin.version), "", &project.name, Vec::new());
+                    }
+                }
+                Ok(vec![text(out)])
+            }
             "get_language" => {
                 let version = args.get("version").and_then(|v| v.as_i64());
                 let family = args.get("family").and_then(|v| v.as_str());
-                Ok(vec![text(agent::language_text(&lib, &arg_str("language")?, version, family)?)])
+                let key = arg_str("language")?;
+                let out = agent::language_text(&lib, &key, version, family)?;
+                record(&key, version, family.unwrap_or(""), "", Vec::new());
+                Ok(vec![text(out)])
             }
             "get_sources" => {
                 let ids: Vec<String> = args
@@ -257,7 +383,10 @@ impl Server {
                     .and_then(|v| v.as_array())
                     .map(|a| a.iter().filter_map(|x| x.as_str().map(|s| s.to_string())).collect())
                     .unwrap_or_default();
-                Ok(vec![text(agent::sources_text(&lib, &arg_str("language")?, &ids)?)])
+                let key = arg_str("language")?;
+                let out = agent::sources_text(&lib, &key, &ids)?;
+                record(&key, None, "", "", ids);
+                Ok(vec![text(out)])
             }
             "get_reference_images" => {
                 let tag = args.get("tag").and_then(|v| v.as_str());
@@ -283,20 +412,27 @@ impl Server {
                         Err(e) => out.push(text(format!("(Image not readable: {e})"))),
                     }
                 }
+                record(&lang.id, None, "", "", items.iter().map(|i| i.id.chars().take(8).collect()).collect());
                 Ok(out)
             }
             "search_items" => {
                 let language = args.get("language").and_then(|v| v.as_str());
                 let limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(10) as usize;
                 let include_anti = args.get("include_anti").and_then(|v| v.as_bool()).unwrap_or(false);
-                Ok(vec![text(agent::search_items_text(&lib, &arg_str("query")?, language, include_anti, limit)?)])
+                let query = arg_str("query")?;
+                let out = agent::search_items_text(&lib, &query, language, include_anti, limit)?;
+                if let Some(l) = language {
+                    record(l, None, "", "", vec![query]);
+                }
+                Ok(vec![text(out)])
             }
             "propose_amendment" => {
                 let patch = args.get("patch").cloned().ok_or_else(|| anyhow!("The argument \"patch\" is necessary."))?;
                 let base = args.get("base_version").and_then(|v| v.as_i64());
                 let rationale = args.get("rationale").and_then(|v| v.as_str()).unwrap_or("");
-                let author = self.client.borrow().clone();
-                let sub = lib.submit_proposal(&arg_str("language")?, base, &arg_str("summary")?, rationale, &patch, &author)?;
+                let key = arg_str("language")?;
+                let sub = lib.submit_proposal(&key, base, &arg_str("summary")?, rationale, &patch, &client)?;
+                record(&key, base, "", "", sub.proposal.changes.iter().map(|c| c.path.clone()).collect());
                 Ok(vec![text(agent::proposal_text(&lib, &sub)?)])
             }
             "check_against_language" => {
@@ -304,8 +440,81 @@ impl Server {
                 let family = args.get("family").and_then(|v| v.as_str());
                 let project = args.get("project").and_then(|v| v.as_str());
                 let output = args.get("output").and_then(|v| v.as_str());
-                let report = conformance::run(&lib, &arg_str("language")?, family, project, &ms, output)?;
+                let key = arg_str("language")?;
+                let report = conformance::run(&lib, &key, family, project, &ms, output)?;
+                record(&key, Some(report.version), family.unwrap_or(""), project.unwrap_or(""), ms.iter().map(|m| m.name.clone()).collect());
                 Ok(vec![text(conformance::report_text(&report))])
+            }
+            "check_geometry" => {
+                let path = std::path::PathBuf::from(arg_str("path")?.trim());
+                let extra = if args.get("measurements").is_some() { measurements_arg(args)? } else { Vec::new() };
+                let a = geometry::Args {
+                    language: opt("language").map(|s| s.to_string()),
+                    family: opt("family").map(|s| s.to_string()),
+                    project: opt("project").map(|s| s.to_string()),
+                    up: opt("up").map(|s| s.to_string()),
+                    clearance: opt("clearance").map(|s| s.to_string()),
+                    measurements: extra,
+                    output: opt("output").map(|s| s.to_string()),
+                };
+                let report = geometry::check_file(&lib, &path, &a)?;
+                if let Some(l) = &a.language {
+                    record(l, None, a.family.as_deref().unwrap_or(""), a.project.as_deref().unwrap_or(""), report.measurements.iter().map(|m| m.name.clone()).collect());
+                }
+                Ok(vec![text(geometry::report_text(&report))])
+            }
+            "log_print_result" => {
+                let input = PrintResultInput {
+                    result: arg_str("result")?,
+                    material: opt("material").unwrap_or("").to_string(),
+                    rule: opt("rule").unwrap_or("").to_string(),
+                    rule_set: opt("rule_set").map(|s| s.to_string()),
+                    value: args.get("value").and_then(|v| v.as_f64()),
+                    unit: opt("unit").map(|s| s.to_string()),
+                    note: opt("note").unwrap_or("").to_string(),
+                    language: opt("language").map(|s| s.to_string()),
+                    output: opt("output").map(|s| s.to_string()),
+                };
+                let e = lib.add_print_result(&input, &client)?;
+                Ok(vec![text(format!(
+                    "Recorded in the print log: {}{}{}{}. It goes with the hard rules in every later brief, and the conformance check uses it. The designer can remove it in the Corydoras app.",
+                    e.result,
+                    if e.material.is_empty() { String::new() } else { format!(" · {}", e.material) },
+                    if e.rule.is_empty() { String::new() } else { format!(" · rule \"{}\"", e.rule) },
+                    e.rule_set_name.map(|n| format!(" · in {n}")).unwrap_or_else(|| " · applies everywhere".into())
+                ))])
+            }
+            "get_print_log" => {
+                let log = match opt("project") {
+                    Some(p) => lib.print_results_for(&lib.effective_rule_sets(Some(&lib.find_project(p)?))?)?,
+                    None => lib.list_print_results()?,
+                };
+                Ok(vec![text(printlog::log_text(&log))])
+            }
+            "compare_versions" => {
+                let key = arg_str("language")?;
+                let lang = lib.find_language(&key)?;
+                let from = args.get("from").and_then(|v| v.as_i64()).ok_or_else(|| anyhow!("The argument \"from\" is necessary."))?;
+                let to = match args.get("to").and_then(|v| v.as_i64()) {
+                    Some(v) => v,
+                    None => lang.latest_version.ok_or_else(|| anyhow!("\"{}\" has no version yet.", lang.name))?,
+                };
+                let d = diff::versions(&lib, &lang.id, from, to)?;
+                record(&lang.id, Some(to), "", "", Vec::new());
+                Ok(vec![text(diff::diff_text(&d))])
+            }
+            "get_coverage" => {
+                let key = arg_str("language")?;
+                let c = coverage::report(&lib, &key)?;
+                record(&key, c.version, "", "", Vec::new());
+                Ok(vec![text(coverage::coverage_text(&c))])
+            }
+            "export_tokens" => {
+                let key = arg_str("language")?;
+                let version = args.get("version").and_then(|v| v.as_i64());
+                let x = export::export_language(&lib, &key, version, &arg_str("format")?, opt("project"))?;
+                record(&key, version, "", opt("project").unwrap_or(""), vec![x.format.clone()]);
+                Ok(vec![text(format!("{} (suggested file name: {})\n\n{}", x.format, x.file_name, x.content))])
             }
             "submit_output" => {
                 let bytes = if let Some(p) = args.get("path").and_then(|v| v.as_str()).filter(|p| !p.trim().is_empty()) {
@@ -332,8 +541,9 @@ impl Server {
                 let name = args.get("name").and_then(|v| v.as_str()).filter(|n| !n.trim().is_empty()).map(|n| n.to_string()).unwrap_or(default_name);
                 let get = |k: &str| args.get(k).and_then(|v| v.as_str()).unwrap_or("").to_string();
                 let ms = if args.get("measurements").is_some() { measurements_arg(args)? } else { Vec::new() };
-                let author = self.client.borrow().clone();
-                let out = lib.submit_output(&arg_str("language")?, &name, &bytes, &get("family"), &get("project"), &author, &get("note"), &ms)?;
+                let key = arg_str("language")?;
+                let out = lib.submit_output(&key, &name, &bytes, &get("family"), &get("project"), &client, &get("note"), &ms)?;
+                record(&key, out.language_version, &get("family"), &get("project"), Vec::new());
                 Ok(vec![text(format!(
                     "Output {} is saved for the designer to review in the Corydoras app (Outputs tab). It supports or changes the language only after they accept or reject it.",
                     &out.id[..8]

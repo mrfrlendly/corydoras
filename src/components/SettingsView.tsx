@@ -4,6 +4,7 @@ import { Bot, SlidersHorizontal } from 'lucide-react';
 import ProvidersPanel from './ProvidersPanel';
 import StoragePanel from './StoragePanel';
 import CapturePanel from './CapturePanel';
+import BridgePanel from './BridgePanel';
 import { useToast } from './Toast';
 
 interface Props {
@@ -115,6 +116,8 @@ export default function SettingsView({ info, onInfo, status, onChanged }: Props)
         )}
 
         <CapturePanel />
+
+        <BridgePanel />
 
         <StoragePanel info={info} onInfo={onInfo} onChanged={onChanged} />
 

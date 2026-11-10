@@ -18,14 +18,19 @@ pub fn languages_json(lib: &Library) -> Result<String> {
                 .collect::<Vec<_>>(),
             _ => vec![],
         };
-        rows.push(json!({
+        let mut row = json!({
             "id": l.id,
             "name": l.name,
             "description": l.description,
             "latest_version": l.latest_version,
             "item_count": l.item_count,
             "families": families,
-        }));
+        });
+        if let Some(base) = &l.base_id {
+            // The document of a language with a base is complete: the base and the changes are in it.
+            row["extends"] = json!({"language": base, "base_version": l.base_version, "overrides": l.override_count});
+        }
+        rows.push(row);
     }
     Ok(serde_json::to_string_pretty(&json!({ "languages": rows }))?)
 }
@@ -124,6 +129,17 @@ fn words(s: &str) -> Vec<String> {
         .collect()
 }
 
+/// True when two rule or measure names mean the same thing: every word of the
+/// shorter name is in the longer one ("min wall thickness" and "Minimum wall").
+pub fn names_match(a: &str, b: &str) -> bool {
+    let (x, y) = (words(a), words(b));
+    if x.is_empty() || y.is_empty() {
+        return false;
+    }
+    let shared = x.iter().filter(|w| y.contains(w)).count();
+    shared > 0 && shared as f64 / x.len().min(y.len()) as f64 >= 0.99
+}
+
 /// The rule that best matches a measure name (shared words over the shorter name).
 pub fn match_rule<'a>(sets: &'a [RuleSet], measure_name: &str) -> Option<(&'a RuleSet, &'a Rule)> {
     let m = words(measure_name);
@@ -214,7 +230,7 @@ pub fn language_text(lib: &Library, key: &str, version: Option<i64>, family: Opt
             ));
         }
         let always = lib.effective_rule_sets(None)?;
-        let rules = rules_block(&always);
+        let rules = format!("{}{}", rules_block(&always), crate::printlog::block(&lib.print_results_for(&always)?));
         return spec::render_family_brief(&lang.name, &c.tokens, fam)
             .map(|md| format!("{header}{rules}{md}"))
             .ok_or_else(|| {
@@ -223,7 +239,7 @@ pub fn language_text(lib: &Library, key: &str, version: Option<i64>, family: Opt
             });
     }
     let always = lib.effective_rule_sets(None)?;
-    let rules = rules_block(&always);
+    let rules = format!("{}{}", rules_block(&always), crate::printlog::block(&lib.print_results_for(&always)?));
     let resolved = resolve_process_values(&always, &c, &lang.name);
     Ok(format!(
         "{header}{rules}{resolved}{}\n\n## tokens.json\n\n```json\n{}\n```\n",
@@ -299,6 +315,8 @@ pub fn project_brief_text(lib: &Library, key: &str) -> Result<String> {
     } else {
         s.push_str(&rules_block(&sets));
     }
+    // What real prints showed: for these rule sets, and for every material.
+    s.push_str(&crate::printlog::block(&lib.print_results_for(&sets)?));
 
     if project.pins.is_empty() {
         s.push_str("# Languages\n\nThis project has no pinned languages. Pin a language in the Corydoras app.\n");
@@ -421,13 +439,16 @@ pub fn reference_caption(lib: &Library, item: &Item) -> String {
     let summary = get("summary");
     let family = get("object_family");
     let short: String = item.id.chars().take(8).collect();
+    let colours: Vec<&str> = item.palette.iter().take(4).map(|s| s.hex.as_str()).collect();
     format!(
-        "Item {short}{} · weight {}/5{}{}{}{}",
+        "Item {short}{}{} · weight {}/5{}{}{}{}{}",
         if item.anti { " · ANTI-REFERENCE (not this)" } else { "" },
+        if item.kind == "model" { " · 3D model, four automatic renders (form only, no colour)" } else { "" },
         item.weight,
         if family.is_empty() { String::new() } else { format!(" · {family}") },
         if item.tags.is_empty() { String::new() } else { format!(" · tags: {}", item.tags.join(", ")) },
         if item.note.is_empty() { String::new() } else { format!(" · note: {}", item.note) },
+        if colours.is_empty() { String::new() } else { format!(" · main colours of the image: {}", colours.join(" ")) },
         if summary.is_empty() { String::new() } else { format!("\n{summary}") },
     )
 }
@@ -469,7 +490,15 @@ pub struct SearchHit {
 
 /// Finds items whose tags, note, region notes or analysis match the query words.
 /// Items that match more words come first, then the higher score and weight.
+/// At most 30 hits.
 pub fn search_items(lib: &Library, query: &str, language: Option<&str>, include_anti: bool, limit: usize) -> Result<Vec<SearchHit>> {
+    let mut hits = search_items_all(lib, query, language, include_anti)?;
+    hits.truncate(limit.clamp(1, 30));
+    Ok(hits)
+}
+
+/// The same search without a limit (the board search of the app).
+pub fn search_items_all(lib: &Library, query: &str, language: Option<&str>, include_anti: bool) -> Result<Vec<SearchHit>> {
     let terms = search_words(query);
     if terms.is_empty() {
         return Err(anyhow!("The query has no words to search for."));
@@ -547,7 +576,6 @@ pub fn search_items(lib: &Library, query: &str, language: Option<&str>, include_
             .then(b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal))
             .then(b.item.added_at.cmp(&a.item.added_at))
     });
-    hits.truncate(limit.clamp(1, 30));
     Ok(hits)
 }
 

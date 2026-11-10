@@ -21,7 +21,7 @@ pub const MAX_OPS: usize = 50;
 /// Most open proposals for one language. Older ones must be decided first.
 pub const MAX_PENDING: i64 = 20;
 /// Top-level fields that the app owns.
-const PROTECTED: &[&str] = &["schema", "language", "version"];
+const PROTECTED: &[&str] = &["schema", "language", "version", "extends"];
 
 #[derive(Serialize, Clone, Debug)]
 pub struct Change {

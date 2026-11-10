@@ -1,14 +1,15 @@
 import { useEffect, useState } from 'react';
-import { api, CurrentJob, errText, Language, LanguageStatus, shortStatus, StatusReport } from '../api';
-import { BookOpen, ClipboardCheck, FileText, History, LayoutGrid, Pencil, RefreshCw, Sparkles, X } from 'lucide-react';
+import { api, CurrentJob, errText, Estimate, fmtEstimate, Language, LanguageStatus, OtherModelView, Project, shortStatus, StatusReport, VersionInfo } from '../api';
+import { BookOpen, ClipboardCheck, FileText, History, LayoutGrid, Pencil, RefreshCw, ScanSearch, Sparkles, X } from 'lucide-react';
 import Board from './Board';
 import SourcesView from './SourcesView';
 import DocumentView from './DocumentView';
 import VersionsView from './VersionsView';
 import OutputsView from './OutputsView';
+import InsightView from './InsightView';
 import { useToast } from './Toast';
 
-type Tab = 'board' | 'sources' | 'outputs' | 'document' | 'versions';
+type Tab = 'board' | 'sources' | 'outputs' | 'document' | 'versions' | 'insight';
 
 const TABS: { id: Tab; label: string; icon: typeof LayoutGrid }[] = [
   { id: 'board', label: 'Board', icon: LayoutGrid },
@@ -16,10 +17,14 @@ const TABS: { id: Tab; label: string; icon: typeof LayoutGrid }[] = [
   { id: 'outputs', label: 'Outputs', icon: ClipboardCheck },
   { id: 'document', label: 'Document', icon: FileText },
   { id: 'versions', label: 'Versions', icon: History },
+  { id: 'insight', label: 'Insight', icon: ScanSearch },
 ];
 
 interface Props {
   language: Language;
+  /** All languages: one of them can be the base of this one. */
+  languages: Language[];
+  projects: Project[];
   status: LanguageStatus | null;
   worker: StatusReport['worker'] | null;
   current: CurrentJob | null;
@@ -108,23 +113,99 @@ function StatusChip({
   return <span className="chip">Up to date</span>;
 }
 
-export default function LanguageView({ language, status, worker, current, paused, tick, onChanged, onSettings, onActivity }: Props) {
+export default function LanguageView({ language, languages, projects, status, worker, current, paused, tick, onChanged, onSettings, onActivity }: Props) {
   const toast = useToast();
   const [tab, setTab] = useState<Tab>('board');
   const [docVersion, setDocVersion] = useState<number | null>(null);
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState(language.name);
   const [description, setDescription] = useState(language.description);
+  const [base, setBase] = useState(language.base_id ?? '');
+  const [baseVersion, setBaseVersion] = useState<number | null>(language.base_version);
+  const [baseVersions, setBaseVersions] = useState<VersionInfo[]>([]);
   const [confirmAll, setConfirmAll] = useState(false);
+  const [allEstimate, setAllEstimate] = useState<Estimate | null>(null);
+  const [queueEstimate, setQueueEstimate] = useState<Estimate | null>(null);
+  const [docEstimate, setDocEstimate] = useState<Estimate | null>(null);
+  const [other, setOther] = useState<OtherModelView | null>(null);
+  const [otherEstimate, setOtherEstimate] = useState<Estimate | null>(null);
+
+  const baseLanguage = languages.find((l) => l.id === language.base_id) ?? null;
+  const waiting = status ? status.pending_items > 0 || status.synth_due_in !== null : false;
 
   useEffect(() => {
     setName(language.name);
     setDescription(language.description);
-  }, [language.name, language.description]);
+    setBase(language.base_id ?? '');
+    setBaseVersion(language.base_version);
+  }, [language.name, language.description, language.base_id, language.base_version]);
+
+  // The versions of the base that the edit form offers.
+  useEffect(() => {
+    if (!editing || !base) {
+      setBaseVersions([]);
+      return;
+    }
+    let alive = true;
+    api
+      .listVersions(base)
+      .then((v) => alive && setBaseVersions(v.filter((x) => x.schema >= 2)))
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [editing, base]);
+
+  // What the waiting passes will use, before they run.
+  useEffect(() => {
+    if (!waiting || current) {
+      setQueueEstimate(null);
+      return;
+    }
+    let alive = true;
+    api
+      .estimate(language.id, 'queue')
+      .then((e) => alive && setQueueEstimate(e.total_tokens > 0 ? e : null))
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [language.id, waiting, current, tick]);
+
+  // Analyses that another model wrote (the provider changed since).
+  useEffect(() => {
+    let alive = true;
+    api
+      .otherModel(language.id)
+      .then((o) => {
+        if (!alive) return;
+        const stale = o.other.images + o.other.sources > 0;
+        setOther(stale ? o : null);
+        if (stale) {
+          api
+            .estimate(language.id, 'other-model')
+            .then((e) => alive && setOtherEstimate(e))
+            .catch(() => {});
+        }
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [language.id, tick]);
 
   const saveMeta = async () => {
     try {
       await api.updateLanguage(language.id, name, description);
+      if (base !== (language.base_id ?? '') || (base && baseVersion !== language.base_version)) {
+        await api.setBase(language.id, base || null, base ? baseVersion : null);
+        toast.info(
+          base
+            ? `${name} now extends ${languages.find((l) => l.id === base)?.name ?? base}. Its document is the base with your changes.`
+            : `${name} extends no language now. Its versions stay.`,
+        );
+        setDocVersion(null);
+      }
       setEditing(false);
       onChanged();
     } catch (e) {
@@ -132,11 +213,31 @@ export default function LanguageView({ language, status, worker, current, paused
     }
   };
 
+  const askAnalyzeAll = () => {
+    setConfirmAll(true);
+    setAllEstimate(null);
+    api
+      .estimate(language.id, 'all')
+      .then(setAllEstimate)
+      .catch(() => {});
+  };
+
   const analyzeAll = async () => {
     setConfirmAll(false);
     try {
       const n = await api.reanalyzeAll(language.id);
-      toast.info(`${n} item${n === 1 ? '' : 's'} queued for analysis. A new version follows.`);
+      toast.info(`${n} item${n === 1 ? '' : 's'} queued for analysis.${language.base_id ? '' : ' A new version follows.'}`);
+      onChanged();
+    } catch (e) {
+      toast.error(errText(e));
+    }
+  };
+
+  const analyzeOther = async () => {
+    try {
+      const n = await api.reanalyzeOtherModel(language.id);
+      toast.info(`${n} item${n === 1 ? '' : 's'} queued for analysis with ${other?.model ?? 'the current model'}.`);
+      setOther(null);
       onChanged();
     } catch (e) {
       toast.error(errText(e));
@@ -146,7 +247,7 @@ export default function LanguageView({ language, status, worker, current, paused
   const synthNow = async () => {
     try {
       await api.synthesizeNow(language.id);
-      toast.info('The synthesis pass starts after the item analysis finishes.');
+      toast.info(`The synthesis pass starts after the item analysis finishes.${docEstimate ? ` It uses ${fmtEstimate(docEstimate)}.` : ''}`);
       onChanged();
     } catch (e) {
       toast.error(errText(e));
@@ -166,6 +267,43 @@ export default function LanguageView({ language, status, worker, current, paused
                 placeholder="Describe the intent of this language in one or two sentences. The analysis reads this text."
                 rows={2}
               />
+              <div className="row base-row">
+                <label className="small muted" htmlFor="base-select">
+                  Extends
+                </label>
+                <select id="base-select" className="select small" value={base} onChange={(e) => (setBase(e.target.value), setBaseVersion(null))}>
+                  <option value="">No base: this language has its own document</option>
+                  {languages
+                    .filter((l) => l.id !== language.id && l.latest_version !== null)
+                    .map((l) => (
+                      <option key={l.id} value={l.id}>
+                        {l.name}
+                      </option>
+                    ))}
+                </select>
+                {base && (
+                  <select
+                    className="select small"
+                    value={baseVersion ?? ''}
+                    onChange={(e) => setBaseVersion(e.target.value ? Number(e.target.value) : null)}
+                    aria-label="Version of the base"
+                  >
+                    <option value="">Follow the latest version</option>
+                    {baseVersions.map((v) => (
+                      <option key={v.version} value={v.version}>
+                        Stay on v{v.version}
+                      </option>
+                    ))}
+                  </select>
+                )}
+              </div>
+              {base && (
+                <p className="muted small">
+                  The document of this language becomes the document of the base, with the changes that you make in the Document tab. It gets no
+                  synthesis of its own; its images stay as references for agents.
+                  {base !== (language.base_id ?? '') && language.override_count > 0 ? ' A new base starts without the changes that you made to the old one.' : ''}
+                </p>
+              )}
               <div className="row">
                 <button className="btn primary small" onClick={saveMeta}>
                   Save
@@ -188,6 +326,7 @@ export default function LanguageView({ language, status, worker, current, paused
                 {language.id} · {language.item_count} image{language.item_count === 1 ? '' : 's'}
                 {language.source_count > 0 ? ` · ${language.source_count} source${language.source_count === 1 ? '' : 's'}` : ''}
                 {language.latest_version ? ` · v${language.latest_version}` : ''}
+                {language.base_id ? ` · extends ${baseLanguage?.name ?? language.base_id}` : ''}
               </div>
               <h1 onDoubleClick={() => setEditing(true)} title="Double-click to edit">
                 {language.name}
@@ -223,15 +362,23 @@ export default function LanguageView({ language, status, worker, current, paused
                 .catch((e) => toast.error(errText(e)))
             }
           />
+          {queueEstimate && (
+            <span
+              className="chip"
+              title={`The passes that wait will use ${fmtEstimate(queueEstimate)}: ${queueEstimate.images.calls} image and ${queueEstimate.sources.calls} source analyses${queueEstimate.document.calls ? ', then the document' : ''}. ${queueEstimate.from_history ? 'From earlier calls in this library.' : 'From typical values; the first runs make it exact.'}`}
+            >
+              ≈ {fmtEstimate(queueEstimate).replace('about ', '')}
+            </span>
+          )}
           {!editing && (
-            <button className="btn small" onClick={() => setEditing(true)} title="Edit the name and the description">
+            <button className="btn small" onClick={() => setEditing(true)} title="Edit the name, the description and the base language">
               <Pencil size={13} /> Edit
             </button>
           )}
           {confirmAll ? (
             <>
               <button className="btn small primary" onClick={analyzeAll} title="Uses one model call for each item">
-                Analyze {language.item_count + language.source_count} again
+                Analyze {language.item_count + language.source_count} again{allEstimate ? ` · ${fmtEstimate(allEstimate)}` : ''}
               </button>
               <button className="btn small" onClick={() => setConfirmAll(false)}>
                 Cancel
@@ -240,18 +387,50 @@ export default function LanguageView({ language, status, worker, current, paused
           ) : (
             <button
               className="btn small"
-              onClick={() => setConfirmAll(true)}
+              onClick={askAnalyzeAll}
               disabled={language.item_count + language.source_count === 0}
-              title="Analyze every image and source again"
+              title="Analyze every image and source again. The next step shows what it uses."
             >
               <RefreshCw size={13} /> Analyze all again
             </button>
           )}
-          <button className="btn small" onClick={synthNow} disabled={language.item_count === 0} title="Write a new version of the language document">
+          <button
+            className="btn small"
+            onClick={synthNow}
+            onMouseEnter={() =>
+              !language.base_id &&
+              language.item_count > 0 &&
+              api
+                .estimate(language.id, 'document')
+                .then(setDocEstimate)
+                .catch(() => {})
+            }
+            disabled={language.item_count === 0 || !!language.base_id}
+            title={
+              language.base_id
+                ? `This language extends ${baseLanguage?.name ?? 'a base'}: its document comes from the base and your changes.`
+                : `Write a new version of the language document${docEstimate ? `: ${fmtEstimate(docEstimate)}` : ''}`
+            }
+          >
             <Sparkles size={13} /> Synthesize now
           </button>
         </div>
       </header>
+
+      {other && (
+        <div className="notice model-notice">
+          {other.other.images + other.other.sources} analys{other.other.images + other.other.sources === 1 ? 'is was' : 'es were'} written by{' '}
+          {other.other.models.length > 0 ? other.other.models.join(', ') : 'another model'}. Images now go to <b>{other.model}</b>, so the notes of the
+          references are not all from one model.{' '}
+          <button className="link-btn" onClick={analyzeOther}>
+            Analyze {other.other.images + other.other.sources === 1 ? 'it' : 'them'} again
+          </button>
+          {otherEstimate && <span className="muted">{fmtEstimate(otherEstimate)}</span>}
+          <button className="icon-btn" title="Hide until the next change" aria-label="Hide" onClick={() => setOther(null)}>
+            <X size={13} />
+          </button>
+        </div>
+      )}
 
       <nav className="tabs">
         {TABS.map(({ id: t, label, icon: Icon }) => (
@@ -292,13 +471,16 @@ export default function LanguageView({ language, status, worker, current, paused
         {tab === 'versions' && (
           <VersionsView
             language={language}
+            projects={projects}
             tick={tick}
             onOpen={(v) => {
               setDocVersion(v);
               setTab('document');
             }}
+            onChanged={onChanged}
           />
         )}
+        {tab === 'insight' && <InsightView language={language} tick={tick} />}
       </div>
     </div>
   );

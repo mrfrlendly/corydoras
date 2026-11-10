@@ -317,7 +317,7 @@ pub async fn analyze_source(lib: &Library, provider: &Provider, source_id: &str,
             .chat(analysis::SOURCE_SYSTEM, &parts, true, budget, Thinking::Off, Some(act))
             .await?;
         act.call_end();
-        lib.add_usage(r.input_tokens, r.output_tokens)?;
+        lib.add_usage_kind(JOB_SOURCE, r.input_tokens, r.output_tokens)?;
         tin += r.input_tokens;
         tout += r.output_tokens;
         if r.cut_off() && attempt == 1 {
@@ -362,7 +362,7 @@ pub async fn analyze_item(lib: &Library, provider: &Provider, item_id: &str, act
             .chat(analysis::ITEM_SYSTEM, &parts, true, budget, Thinking::Off, Some(act))
             .await?;
         act.call_end();
-        lib.add_usage(r.input_tokens, r.output_tokens)?;
+        lib.add_usage_kind(JOB_ANALYZE, r.input_tokens, r.output_tokens)?;
         tin += r.input_tokens;
         tout += r.output_tokens;
         if r.cut_off() && attempt == 1 {
@@ -395,6 +395,10 @@ pub async fn synthesize(
     act: &Activity,
 ) -> Result<Option<i64>> {
     let language = lib.get_language(language_id)?;
+    if language.base_id.is_some() {
+        act.log("info", Some(language_id), format!("{} extends another language, so its document comes from the base and the overrides. No synthesis.", language.name));
+        return Ok(None);
+    }
     act.phase("Collecting the analyses");
     let inputs = lib.synthesis_inputs(language_id, analysis::SYNTH_ITEM_LIMIT)?;
     let srcs = lib.source_inputs(language_id, analysis::SYNTH_SOURCE_LIMIT)?;
@@ -440,7 +444,7 @@ pub async fn synthesize(
             .chat(analysis::SYNTH_SYSTEM, &[Part::Text(text.clone())], true, budget, think, Some(act))
             .await?;
         act.call_end();
-        lib.add_usage(r.input_tokens, r.output_tokens)?;
+        lib.add_usage_kind(JOB_SYNTH, r.input_tokens, r.output_tokens)?;
 
         if r.cut_off() {
             let limit = (budget + think.token_allowance()) / 1000;

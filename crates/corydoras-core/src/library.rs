@@ -1,4 +1,7 @@
 use crate::analysis;
+use crate::mesh;
+use crate::palette;
+use crate::render;
 use crate::spec;
 use crate::sources::{self, Extracted};
 use crate::db;
@@ -27,14 +30,18 @@ const PENDING_SQL: &str = "SELECT COUNT(*) FROM jobs j WHERE
 const ITEM_COLS: &str = "i.id, i.language_id, i.kind, i.file_name, i.original_name, i.source, \
     i.width, i.height, i.added_at, i.tags, i.note, i.weight, i.anti, i.analysis_status, \
     i.analysis_error, (SELECT COUNT(*) FROM regions r WHERE r.item_id = i.id), \
-    i.canvas_x, i.canvas_y, i.canvas_w";
+    i.canvas_x, i.canvas_y, i.canvas_w, i.model_file, i.palette";
 
 fn item_from_row(r: &Row) -> rusqlite::Result<Item> {
     let id: String = r.get(0)?;
     let language_id: String = r.get(1)?;
     let file_name: String = r.get(3)?;
     let tags_json: String = r.get(9)?;
+    let model_file: Option<String> = r.get(19)?;
+    let palette_json: Option<String> = r.get(20)?;
     Ok(Item {
+        model_rel: model_file.map(|m| format!("languages/{language_id}/items/{m}")),
+        palette: palette_json.and_then(|p| serde_json::from_str(&p).ok()).unwrap_or_default(),
         file_rel: format!("languages/{language_id}/items/{file_name}"),
         thumb_rel: format!("languages/{language_id}/thumbs/{id}.jpg"),
         id,
@@ -100,6 +107,7 @@ impl Library {
         };
         lib.migrate_rule_sets()?;
         lib.seed_rule_sets()?;
+        lib.seed_print_log()?;
         Ok(lib)
     }
 
@@ -151,11 +159,13 @@ impl Library {
             "SELECT l.id, l.name, l.description, l.created_at, l.updated_at,
                     (SELECT COUNT(*) FROM items i WHERE i.language_id = l.id),
                     (SELECT MAX(version) FROM versions v WHERE v.language_id = l.id),
-                    (SELECT COUNT(*) FROM sources s WHERE s.language_id = l.id)
+                    (SELECT COUNT(*) FROM sources s WHERE s.language_id = l.id),
+                    l.base_id, l.base_version, l.overrides
              FROM languages l ORDER BY l.name COLLATE NOCASE",
         )?;
         let rows = st
             .query_map([], |r| {
+                let overrides: String = r.get(10)?;
                 Ok(Language {
                     id: r.get(0)?,
                     name: r.get(1)?,
@@ -165,6 +175,9 @@ impl Library {
                     item_count: r.get(5)?,
                     latest_version: r.get(6)?,
                     source_count: r.get(7)?,
+                    base_id: r.get(8)?,
+                    base_version: r.get(9)?,
+                    override_count: serde_json::from_str::<Vec<Value>>(&overrides).map(|v| v.len() as i64).unwrap_or(0),
                 })
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -370,8 +383,8 @@ impl Library {
             original_name.trim().to_string()
         };
         self.c().execute(
-            "INSERT INTO items (id, language_id, kind, file_name, original_name, source, width, height, hash, added_at)
-             VALUES (?1, ?2, 'image', ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            "INSERT INTO items (id, language_id, kind, file_name, original_name, source, width, height, hash, added_at, palette)
+             VALUES (?1, ?2, 'image', ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
             params![
                 id,
                 language_id,
@@ -381,13 +394,123 @@ impl Library {
                 img.width() as i64,
                 img.height() as i64,
                 hash,
-                now_iso()
+                now_iso(),
+                serde_json::to_string(&palette::of_image(&img))?
             ],
         )?;
         self.touch_language(language_id)?;
         self.enqueue(JOB_ANALYZE, &id, 0)?;
         self.enqueue_synth(language_id)?;
         self.get_item(&id)
+    }
+
+    /// Adds a 3D model (STL, 3MF, OBJ or STEP) as a reference. The app draws
+    /// four views of it into one image; that image is what the board shows
+    /// and what the analysis reads. The model file is kept beside it. `name`
+    /// is the file name of the model, `source` where it came from.
+    pub fn import_model(&self, language_id: &str, path: &Path, name: &str, source: Option<&str>) -> Result<Item> {
+        self.get_language(language_id)?;
+        let name = name.trim();
+        if !mesh::is_model_name(name) {
+            bail!("\"{name}\" is not a model type that Corydoras reads. Use STL, 3MF, OBJ or STEP.");
+        }
+        let bytes = std::fs::read(path).with_context(|| format!("Cannot read {}", path.display()))?;
+        let hash = format!("model-{}", fnv1a64(&bytes));
+        let existing: Option<String> = self
+            .c()
+            .query_row("SELECT id FROM items WHERE language_id = ?1 AND hash = ?2", params![language_id, hash], |r| r.get(0))
+            .optional()?;
+        if let Some(id) = existing {
+            return self.get_item(&id);
+        }
+        // The reader goes by the file name, and a dropped model arrives under a temporary name.
+        let ext = Path::new(name).extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default();
+        let id = uuid::Uuid::new_v4().to_string();
+        let dir = self.lang_dir(language_id);
+        std::fs::create_dir_all(dir.join("items"))?;
+        std::fs::create_dir_all(dir.join("thumbs"))?;
+        let model_file = format!("{id}.model.{ext}");
+        let stored = dir.join("items").join(&model_file);
+        std::fs::write(&stored, &bytes)?;
+        let made = (|| -> Result<(Vec<u8>, image::DynamicImage, usize)> {
+            let loaded = mesh::load(&stored).with_context(|| format!("Cannot read the model \"{name}\""))?;
+            let png = render::sheet_png(&loaded.mesh)?;
+            let img = analysis::decode_oriented(&png)?;
+            Ok((png, img, loaded.mesh.tris.len()))
+        })();
+        let (png, img, _triangles) = match made {
+            Ok(x) => x,
+            Err(e) => {
+                let _ = std::fs::remove_file(&stored);
+                return Err(e);
+            }
+        };
+        let file_name = format!("{id}.png");
+        std::fs::write(dir.join("items").join(&file_name), &png)?;
+        std::fs::write(dir.join("thumbs").join(format!("{id}.jpg")), analysis::encode_jpeg(&img, 640, 84)?)?;
+        self.c().execute(
+            "INSERT INTO items (id, language_id, kind, file_name, original_name, source, width, height, hash, added_at, model_file, palette)
+             VALUES (?1, ?2, 'model', ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, '[]')",
+            params![
+                id,
+                language_id,
+                file_name,
+                name,
+                source.map(|s| s.trim()).filter(|s| !s.is_empty()).unwrap_or(name),
+                img.width() as i64,
+                img.height() as i64,
+                hash,
+                now_iso(),
+                model_file
+            ],
+        )?;
+        self.touch_language(language_id)?;
+        self.enqueue(JOB_ANALYZE, &id, 0)?;
+        self.enqueue_synth(language_id)?;
+        self.get_item(&id)
+    }
+
+    /// True when the language has an image with this content hash already.
+    pub fn has_item_hash(&self, language_id: &str, hash: &str) -> Result<bool> {
+        Ok(self
+            .c()
+            .query_row("SELECT 1 FROM items WHERE language_id = ?1 AND hash = ?2", params![language_id, hash], |_| Ok(()))
+            .optional()?
+            .is_some())
+    }
+
+    /// Finds the palettes of items that have none yet (items of older
+    /// versions). At most `limit` items in one call. Returns how many it did.
+    pub fn backfill_palettes(&self, language_id: &str, limit: usize) -> Result<usize> {
+        let todo: Vec<(String, String)> = {
+            let c = self.c();
+            let mut st = c.prepare("SELECT id, kind FROM items WHERE language_id = ?1 AND palette IS NULL LIMIT ?2")?;
+            let rows = st.query_map(params![language_id, limit as i64], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<rusqlite::Result<Vec<_>>>()?;
+            rows
+        };
+        for (id, kind) in &todo {
+            let json = if kind == "model" {
+                "[]".to_string()
+            } else {
+                // The thumbnail is enough for the main colours, and it is small.
+                let thumb = self.lang_dir(language_id).join("thumbs").join(format!("{id}.jpg"));
+                match std::fs::read(&thumb).ok().and_then(|b| analysis::decode_oriented(&b).ok()) {
+                    Some(img) => serde_json::to_string(&palette::of_image(&img))?,
+                    None => "[]".to_string(),
+                }
+            };
+            self.c().execute("UPDATE items SET palette = ?2 WHERE id = ?1", params![id, json])?;
+        }
+        Ok(todo.len())
+    }
+
+    /// The main colours of a board: the palettes of its references, each
+    /// counted by the weight of its item. Anti-references do not count.
+    pub fn language_palette(&self, language_id: &str) -> Result<Vec<palette::Swatch>> {
+        let items = self.list_items(language_id)?;
+        let parts: Vec<(Vec<palette::Swatch>, f64)> =
+            items.into_iter().filter(|i| !i.anti && !i.palette.is_empty()).map(|i| (i.palette, i.weight as f64)).collect();
+        Ok(palette::merged(&parts))
     }
 
     /// Takes the key frames of a video and adds each one as an item. `name` is the
@@ -516,7 +639,9 @@ impl Library {
         let item = self.get_item(id)?;
         let removed = self.lang_dir(&item.language_id).join("_removed");
         std::fs::create_dir_all(&removed)?;
-        for rel in [&item.file_rel, &item.thumb_rel] {
+        let mut files = vec![item.file_rel.clone(), item.thumb_rel.clone()];
+        files.extend(item.model_rel.clone());
+        for rel in &files {
             let src = self.abs(rel)?;
             if src.exists() {
                 let name = src.file_name().map(|n| n.to_owned()).unwrap_or_default();
@@ -568,9 +693,13 @@ impl Library {
     }
 
     /// Items of a language whose ID starts with one of the given prefixes
-    /// (agents cite the first 8 characters).
+    /// (agents cite the first 8 characters). A language that extends a base
+    /// cites the items of the base, so those count too.
     pub fn items_by_prefix(&self, language_id: &str, prefixes: &[String]) -> Result<Vec<Item>> {
-        let items = self.list_items(language_id)?;
+        let mut items = Vec::new();
+        for l in self.base_chain(language_id)? {
+            items.extend(self.list_items(&l.id)?);
+        }
         let mut out = Vec::new();
         for p in prefixes {
             let p = p.trim().trim_matches('`');
@@ -1089,18 +1218,20 @@ impl Library {
             ],
         )?;
         self.touch_language(language_id)?;
+        // Languages that extend this one and follow its latest version get a new version too.
+        self.rebuild_children(language_id)?;
         Ok(())
     }
 
     /// The 8-character IDs of the items and sources of a language: the evidence
-    /// IDs that a spec may cite.
+    /// IDs that a spec may cite. A language that extends a base may cite the
+    /// evidence of the base.
     pub fn known_evidence_ids(&self, language_id: &str) -> Result<Vec<String>> {
-        let mut known: Vec<String> = self
-            .list_items(language_id)?
-            .iter()
-            .map(|i| i.id.chars().take(8).collect())
-            .collect();
-        known.extend(self.list_sources(language_id)?.iter().map(|x| x.id.chars().take(8).collect::<String>()));
+        let mut known: Vec<String> = Vec::new();
+        for l in self.base_chain(language_id)? {
+            known.extend(self.list_items(&l.id)?.iter().map(|i| i.id.chars().take(8).collect::<String>()));
+            known.extend(self.list_sources(&l.id)?.iter().map(|x| x.id.chars().take(8).collect::<String>()));
+        }
         Ok(known)
     }
 
@@ -1116,6 +1247,10 @@ impl Library {
     /// Validates a schema 2 spec that a person (or an accepted proposal) wrote and
     /// saves it as a new edited version. `model` is the label of the version.
     pub fn save_manual_spec(&self, language_id: &str, tokens: &Value, model: &str) -> Result<i64> {
+        // For a language that extends a base, the edit becomes overrides.
+        if self.get_language(language_id)?.base_id.is_some() {
+            return self.save_derived_edit(language_id, tokens);
+        }
         let check = spec::validate(tokens, &self.known_evidence_ids(language_id)?);
         if !check.errors.is_empty() {
             bail!("tokens.json: {}", check.errors.join(" "));
@@ -1653,15 +1788,29 @@ impl Library {
         Ok(())
     }
 
+    /// True when the language extends a base: its document comes from the
+    /// base and the overrides, not from a synthesis pass.
+    fn is_derived(&self, language_id: &str) -> Result<bool> {
+        let base: Option<Option<String>> = self.c().query_row("SELECT base_id FROM languages WHERE id = ?1", [language_id], |r| r.get(0)).optional()?;
+        Ok(base.flatten().is_some())
+    }
+
     /// Queues the synthesis pass after the debounce time of the settings.
     pub fn enqueue_synth(&self, language_id: &str) -> Result<()> {
+        if self.is_derived(language_id)? {
+            return Ok(());
+        }
         let delay = self.settings()?.debounce_secs;
         self.enqueue(JOB_SYNTH, language_id, delay)
     }
 
     /// Queues the synthesis pass now ("Synthesize now").
     pub fn synthesize_now(&self, language_id: &str) -> Result<()> {
-        self.get_language(language_id)?;
+        let lang = self.get_language(language_id)?;
+        if let Some(base) = &lang.base_id {
+            let name = self.get_language(base).map(|b| b.name).unwrap_or_else(|_| base.clone());
+            bail!("\"{}\" extends \"{name}\": its document comes from that language and the overrides, not from a synthesis pass.", lang.name);
+        }
         self.enqueue(JOB_SYNTH, language_id, 0)
     }
 

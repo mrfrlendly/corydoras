@@ -7,6 +7,7 @@ import ProjectView from './components/ProjectView';
 import SettingsView from './components/SettingsView';
 import ActivityView from './components/ActivityView';
 import RuleSetView from './components/RuleSetView';
+import SlicerImportView from './components/SlicerImportView';
 import QueueToggle from './components/QueueToggle';
 import Onboarding from './components/Onboarding';
 import Logo from './components/Logo';
@@ -17,6 +18,7 @@ export type View =
   | { kind: 'language'; id: string }
   | { kind: 'project'; id: string }
   | { kind: 'ruleset'; id: string }
+  | { kind: 'slicer' }
   | { kind: 'settings' }
   | { kind: 'activity' };
 
@@ -67,6 +69,12 @@ function Shell() {
         }),
       ),
       listen<string>('capture-error', (e) => toast.error(e.payload)),
+      listen<{ language_id: string; language_name: string; what: string }>('bridge-added', (e) =>
+        toast.info(`The browser extension added ${e.payload.what === 'source' ? 'a page to the sources of' : 'an image to'} “${e.payload.language_name}”.`, {
+          label: 'Show',
+          run: () => setView({ kind: 'language', id: e.payload.language_id }),
+        }),
+      ),
       listen('open-settings', () => setView({ kind: 'settings' })),
     ];
     return () => {
@@ -125,6 +133,8 @@ function Shell() {
           <LanguageView
             key={lang.id}
             language={lang}
+            languages={languages}
+            projects={projects}
             status={status?.languages.find((s) => s.language_id === lang.id) ?? null}
             worker={status?.worker ?? null}
             current={status?.current?.language_id === lang.id ? status.current : null}
@@ -162,6 +172,15 @@ function Shell() {
               bump();
             }}
             onOpenProject={(id) => setView({ kind: 'project', id })}
+          />
+        )}
+        {view.kind === 'slicer' && (
+          <SlicerImportView
+            onCancel={() => setView({ kind: 'home' })}
+            onCreated={(r) => {
+              bump();
+              setView({ kind: 'ruleset', id: r.id });
+            }}
           />
         )}
         {view.kind === 'activity' && (

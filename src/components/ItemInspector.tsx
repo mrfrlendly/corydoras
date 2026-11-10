@@ -296,6 +296,53 @@ export default function ItemInspector({ item, tick, onClose, onChanged, onRemove
           )}
         </section>
 
+        {item.palette.length > 0 && (
+          <section className="insp-section">
+            <h3>Colours</h3>
+            <div className="swatch-row">
+              {item.palette.map((c) => (
+                <button
+                  key={c.hex}
+                  className="palette-swatch"
+                  title={`${c.hex} · ${Math.round(c.share * 100)} % of the image. Click to copy.`}
+                  onClick={() =>
+                    navigator.clipboard
+                      .writeText(c.hex)
+                      .then(() => toast.info(`Copied ${c.hex}.`))
+                      .catch(() => {})
+                  }
+                >
+                  <span className="swatch-dot" style={{ background: c.hex }} />
+                  <span className="mono">{c.hex}</span>
+                </button>
+              ))}
+            </div>
+            <div className="muted small">The main colours of the whole image, background included. The analysis separates product colours from the background.</div>
+          </section>
+        )}
+
+        {item.model_rel && (
+          <section className="insp-section">
+            <h3>3D model</h3>
+            <div className="small">
+              The picture shows four automatic views of <span className="mono">{item.original_name}</span>: form and proportions, no colour or material.
+            </div>
+            <div className="row">
+              <button
+                className="btn small"
+                onClick={() =>
+                  api
+                    .appInfo()
+                    .then((i) => api.revealPath(`${i.library_path}/${item.model_rel!.split('/').slice(0, -1).join('/')}`))
+                    .catch((e) => toast.error(errText(e)))
+                }
+              >
+                Show the model file in Finder
+              </button>
+            </div>
+          </section>
+        )}
+
         <section className="insp-section">
           <h3>Source</h3>
           {src ? (

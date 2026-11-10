@@ -2,6 +2,7 @@ import { FormEvent, useState } from 'react';
 import { api, errText, fmtTokens, Language, Project, RuleSet, shortStatus, StatusReport } from '../api';
 import type { View } from '../App';
 import { Activity, Gauge, Layers, Pause, Plus, Settings, ShieldCheck, Swatch } from './icons';
+import { FileDown } from 'lucide-react';
 import Logo from './Logo';
 import { useToast } from './Toast';
 
@@ -146,9 +147,19 @@ export default function Sidebar({ languages, projects, ruleSets, status, view, o
             <ShieldCheck size={13} strokeWidth={1.8} />
             Rule sets
           </span>
-          <button className="icon-btn" title="New rule set" onClick={() => setNewRuleSet(true)}>
-            <Plus size={15} />
-          </button>
+          <span className="side-head-tools">
+            <button
+              className={`icon-btn ${view.kind === 'slicer' ? 'active' : ''}`}
+              title="Import a slicer profile (Bambu Studio, OrcaSlicer)"
+              aria-label="Import a slicer profile"
+              onClick={() => onView({ kind: 'slicer' })}
+            >
+              <FileDown size={14} />
+            </button>
+            <button className="icon-btn" title="New rule set" onClick={() => setNewRuleSet(true)}>
+              <Plus size={15} />
+            </button>
+          </span>
         </div>
         {newRuleSet && (
           <NewForm

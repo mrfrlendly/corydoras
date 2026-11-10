@@ -134,6 +134,7 @@ pub fn item_output_shape() -> Value {
         "summary": "Two or three sentences: what this image contributes to the language.",
         "role": "reference | anti-reference",
         "subject": "What the object or scene is.",
+        "view": "front | side | top | back | three-quarter | detail | section | context | other",
         "object_family": "The kind of object or element, for example bench, bracket, louvre facade.",
         "features": ["laminated shell", "blade field"],
         "form": {
@@ -191,6 +192,9 @@ pub fn item_user_text(language: &Language, item: &Item, regions: &[Region]) -> S
         s.push_str(&format!("Designer note: {}\n", item.note.trim()));
     }
     s.push_str(&format!("Image size: {} x {} px\n", item.width, item.height));
+    if item.kind == "model" {
+        s.push_str(&format!("\n3D model \"{}\". {}\n", item.original_name, crate::render::SHEET_NOTE));
+    }
     s.push_str("\nImage 1 is the full reference.\n");
     for (i, r) in regions.iter().enumerate() {
         s.push_str(&format!(

@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
 import { open } from '@tauri-apps/plugin-dialog';
 import { listen } from '@tauri-apps/api/event';
-import { ArrowRight, FolderInput, FolderOpen, FolderSearch, HardDrive, Loader, TriangleAlert } from 'lucide-react';
-import { api, AppInfo, errText, FolderInfo, fmtBytes, MoveProgress } from '../api';
+import { Archive, ArrowRight, FolderInput, FolderOpen, FolderSearch, HardDrive, Loader, TriangleAlert } from 'lucide-react';
+import { api, AppInfo, DbCopy, errText, FolderInfo, fmtBytes, MoveProgress } from '../api';
 import { useToast } from './Toast';
 
 /** The folder that receives a moved library: the chosen folder if it is empty, else a "Corydoras" folder inside it. */
@@ -24,6 +24,59 @@ export default function StoragePanel({ info, onInfo, onChanged }: { info: AppInf
   const [moving, setMoving] = useState(false);
   const [progress, setProgress] = useState<MoveProgress | null>(null);
   const [newLib, setNewLib] = useState<FolderInfo | null>(null);
+  const [snapping, setSnapping] = useState<string | null>(null);
+  const [copies, setCopies] = useState<DbCopy[]>([]);
+
+  useEffect(() => {
+    api
+      .dbCopies()
+      .then(setCopies)
+      .catch(() => setCopies([]));
+  }, [info.library_path]);
+
+  useEffect(() => {
+    const un = listen<MoveProgress>('snapshot-progress', (e) => setSnapping(`${e.payload.done} of ${e.payload.total} files`));
+    return () => {
+      un.then((f) => f());
+    };
+  }, []);
+
+  const saveSnapshot = async () => {
+    const picked = await open({ directory: true, multiple: false, canCreateDirectories: true, title: 'Choose where the snapshot goes (outside the library)' });
+    if (typeof picked !== 'string') return;
+    setSnapping('Starting…');
+    try {
+      const r = await api.createSnapshot(picked);
+      toast.info(`Snapshot saved: ${r.files} files, ${fmtBytes(r.bytes)}.`, { label: 'Show in Finder', run: () => api.revealPath(picked).catch(() => {}) });
+    } catch (e) {
+      toast.error(errText(e));
+    } finally {
+      setSnapping(null);
+    }
+  };
+
+  const openSnapshot = async () => {
+    const zip = await open({ multiple: false, title: 'Choose a snapshot (.zip)', filters: [{ name: 'Corydoras snapshot', extensions: ['zip'] }] });
+    if (typeof zip !== 'string') return;
+    const dest = await open({ directory: true, multiple: false, canCreateDirectories: true, title: 'Choose an empty folder for the library of the snapshot' });
+    if (typeof dest !== 'string') return;
+    setSnapping('Opening the snapshot…');
+    try {
+      const fi = await moveTarget(dest);
+      if (!fi.empty || fi.is_library) {
+        toast.error('Choose an empty folder, or a new folder.');
+        return;
+      }
+      const files = await api.restoreSnapshot(zip, fi.path);
+      onInfo(await api.setLibrary(fi.path));
+      toast.info(`Opened the snapshot as a library at ${fi.path} (${files} files). Your other library stays where it is.`);
+      onChanged();
+    } catch (e) {
+      toast.error(errText(e));
+    } finally {
+      setSnapping(null);
+    }
+  };
 
   useEffect(() => {
     const un = listen<MoveProgress>('library-move-progress', (e) => setProgress(e.payload));
@@ -190,6 +243,36 @@ export default function StoragePanel({ info, onInfo, onChanged }: { info: AppInf
           </div>
         </div>
       )}
+
+      <div className="snapshots">
+        <div className="eyebrow">Snapshots</div>
+        <p className="muted small">
+          A snapshot is one zip file with the database and every file of the library. Keep one on another disk; it opens again as a library. The app
+          also keeps a copy of the database alone for each of the last seven days, inside the library.
+        </p>
+        <div className="row">
+          <button className="btn small" onClick={saveSnapshot} disabled={moving || !!snapping}>
+            <Archive size={13} /> Save a snapshot…
+          </button>
+          <button className="btn small" onClick={openSnapshot} disabled={moving || !!snapping}>
+            <FolderOpen size={13} /> Open a snapshot…
+          </button>
+          {snapping && (
+            <span className="small muted">
+              <Loader size={12} className="spin" /> {snapping}
+            </span>
+          )}
+        </div>
+        {copies.length > 0 && (
+          <div className="small muted">
+            {copies.length} daily database cop{copies.length === 1 ? 'y' : 'ies'}, newest {copies[0].name.replace('library-', '').replace('.sqlite', '')} (
+            {fmtBytes(copies[0].bytes)}).{' '}
+            <button className="link-btn" onClick={() => api.revealPath(copies[0].path.split('/').slice(0, -1).join('/')).catch((e) => toast.error(errText(e)))}>
+              Show in Finder
+            </button>
+          </div>
+        )}
+      </div>
 
       {info.recent_libraries.length > 0 && (
         <div className="recent-libs">

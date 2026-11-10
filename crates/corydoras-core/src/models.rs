@@ -1,3 +1,4 @@
+use crate::palette::Swatch;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -12,6 +13,16 @@ pub struct Language {
     pub latest_version: Option<i64>,
     /// Links and documents.
     pub source_count: i64,
+    /// The language that this one extends, if any. Its document is then the
+    /// base document with this language's overrides applied.
+    #[serde(default)]
+    pub base_id: Option<String>,
+    /// The base version to follow. None: always the latest.
+    #[serde(default)]
+    pub base_version: Option<i64>,
+    /// How many changes this language makes to its base.
+    #[serde(default)]
+    pub override_count: i64,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -38,6 +49,12 @@ pub struct Item {
     /// Place on the canvas view. None: not placed yet (the canvas places it).
     #[serde(default)]
     pub canvas: Option<CanvasPos>,
+    /// The 3D model behind a rendered item (kind "model"), relative to the library root.
+    #[serde(default)]
+    pub model_rel: Option<String>,
+    /// The main colours of the image, largest share first. Empty for a model.
+    #[serde(default)]
+    pub palette: Vec<Swatch>,
 }
 
 /// Place of an item on the canvas, in canvas units (1 unit = 1 px at 100 %).

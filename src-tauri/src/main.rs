@@ -9,7 +9,7 @@ use corydoras_core::{
     library::{JOB_ANALYZE, JOB_SOURCE, JOB_SYNTH},
     models::*,
     provider::{self, CheckReport, Provider},
-    secrets,
+    secrets, snapshot,
     storage::{self, FolderInfo, MoveReport},
     video, worker, Library,
 };
@@ -21,7 +21,11 @@ use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 use tauri::{Emitter, Listener, Manager, RunEvent, State, WindowEvent};
 
+mod bridge;
 mod capture;
+mod features;
+#[cfg(test)]
+mod ipc_tests;
 
 // ----------------------------------------------------------------------
 // State
@@ -44,6 +48,8 @@ struct AppState {
     moving: AtomicBool,
     /// The worker runs a step now.
     busy: AtomicBool,
+    /// The local bridge for the browser extension.
+    bridge: bridge::BridgeState,
 }
 
 type CmdResult<T> = Result<T, String>;
@@ -125,6 +131,14 @@ fn app_info_of(state: &State<'_, AppState>) -> AppInfo {
     }
 }
 
+/// Keeps today's copy of the database (the safety net of Settings › Library).
+/// A failure is not an error for the user: the library still works.
+fn daily_copy(lib: &Library) {
+    if let Err(e) = snapshot::daily_db_copy(lib) {
+        eprintln!("Cannot keep the daily copy of the database: {e}");
+    }
+}
+
 #[tauri::command]
 fn app_info(state: State<'_, AppState>) -> AppInfo {
     app_info_of(&state)
@@ -144,6 +158,7 @@ fn set_library(app: tauri::AppHandle, state: State<'_, AppState>, path: String) 
         return Err("That folder has other files in it. Choose a library folder, an empty folder, or a new folder.".into());
     }
     let lib = Library::open(&path).map_err(e2s)?;
+    daily_copy(&lib);
     let mut cfg = AppConfig::load();
     cfg.set_library(path);
     cfg.save().map_err(e2s)?;
@@ -362,6 +377,14 @@ async fn import_files(state: State<'_, AppState>, language_id: String, paths: Ve
                         report.added.extend(v.items);
                     }
                     Err(e) => report.errors.push(e.to_string()),
+                }
+                continue;
+            }
+            // A 3D model: the app draws four views of it.
+            if corydoras_core::mesh::is_model_name(&name) {
+                match lib.import_model(&language_id, &path, &name, Some(&p)) {
+                    Ok(item) => report.added.push(item),
+                    Err(e) => report.errors.push(format!("{name}: {e}")),
                 }
                 continue;
             }
@@ -1157,6 +1180,7 @@ fn main() {
             if let Some(path) = config::resolve_library_path(None) {
                 match Library::open(&path) {
                     Ok(lib) => {
+                        daily_copy(&lib);
                         let st = app.state::<AppState>();
                         *st.lib.write().unwrap_or_else(|e| e.into_inner()) = Some(Arc::new(lib));
                     }
@@ -1169,6 +1193,7 @@ fn main() {
                 eprintln!("Cannot make the menu bar icon: {e}");
             }
             capture::register_saved(app.handle());
+            bridge::start(app.handle());
             // New, renamed or removed languages change the capture menu.
             let h = app.handle().clone();
             app.listen_any("library-changed", move |_| capture::refresh_tray(&h));
@@ -1248,7 +1273,38 @@ fn main() {
             status,
             capture::get_capture,
             capture::set_capture,
-            capture::capture_now
+            capture::capture_now,
+            bridge::get_bridge,
+            bridge::set_bridge,
+            features::import_model_bytes,
+            features::backfill_palettes,
+            features::language_palette,
+            features::search_board,
+            features::check_output_geometry,
+            features::list_print_results,
+            features::add_print_result,
+            features::remove_print_result,
+            features::rule_feedback,
+            features::slicer_profiles,
+            features::slicer_preview,
+            features::slicer_import,
+            features::version_diff,
+            features::restore_version,
+            features::coverage,
+            features::set_base,
+            features::inheritance,
+            features::remove_override,
+            features::export_language,
+            features::save_text_file,
+            features::estimate,
+            features::other_model,
+            features::reanalyze_other_model,
+            features::create_snapshot,
+            features::restore_snapshot,
+            features::db_copies,
+            features::usage_insight,
+            features::preview_board,
+            features::import_board
         ])
         .build(tauri::generate_context!())
         .expect("Corydoras failed to start")

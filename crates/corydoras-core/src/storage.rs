@@ -134,7 +134,7 @@ pub fn measure(src: &Path) -> (u64, u64) {
 
 /// Calls `f` for each regular file below `root`, with its path relative to root.
 /// It skips the SQLite files (they are copied with VACUUM INTO) and symbolic links.
-fn walk(root: &Path, f: &mut dyn FnMut(&Path, &Path)) {
+pub(crate) fn walk(root: &Path, f: &mut dyn FnMut(&Path, &Path)) {
     fn inner(root: &Path, dir: &Path, f: &mut dyn FnMut(&Path, &Path)) {
         let Ok(rd) = std::fs::read_dir(dir) else { return };
         for e in rd.flatten() {

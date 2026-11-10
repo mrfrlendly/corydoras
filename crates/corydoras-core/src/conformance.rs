@@ -7,6 +7,7 @@
 
 use crate::agent::match_rule;
 use crate::models::RuleSet;
+use crate::printlog::PrintResult;
 use anyhow::{anyhow, bail, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -45,6 +46,9 @@ pub struct Report {
     /// Names of the rule sets that were applied. Empty: no hard rule judged anything.
     #[serde(default)]
     pub rule_sets: Vec<String>,
+    /// Entries of the print log about a material (not about one rule).
+    #[serde(default)]
+    pub print_log: Vec<String>,
     pub pass: usize,
     pub fail: usize,
     pub warn: usize,
@@ -52,7 +56,7 @@ pub struct Report {
 }
 
 fn fmt(v: f64, unit: Option<&str>) -> String {
-    let n = if (v - v.round()).abs() < 1e-9 { format!("{}", v as i64) } else { format!("{:.3}", v).trim_end_matches('0').to_string() };
+    let n = if (v - v.round()).abs() < 1e-9 { format!("{}", v.round() as i64) } else { format!("{:.3}", v).trim_end_matches('0').to_string() };
     match unit {
         Some(u) if !u.is_empty() => format!("{n} {u}"),
         _ => n,
@@ -71,15 +75,18 @@ fn norm(s: &str) -> String {
     s.to_lowercase().split(|c: char| !c.is_alphanumeric()).filter(|w| !w.is_empty()).collect::<Vec<_>>().join(" ")
 }
 
-/// A limit's direction comes from its name: "minimum wall" is a floor,
-/// "maximum overhang" a ceiling. Other names have no direction.
-fn direction(rule_name: &str) -> Option<bool> {
+/// A limit's direction comes from its name: "minimum wall" is a floor (true),
+/// "maximum overhang" a ceiling (false). A clearance is a gap that must stay
+/// open, so it is a floor. Other names have no direction.
+pub fn direction(rule_name: &str) -> Option<bool> {
     let n = norm(rule_name);
     let words: Vec<&str> = n.split(' ').collect();
     if words.iter().any(|w| matches!(*w, "minimum" | "min" | "minimal")) {
         Some(true)
     } else if words.iter().any(|w| matches!(*w, "maximum" | "max" | "maximal")) {
         Some(false)
+    } else if words.iter().any(|w| matches!(*w, "clearance" | "clearances" | "gap")) {
+        Some(true)
     } else {
         None
     }
@@ -106,7 +113,7 @@ fn range_of(v: &Value) -> Option<(f64, f64)> {
     }
 }
 
-fn check_one(m: &Measurement, sets: &[RuleSet], measures: &[&Value]) -> Finding {
+fn check_one(m: &Measurement, sets: &[RuleSet], measures: &[&Value], log: &[PrintResult]) -> Finding {
     let unit = m.unit.as_deref();
     // 1. Hard rules win.
     if let Some((set, rule)) = match_rule(sets, &m.name) {
@@ -115,12 +122,15 @@ fn check_one(m: &Measurement, sets: &[RuleSet], measures: &[&Value]) -> Finding 
         if !same_unit(unit, rule.unit.as_deref()) {
             return finding(m, "unknown", "hard rule", expected, format!("The units differ or are missing (got {}). Report the number in {}.", unit.unwrap_or("no unit"), rule.unit.as_deref().unwrap_or("the rule's unit")));
         }
-        return match direction(&rule.name) {
+        let mut f = match direction(&rule.name) {
             Some(true) if m.value + 1e-9 < limit => finding(m, "fail", "hard rule", expected, format!("{} is below the minimum.", fmt(m.value, unit))),
             Some(false) if m.value - 1e-9 > limit => finding(m, "fail", "hard rule", expected, format!("{} is above the maximum.", fmt(m.value, unit))),
             Some(_) => finding(m, "pass", "hard rule", expected, String::new()),
             None => finding(m, "unknown", "hard rule", expected, "The rule has no direction (minimum or maximum), so the number cannot be judged.".into()),
         };
+        // What real prints say about this rule.
+        crate::printlog::annotate(&mut f, set, rule, log);
+        return f;
     }
     // 2. The language's own measures.
     let want = norm(&m.name);
@@ -162,6 +172,21 @@ pub fn check(
     family: Option<&str>,
     measurements: &[Measurement],
 ) -> Result<Report> {
+    check_with_log(language_name, version, tokens, sets, family, measurements, &[])
+}
+
+/// The same check, with the print log: a number that passes a hard rule but is
+/// at or past a value that failed in a real print becomes a warning. Without a
+/// language (an empty name and null tokens), only the hard rules judge.
+pub fn check_with_log(
+    language_name: &str,
+    version: i64,
+    tokens: &Value,
+    sets: &[RuleSet],
+    family: Option<&str>,
+    measurements: &[Measurement],
+    log: &[PrintResult],
+) -> Result<Report> {
     if measurements.is_empty() {
         bail!("Send at least one measurement: {{\"name\", \"value\", \"unit\"}}.");
     }
@@ -196,7 +221,7 @@ pub fn check(
     }
     // Never apply one family's measures to another family: without a family, only
     // the hard rules can judge a number.
-    let findings: Vec<Finding> = measurements.iter().map(|m| check_one(m, sets, &picked)).collect();
+    let findings: Vec<Finding> = measurements.iter().map(|m| check_one(m, sets, &picked, log)).collect();
     let reported: Vec<String> = measurements.iter().map(|m| norm(&m.name)).collect();
     let not_reported = picked
         .iter()
@@ -216,15 +241,15 @@ pub fn check(
         findings,
         not_reported,
         rule_sets: sets.iter().map(|r| r.name.clone()).collect(),
+        print_log: crate::printlog::material_notes(log),
     })
 }
 
 /// The report as text for an agent.
 pub fn report_text(r: &Report) -> String {
     let mut s = format!(
-        "CONFORMANCE of a design to {} v{}{}: {} pass, {} fail, {} warn, {} unknown.\n\n",
-        r.language,
-        r.version,
+        "CONFORMANCE of a design to {}{}: {} pass, {} fail, {} warn, {} unknown.\n\n",
+        if r.language.is_empty() { "the hard rules".to_string() } else { format!("{} v{}", r.language, r.version) },
         r.family.as_ref().map(|f| format!(" (family {f})")).unwrap_or_default(),
         r.pass,
         r.fail,
@@ -249,6 +274,15 @@ pub fn report_text(r: &Report) -> String {
     }
     if !r.not_reported.is_empty() {
         s.push_str(&format!("\nNot reported (measures of the family): {}.\n", r.not_reported.join(", ")));
+    }
+    if !r.print_log.is_empty() {
+        s.push_str("\nPrint log (what real prints showed about the material):\n");
+        for n in &r.print_log {
+            s.push_str(&format!("- {n}\n"));
+        }
+    }
+    if r.warn > 0 {
+        s.push_str("\nCheck every WARN: the number is allowed, but the language or a real print points the other way.\n");
     }
     if r.fail > 0 {
         s.push_str("\nFix every FAIL: a hard-rule fail means the design value must change; the rule stays. A language fail means the design leaves what the references show.\n");
@@ -279,7 +313,8 @@ pub fn run(
         None => None,
     };
     let sets = lib.effective_rule_sets(project.as_ref())?;
-    let report = check(&lang.name, content.info.version, &content.tokens, &sets, family, measurements)?;
+    let log = lib.print_results_for(&sets)?;
+    let report = check_with_log(&lang.name, content.info.version, &content.tokens, &sets, family, measurements, &log)?;
     if let Some(key) = output.map(|o| o.trim()).filter(|o| !o.is_empty()) {
         let out = lib.find_output(key)?;
         if out.language_id != lang.id {
@@ -330,6 +365,18 @@ mod tests {
         assert_eq!(r.findings[1].verdict, "pass");
         assert_eq!(r.findings[2].verdict, "fail");
         assert_eq!(r.fail, 2);
+    }
+
+    #[test]
+    fn a_clearance_is_a_floor() {
+        assert_eq!(direction("Sliding clearance"), Some(true));
+        assert_eq!(direction("Maximum clearance"), Some(false));
+        assert_eq!(direction("Layer height"), None);
+        let mut s = sets();
+        s[0].rules.push(Rule { name: "Sliding clearance".into(), value: Some(0.3), unit: Some("mm".into()), note: String::new() });
+        let r = check("", 0, &Value::Null, &s, None, &[m("sliding clearance", 0.2, "mm"), m("clearance per side", 0.35, "mm")]).unwrap();
+        assert_eq!((r.findings[0].verdict.as_str(), r.findings[1].verdict.as_str()), ("fail", "pass"));
+        assert!(report_text(&r).starts_with("CONFORMANCE of a design to the hard rules:"));
     }
 
     #[test]

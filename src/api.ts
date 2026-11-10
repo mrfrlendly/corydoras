@@ -62,6 +62,10 @@ export interface ProviderProfile {
   vision: boolean | null;
   key_account: string;
   needs_key: boolean;
+  /** US dollars for one million input tokens; 0 means not set. */
+  price_in: number;
+  /** US dollars for one million output tokens. */
+  price_out: number;
 }
 
 export interface AiConfig {
@@ -91,6 +95,11 @@ export interface Language {
   latest_version: number | null;
   /** Links and documents. */
   source_count: number;
+  /** The language that this one extends. Its document is the base plus the overrides. */
+  base_id: string | null;
+  /** The base version to follow; null follows the latest. */
+  base_version: number | null;
+  override_count: number;
 }
 
 export interface Item {
@@ -113,6 +122,16 @@ export interface Item {
   region_count: number;
   /** Place on the canvas view; null until placed. */
   canvas: CanvasPos | null;
+  /** The 3D model behind a rendered item (kind "model"). */
+  model_rel: string | null;
+  /** The main colours of the image, largest share first. */
+  palette: Swatch[];
+}
+
+/** One colour of a palette and the share that it covers (0 to 1). */
+export interface Swatch {
+  hex: string;
+  share: number;
 }
 
 /** Canvas units: 1 unit = 1 px at 100 %. The height follows from the image proportions. */
@@ -278,10 +297,47 @@ export interface ConformanceReport {
   not_reported: string[];
   /** Rule sets that were applied; empty means no hard rule judged anything. */
   rule_sets: string[];
+  /** Entries of the print log about a material. */
+  print_log?: string[];
   pass: number;
   fail: number;
   warn: number;
   unknown: number;
+}
+
+/** A measured value and where on the model it is. */
+export interface Spot {
+  value: number;
+  at: [number, number, number];
+}
+
+/** The geometry check of a model file. */
+export interface GeometryReport {
+  file: string;
+  format: string;
+  up: string;
+  triangles: number;
+  bodies: number;
+  cavities: number;
+  open_edges: number;
+  size: [number, number, number];
+  volume_cm3: number | null;
+  area_cm2: number;
+  min_wall: Spot | null;
+  thinnest: Spot | null;
+  median_wall: number | null;
+  max_overhang: Spot | null;
+  overhang_area_mm2: number;
+  overhang_limit: number;
+  max_bridge: Spot | null;
+  flat_overhang: Spot | null;
+  min_clearance: Spot | null;
+  overlap: boolean;
+  contact_mm2: number;
+  measurements: Measurement[];
+  notes: string[];
+  check: ConformanceReport | null;
+  seconds: number;
 }
 
 /** A design that an agent made from a language and sent back for a verdict. */
@@ -300,6 +356,8 @@ export interface Output {
   family: string;
   measurements: Measurement[];
   check: ConformanceReport | null;
+  /** The geometry check of a model of this design, if one ran. */
+  geometry: GeometryReport | null;
   verdict: 'pending' | 'accepted' | 'rejected';
   verdict_note: string;
   item_id: string | null;
@@ -516,6 +574,295 @@ export function shortcutFromEvent(e: KeyboardEvent): string | null {
   return [...mods, e.code].join('+');
 }
 
+// ---------------------------------------------------------------- Phase 3.2 to 3.4
+
+export type PrintOutcome = 'failed' | 'warped' | 'frosted' | 'fine' | 'other';
+export const PRINT_OUTCOMES: PrintOutcome[] = ['failed', 'warped', 'frosted', 'fine', 'other'];
+
+/** What happened when a design was printed. */
+export interface PrintResult {
+  id: string;
+  result: PrintOutcome;
+  material: string;
+  /** The hard rule that the result is about, or empty. */
+  rule: string;
+  /** null: the entry applies everywhere. */
+  rule_set_id: string | null;
+  rule_set_name: string | null;
+  value: number | null;
+  unit: string | null;
+  note: string;
+  language_id: string | null;
+  output_id: string | null;
+  /** Empty for you; else the agent that wrote the entry. */
+  author: string;
+  created_at: string;
+}
+
+export interface PrintResultInput {
+  result: PrintOutcome;
+  material: string;
+  rule: string;
+  rule_set: string | null;
+  value: number | null;
+  unit: string | null;
+  note: string;
+  language: string | null;
+  output: string | null;
+}
+
+export interface RuleFeedback {
+  rule: string;
+  failed: number;
+  warped: number;
+  frosted: number;
+  fine: number;
+  other: number;
+  hints: string[];
+}
+
+export interface ProfileRef {
+  app: string;
+  kind: 'process' | 'machine' | 'filament';
+  name: string;
+  path: string;
+  user: boolean;
+}
+
+export interface SlicerInput {
+  process: string | null;
+  machine: string | null;
+  filament: string | null;
+  project: string | null;
+}
+
+export interface CompareRow {
+  rule: string;
+  unit: string | null;
+  imported: number | null;
+  builtin: number | null;
+  status: 'same' | 'differs' | 'new' | 'builtin-only';
+}
+
+export interface SlicerDerived {
+  name: string;
+  description: string;
+  rules: Rule[];
+  compare: CompareRow[];
+  notes: string[];
+}
+
+export interface DiffChange {
+  section: string;
+  kind: 'added' | 'removed' | 'changed';
+  subject: string;
+  text: string;
+}
+
+export interface VersionDiff {
+  language: string;
+  from: number;
+  to: number;
+  /** false when a version uses the older format: only the text can be compared. */
+  structured: boolean;
+  changes: DiffChange[];
+}
+
+export interface Gap {
+  kind: string;
+  severity: 'high' | 'medium' | 'low';
+  family: string | null;
+  title: string;
+  detail: string;
+  suggestion: string;
+  evidence: string[];
+}
+
+export interface FamilyCoverage {
+  id: string;
+  name: string;
+  references: number;
+  anti_references: number;
+  measures: number;
+  rules: number;
+  views: string[];
+  missing_views: string[];
+}
+
+export interface Coverage {
+  language: string;
+  version: number | null;
+  families: FamilyCoverage[];
+  gaps: Gap[];
+  unused_references: number;
+}
+
+export interface OverrideView {
+  op: string;
+  path: string;
+  before: unknown;
+  after: unknown;
+  problem: string | null;
+}
+
+export interface Inheritance {
+  base_id: string;
+  base_name: string;
+  pinned_version: number | null;
+  built_from: number | null;
+  base_latest: number | null;
+  overrides: OverrideView[];
+  error: string | null;
+}
+
+export type ExportFormat = 'css' | 'figma' | 'grasshopper';
+export const EXPORT_FORMATS: { id: ExportFormat; label: string }[] = [
+  { id: 'css', label: 'CSS variables' },
+  { id: 'figma', label: 'Figma tokens (JSON)' },
+  { id: 'grasshopper', label: 'Grasshopper parameters (JSON)' },
+];
+
+export interface Exported {
+  format: string;
+  file_name: string;
+  content: string;
+}
+
+export interface Pass {
+  calls: number;
+  input_tokens: number;
+  output_tokens: number;
+}
+
+export interface Estimate {
+  images: Pass;
+  sources: Pass;
+  document: Pass;
+  total_tokens: number;
+  /** US dollars; null when a provider has no prices. */
+  cost_usd: number | null;
+  from_history: boolean;
+  budget_left: number | null;
+}
+
+export type EstimateScope = 'queue' | 'all' | 'document' | 'other-model';
+
+export interface OtherModelView {
+  /** The model that analyzes images now. */
+  model: string;
+  other: { images: number; sources: number; models: string[] };
+}
+
+export interface SnapshotReport {
+  path: string;
+  files: number;
+  bytes: number;
+}
+
+export interface DbCopy {
+  name: string;
+  path: string;
+  bytes: number;
+}
+
+export interface FamilyUse {
+  id: string;
+  name: string;
+  fetches: number;
+  checks: number;
+  last_used: string | null;
+}
+
+export interface Recurring {
+  path: string;
+  proposals: number;
+  pending: number;
+  accepted: number;
+  rejected: number;
+  summaries: string[];
+}
+
+export interface UsageInsight {
+  language: string;
+  since: string;
+  days: number;
+  calls: number;
+  document_reads: number;
+  briefs: number;
+  last_call: string | null;
+  tools: [string, number][];
+  clients: [string, number][];
+  families: FamilyUse[];
+  unused_families: string[];
+  measures: { family: string; name: string; checks: number }[];
+  unchecked_measures: string[];
+  references: [string, number][];
+  recurring: Recurring[];
+}
+
+export interface BoardItem {
+  image_url: string;
+  fallback_url: string | null;
+  title: string;
+  source: string;
+}
+
+export interface BoardPreview {
+  service: string;
+  title: string;
+  url: string;
+  items: BoardItem[];
+  skipped: number;
+  note: string | null;
+}
+
+export interface BoardImportSummary {
+  added: number;
+  duplicates: number;
+  errors: string[];
+}
+
+export interface BoardHit {
+  item_id: string;
+  matched: number;
+  snippets: string[];
+}
+
+export interface BridgeView {
+  enabled: boolean;
+  port: number;
+  token: string;
+  running: boolean;
+  error: string | null;
+}
+
+/** 3D model files that the app reads; it draws four views of each. */
+export const MODEL_EXTENSIONS = ['stl', '3mf', 'obj', 'step', 'stp'];
+export const MODEL_EXT_RE = /\.(stl|3mf|obj|step|stp)$/i;
+
+/** "about 62 k tokens (≈ $0.04)" */
+export function fmtEstimate(e: Estimate): string {
+  const money = e.cost_usd === null ? '' : ` (≈ $${e.cost_usd < 0.01 && e.cost_usd > 0 ? '<0.01' : e.cost_usd.toFixed(2)})`;
+  return `about ${fmtTokens(e.total_tokens)} tokens${money}`;
+}
+
+/** "1.2 mm", "45°", "0.4 ×" */
+export function fmtMeasure(v: number, unit: string | null): string {
+  const n = String(Math.round(v * 100) / 100);
+  switch (unit) {
+    case 'mm':
+      return `${n} mm`;
+    case 'deg':
+      return `${n}°`;
+    case 'percent':
+      return `${n} %`;
+    case 'ratio':
+      return `${n} ×`;
+    default:
+      return n;
+  }
+}
+
 export const api = {
   appInfo: () => invoke<AppInfo>('app_info'),
   setLibrary: (path: string) => invoke<AppInfo>('set_library', { path }),
@@ -611,6 +958,45 @@ export const api = {
   setCapture: (languageId: string | null, shortcut: string | null) =>
     invoke<CaptureView>('set_capture', { languageId, shortcut }),
   captureNow: () => invoke<void>('capture_now'),
+  importModelBytes: async (languageId: string, file: File) =>
+    invoke<Item>('import_model_bytes', new Uint8Array(await file.arrayBuffer()), {
+      headers: { 'x-language-id': encodeURIComponent(languageId), 'x-file-name': encodeURIComponent(file.name || 'model.stl') },
+    }),
+  backfillPalettes: (languageId: string) => invoke<number>('backfill_palettes', { languageId }),
+  languagePalette: (languageId: string) => invoke<Swatch[]>('language_palette', { languageId }),
+  searchBoard: (languageId: string, query: string) => invoke<BoardHit[]>('search_board', { languageId, query }),
+  checkOutputGeometry: (outputId: string, path: string, up: string | null) =>
+    invoke<Output>('check_output_geometry', { outputId, path, up }),
+  listPrintResults: () => invoke<PrintResult[]>('list_print_results'),
+  addPrintResult: (input: PrintResultInput) => invoke<PrintResult>('add_print_result', { input }),
+  removePrintResult: (id: string) => invoke<void>('remove_print_result', { id }),
+  ruleFeedback: (ruleSetId: string) => invoke<RuleFeedback[]>('rule_feedback', { ruleSetId }),
+  slicerProfiles: () => invoke<ProfileRef[]>('slicer_profiles'),
+  slicerPreview: (input: SlicerInput) => invoke<SlicerDerived>('slicer_preview', { input }),
+  slicerImport: (input: SlicerInput, name: string, fillFromBuiltin: boolean) =>
+    invoke<RuleSet>('slicer_import', { input, name, fillFromBuiltin }),
+  versionDiff: (languageId: string, from: number, to: number) => invoke<VersionDiff>('version_diff', { languageId, from, to }),
+  restoreVersion: (languageId: string, version: number) => invoke<number>('restore_version', { languageId, version }),
+  coverage: (languageId: string) => invoke<Coverage>('coverage', { languageId }),
+  setBase: (languageId: string, base: string | null, version: number | null) =>
+    invoke<Language>('set_base', { languageId, base, version }),
+  inheritance: (languageId: string) => invoke<Inheritance | null>('inheritance', { languageId }),
+  removeOverride: (languageId: string, index: number) => invoke<number | null>('remove_override', { languageId, index }),
+  exportLanguage: (languageId: string, version: number | null, format: ExportFormat, project: string | null) =>
+    invoke<Exported>('export_language', { languageId, version, format, project }),
+  saveTextFile: (path: string, content: string) => invoke<void>('save_text_file', { path, content }),
+  estimate: (languageId: string, scope: EstimateScope) => invoke<Estimate>('estimate', { languageId, scope }),
+  otherModel: (languageId: string) => invoke<OtherModelView>('other_model', { languageId }),
+  reanalyzeOtherModel: (languageId: string) => invoke<number>('reanalyze_other_model', { languageId }),
+  createSnapshot: (dest: string) => invoke<SnapshotReport>('create_snapshot', { dest }),
+  restoreSnapshot: (zip: string, dest: string) => invoke<number>('restore_snapshot', { zip, dest }),
+  dbCopies: () => invoke<DbCopy[]>('db_copies'),
+  usageInsight: (languageId: string, days: number) => invoke<UsageInsight>('usage_insight', { languageId, days }),
+  previewBoard: (url: string) => invoke<BoardPreview>('preview_board', { url }),
+  importBoard: (languageId: string, url: string) => invoke<BoardImportSummary>('import_board', { languageId, url }),
+  getBridge: () => invoke<BridgeView>('get_bridge'),
+  setBridge: (enabled: boolean, port: number, newTokenNow: boolean) =>
+    invoke<BridgeView>('set_bridge', { enabled, port, newTokenNow }),
   activity: () => invoke<ActivityReport>('activity'),
   cancelJob: (jobId: number) => invoke<void>('cancel_job', { jobId }),
   cancelAll: (languageId: string | null) => invoke<number>('cancel_all', { languageId }),

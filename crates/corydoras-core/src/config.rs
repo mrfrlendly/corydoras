@@ -16,6 +16,35 @@ pub struct AppConfig {
     /// Screen capture from the menu bar and the keyboard shortcut.
     #[serde(default)]
     pub capture: CaptureConfig,
+    /// The local bridge that the browser extension talks to.
+    #[serde(default)]
+    pub bridge: BridgeConfig,
+}
+
+/// The port of the bridge when nothing else is set.
+pub const DEFAULT_BRIDGE_PORT: u16 = 47821;
+
+/// The bridge listens on this computer only (127.0.0.1) and answers only
+/// requests that carry the token. It is off until you turn it on.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct BridgeConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_bridge_port")]
+    pub port: u16,
+    /// The secret that the extension sends with each request.
+    #[serde(default)]
+    pub token: String,
+}
+
+fn default_bridge_port() -> u16 {
+    DEFAULT_BRIDGE_PORT
+}
+
+impl Default for BridgeConfig {
+    fn default() -> Self {
+        BridgeConfig { enabled: false, port: DEFAULT_BRIDGE_PORT, token: String::new() }
+    }
 }
 
 /// The shortcut that captures when nothing else is set: Control-Option-Command-C.
@@ -42,8 +71,13 @@ impl Default for CaptureConfig {
     }
 }
 
-/// ~/Library/Application Support/Corydoras on macOS.
+/// ~/Library/Application Support/Corydoras on macOS. CORYDORAS_CONFIG_DIR
+/// names another folder (development: a run that must not touch your settings
+/// and keys).
 pub fn config_dir() -> PathBuf {
+    if let Some(dir) = std::env::var_os("CORYDORAS_CONFIG_DIR").filter(|d| !d.is_empty()) {
+        return PathBuf::from(dir);
+    }
     dirs::config_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join("Corydoras")

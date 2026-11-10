@@ -163,7 +163,16 @@ function Editor({
             onChange={(e) => set({ max_output: Math.max(1, Number(e.target.value) || 1) * 1000 })}
           />
         </label>
+        <label className="field">
+          <span>Price of input (US dollars for a million tokens, optional)</span>
+          <input type="number" min={0} step={0.01} value={d.price_in || ''} placeholder="Not set" onChange={(e) => set({ price_in: Math.max(0, Number(e.target.value) || 0) })} />
+        </label>
+        <label className="field">
+          <span>Price of output (US dollars for a million tokens, optional)</span>
+          <input type="number" min={0} step={0.01} value={d.price_out || ''} placeholder="Not set" onChange={(e) => set({ price_out: Math.max(0, Number(e.target.value) || 0) })} />
+        </label>
       </div>
+      <p className="muted small">With prices, the estimate before each pass shows money next to the tokens. Take them from the price list of the provider.</p>
       {preset?.note && <p className="muted small">{preset.note}</p>}
 
       {d.needs_key && (

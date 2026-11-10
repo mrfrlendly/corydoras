@@ -1,7 +1,91 @@
 import { useEffect, useState } from 'react';
-import { Check, ClipboardCheck, Trash2, Undo2, X } from 'lucide-react';
-import { api, ConformanceFinding, errText, fileUrl, fmtDate, Language, Output } from '../api';
+import { open as openDialog } from '@tauri-apps/plugin-dialog';
+import { Check, ClipboardCheck, Loader, Printer, Ruler, Trash2, Undo2, X } from 'lucide-react';
+import { api, ConformanceFinding, errText, fileUrl, fmtDate, GeometryReport, Language, MODEL_EXTENSIONS, Output, PRINT_OUTCOMES, PrintOutcome, Spot } from '../api';
 import { useToast } from './Toast';
+
+const UP_AXES = ['+z', '-z', '+y', '-y', '+x', '-x'];
+
+/** A measured length or angle: two decimals are enough. */
+function geo(v: number, unit: string) {
+  return `${Math.round(v * 100) / 100} ${unit}`;
+}
+
+function at(s: Spot) {
+  return `near x ${s.at[0]}, y ${s.at[1]}, z ${s.at[2]}`;
+}
+
+/** The measured values of a geometry check, then the verdict of each. */
+function GeometryBlock({ g }: { g: GeometryReport }) {
+  const [open, setOpen] = useState(false);
+  const c = g.check;
+  return (
+    <div className="output-check">
+      <button className="link-btn small" onClick={() => setOpen((v) => !v)} aria-expanded={open}>
+        Geometry of {g.file}: {c ? `${c.pass} pass · ${c.fail} fail · ${c.warn} warn · ${c.unknown} unknown` : 'measured'} {open ? '▾' : '▸'}
+      </button>
+      {open && (
+        <>
+          <div className="small muted">
+            {g.format.toUpperCase()} · build direction {g.up} · {g.triangles.toLocaleString()} triangles · {g.bodies} bod{g.bodies === 1 ? 'y' : 'ies'} ·{' '}
+            {g.size.map((v) => Math.round(v * 10) / 10).join(' × ')} mm{g.volume_cm3 !== null ? ` · ${Math.round(g.volume_cm3 * 10) / 10} cm³` : ''}
+          </div>
+          <ul className="geo-list small">
+            {g.min_wall && (
+              <li>
+                Thinnest wall <strong>{geo(g.min_wall.value, 'mm')}</strong> {at(g.min_wall)}
+                {g.median_wall !== null ? ` (typical wall ${geo(g.median_wall, 'mm')})` : ''}
+              </li>
+            )}
+            {g.max_overhang && (
+              <li>
+                {g.max_overhang.value <= 0 ? (
+                  'No overhang above the first layers'
+                ) : (
+                  <>
+                    Steepest overhang <strong>{geo(g.max_overhang.value, '°')}</strong> from the vertical {at(g.max_overhang)}
+                  </>
+                )}
+              </li>
+            )}
+            {g.flat_overhang && (
+              <li>
+                A flat ceiling reaches <strong>{geo(g.flat_overhang.value, 'mm')}</strong> past its support {at(g.flat_overhang)}
+              </li>
+            )}
+            {g.max_bridge && (
+              <li>
+                Longest bridge <strong>{geo(g.max_bridge.value, 'mm')}</strong> {at(g.max_bridge)}
+              </li>
+            )}
+            {g.min_clearance && (
+              <li>
+                Smallest gap between bodies <strong>{geo(g.min_clearance.value, 'mm')}</strong> {at(g.min_clearance)}
+              </li>
+            )}
+            {g.notes.map((n, i) => (
+              <li key={i} className="muted">
+                {n}
+              </li>
+            ))}
+          </ul>
+          {c && (
+            <>
+              <ul className="findings">
+                {c.findings.map((f, i) => (
+                  <FindingRow key={i} f={f} />
+                ))}
+              </ul>
+              <div className="small muted">
+                {c.rule_sets && c.rule_sets.length > 0 ? `Hard rules from ${c.rule_sets.join(', ')}.` : 'No hard rule set applied, so no hard rule judged anything.'}
+              </div>
+            </>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
 
 interface Props {
   language: Language;
@@ -31,11 +115,75 @@ function FindingRow({ f }: { f: ConformanceFinding }) {
   );
 }
 
-function OutputCard({ o, busy, onDecide, onRemove }: { o: Output; busy: boolean; onDecide: (v: Output['verdict'], note: string) => void; onRemove: () => void }) {
+function OutputCard({
+  o,
+  busy,
+  onDecide,
+  onRemove,
+  onUpdated,
+}: {
+  o: Output;
+  busy: boolean;
+  onDecide: (v: Output['verdict'], note: string) => void;
+  onRemove: () => void;
+  onUpdated: (next: Output) => void;
+}) {
+  const toast = useToast();
   const [note, setNote] = useState(o.verdict_note);
   const [open, setOpen] = useState(false);
+  const [up, setUp] = useState('+z');
+  const [checking, setChecking] = useState(false);
+  const [printing, setPrinting] = useState(false);
+  const [outcome, setOutcome] = useState<PrintOutcome>('fine');
+  const [material, setMaterial] = useState('');
+  const [printNote, setPrintNote] = useState('');
   useEffect(() => setNote(o.verdict_note), [o.verdict_note]);
   const c = o.check;
+
+  const checkModel = async () => {
+    const picked = await openDialog({
+      multiple: false,
+      title: `Choose the model of “${o.name}”`,
+      filters: [{ name: '3D models', extensions: MODEL_EXTENSIONS }],
+    });
+    if (typeof picked !== 'string') return;
+    setChecking(true);
+    try {
+      const next = await api.checkOutputGeometry(o.id, picked, up);
+      onUpdated(next);
+      const r = next.geometry?.check;
+      toast.info(r ? `Geometry checked: ${r.pass} pass, ${r.fail} fail, ${r.warn} warn, ${r.unknown} unknown.` : 'Geometry checked.');
+    } catch (e) {
+      toast.error(errText(e));
+    } finally {
+      setChecking(false);
+    }
+  };
+
+  const logPrint = async () => {
+    if (!material.trim()) {
+      toast.error('Say which material the part was printed in.');
+      return;
+    }
+    try {
+      await api.addPrintResult({
+        result: outcome,
+        material,
+        rule: '',
+        rule_set: null,
+        value: null,
+        unit: null,
+        note: printNote || `Print of “${o.name}”.`,
+        language: null,
+        output: o.id,
+      });
+      toast.info('Saved in the print log. Agents get it with the hard rules.');
+      setPrinting(false);
+      setPrintNote('');
+    } catch (e) {
+      toast.error(errText(e));
+    }
+  };
   return (
     <article className={`output output-${o.verdict}`}>
       <a href={fileUrl(o.file_rel)} target="_blank" rel="noreferrer" className="output-thumb" title="Open the full image">
@@ -75,6 +223,45 @@ function OutputCard({ o, busy, onDecide, onRemove }: { o: Output; busy: boolean;
         )}
         {!c && o.measurements.length > 0 && (
           <div className="small muted">Measurements: {o.measurements.map((m) => `${m.name} ${fmtNum(m.value, m.unit)}`).join(', ')} (not checked)</div>
+        )}
+        {o.geometry && <GeometryBlock g={o.geometry} />}
+
+        <div className="output-tools">
+          <button className="btn small" disabled={busy || checking} onClick={checkModel} title="Measure an STL, 3MF, OBJ or STEP file of this design against the hard rules">
+            {checking ? <Loader size={13} className="spin" /> : <Ruler size={13} />} {o.geometry ? 'Check a model again…' : 'Check a model…'}
+          </button>
+          <label className="small muted up-pick" title="The axis that points up on the printer. Overhangs and bridges depend on it.">
+            Build direction
+            <select className="select small" value={up} onChange={(e) => setUp(e.target.value)} disabled={checking}>
+              {UP_AXES.map((a) => (
+                <option key={a} value={a}>
+                  {a}
+                </option>
+              ))}
+            </select>
+          </label>
+          <button className="btn small" disabled={busy} onClick={() => setPrinting((v) => !v)} aria-expanded={printing}>
+            <Printer size={13} /> Log a print…
+          </button>
+        </div>
+        {printing && (
+          <div className="print-form">
+            <select className="select small" value={outcome} onChange={(e) => setOutcome(e.target.value as PrintOutcome)} aria-label="Result of the print">
+              {PRINT_OUTCOMES.map((r) => (
+                <option key={r} value={r}>
+                  {r}
+                </option>
+              ))}
+            </select>
+            <input className="small-input" placeholder="Material, for example PETG clear" value={material} onChange={(e) => setMaterial(e.target.value)} maxLength={120} />
+            <input className="output-note-input" placeholder="What you saw (optional)" value={printNote} onChange={(e) => setPrintNote(e.target.value)} maxLength={400} />
+            <button className="btn small primary" onClick={logPrint}>
+              Save
+            </button>
+            <button className="btn small" onClick={() => setPrinting(false)}>
+              Cancel
+            </button>
+          </div>
         )}
 
         <div className="output-actions">
@@ -174,7 +361,14 @@ export default function OutputsView({ language, tick, pending, onChanged }: Prop
   return (
     <div className="outputs">
       {items.map((o) => (
-        <OutputCard key={o.id} o={o} busy={busy === o.id} onDecide={(v, n) => decide(o, v, n)} onRemove={() => remove(o)} />
+        <OutputCard
+          key={o.id}
+          o={o}
+          busy={busy === o.id}
+          onDecide={(v, n) => decide(o, v, n)}
+          onRemove={() => remove(o)}
+          onUpdated={(next) => setItems((list) => (list ?? []).map((x) => (x.id === next.id ? next : x)))}
+        />
       ))}
     </div>
   );

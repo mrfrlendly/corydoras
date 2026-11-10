@@ -192,6 +192,13 @@ pub struct ProviderProfile {
     /// The account (key file name) of the key.
     pub key_account: String,
     pub needs_key: bool,
+    /// Price of one million input tokens in US dollars. 0: not set, so cost
+    /// estimates show tokens only.
+    #[serde(default)]
+    pub price_in: f64,
+    /// Price of one million output tokens in US dollars.
+    #[serde(default)]
+    pub price_out: f64,
 }
 
 impl ProviderProfile {
@@ -210,6 +217,8 @@ impl ProviderProfile {
             max_output: p.max_output,
             vision: None,
             needs_key: p.needs_key,
+            price_in: 0.0,
+            price_out: 0.0,
         }
     }
 
@@ -248,6 +257,9 @@ impl ProviderProfile {
         let t = self.thinking.trim().to_ascii_lowercase();
         self.thinking = if ["off", "low", "high"].contains(&t.as_str()) { t } else { "off".into() };
         self.max_output = self.max_output.clamp(1_000, 200_000);
+        let price = |v: f64| if v.is_finite() && v > 0.0 { v.min(100_000.0) } else { 0.0 };
+        self.price_in = price(self.price_in);
+        self.price_out = price(self.price_out);
         if self.name.is_empty() {
             self.name = preset(&self.kind).name.to_string();
         }
@@ -307,6 +319,8 @@ impl AiConfig {
             vision: None,
             key_account: secrets::LEGACY_ACCOUNT.into(),
             needs_key: p.needs_key,
+            price_in: 0.0,
+            price_out: 0.0,
         };
         Self {
             profiles: vec![profile],

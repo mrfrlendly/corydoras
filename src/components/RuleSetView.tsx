@@ -1,6 +1,6 @@
 import { TextareaHTMLAttributes, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { api, errText, Project, Rule, RuleSet, RuleSetInput, RuleUnit } from '../api';
-import { ArrowDown, ArrowUp, Check, Eye, Plus, Trash2, X } from 'lucide-react';
+import { api, errText, fmtDate, fmtMeasure, PRINT_OUTCOMES, PrintOutcome, PrintResult, Project, Rule, RuleFeedback, RuleSet, RuleSetInput, RuleUnit } from '../api';
+import { ArrowDown, ArrowUp, Check, Eye, Plus, Printer, Trash2, TriangleAlert, X } from 'lucide-react';
 import { useToast } from './Toast';
 
 const UNITS: RuleUnit[] = ['mm', 'deg', 'percent', 'count', 'ratio'];
@@ -61,6 +61,178 @@ function NumField({ value, onValue }: { value: number | null; onValue: (v: numbe
 
 function blankRule(): Rule {
   return { name: '', value: null, unit: null, note: '' };
+}
+
+/** The print log of one rule set: what real prints showed, and where they disagree with a limit. */
+function PrintLogPanel({ ruleSet }: { ruleSet: RuleSet }) {
+  const toast = useToast();
+  const [log, setLog] = useState<PrintResult[]>([]);
+  const [feedback, setFeedback] = useState<RuleFeedback[]>([]);
+  const [adding, setAdding] = useState(false);
+  const [result, setResult] = useState<PrintOutcome>('failed');
+  const [material, setMaterial] = useState('');
+  const [rule, setRule] = useState('');
+  const [value, setValue] = useState<number | null>(null);
+  const [note, setNote] = useState('');
+  const [confirmRemove, setConfirmRemove] = useState<string | null>(null);
+
+  const load = () => {
+    api
+      .listPrintResults()
+      .then((all) => setLog(all.filter((p) => p.rule_set_id === ruleSet.id || p.rule_set_id === null)))
+      .catch((e) => toast.error(errText(e)));
+    api
+      .ruleFeedback(ruleSet.id)
+      .then(setFeedback)
+      .catch(() => setFeedback([]));
+  };
+  useEffect(load, [ruleSet.id, ruleSet.updated_at]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const limits = ruleSet.rules.filter((r) => r.value !== null);
+  const unitOf = (name: string) => ruleSet.rules.find((r) => r.name === name)?.unit ?? null;
+
+  const add = async () => {
+    try {
+      await api.addPrintResult({
+        result,
+        material,
+        rule,
+        rule_set: ruleSet.id,
+        value: rule ? value : null,
+        unit: rule && value !== null ? unitOf(rule) : null,
+        note,
+        language: null,
+        output: null,
+      });
+      setAdding(false);
+      setNote('');
+      setValue(null);
+      load();
+    } catch (e) {
+      toast.error(errText(e));
+    }
+  };
+
+  const hints = feedback.flatMap((f) => f.hints.map((h) => ({ rule: f.rule, text: h })));
+
+  return (
+    <section className="panel">
+      <div className="row" style={{ marginTop: 0 }}>
+        <h3 className="grow" style={{ marginBottom: 0 }}>
+          <Printer size={15} /> Print feedback
+        </h3>
+        {!adding && (
+          <button className="btn small" onClick={() => setAdding(true)}>
+            <Plus size={13} /> Print result
+          </button>
+        )}
+      </div>
+      <p className="muted small">
+        What happened when a design was printed. Agents get these results with the hard rules, and the conformance check warns when a new design is at
+        or past a value that failed. An agent can add a result when you tell it how a print came out.
+      </p>
+      {hints.map((h, i) => (
+        <div key={i} className="warn-box">
+          <TriangleAlert size={14} /> <strong>{h.rule}:</strong> {h.text}
+        </div>
+      ))}
+      {adding && (
+        <div className="print-form">
+          <select className="select small" value={result} onChange={(e) => setResult(e.target.value as PrintOutcome)} aria-label="Result of the print">
+            {PRINT_OUTCOMES.map((r) => (
+              <option key={r} value={r}>
+                {r}
+              </option>
+            ))}
+          </select>
+          <input className="small-input" placeholder="Material" value={material} onChange={(e) => setMaterial(e.target.value)} maxLength={120} />
+          <select className="select small" value={rule} onChange={(e) => setRule(e.target.value)} aria-label="Rule">
+            <option value="">No rule (about the material)</option>
+            {limits.map((r) => (
+              <option key={r.name} value={r.name}>
+                {r.name}
+              </option>
+            ))}
+          </select>
+          {rule && (
+            <label className="small muted up-pick" title="The value that was printed, for example a wall of 1.0 mm">
+              Printed at
+              <NumField value={value} onValue={setValue} /> {unitOf(rule) ?? ''}
+            </label>
+          )}
+          <input className="output-note-input" placeholder="What you saw" value={note} onChange={(e) => setNote(e.target.value)} maxLength={400} />
+          <button className="btn small primary" onClick={add} disabled={!material.trim() && !rule}>
+            Save
+          </button>
+          <button className="btn small" onClick={() => setAdding(false)}>
+            Cancel
+          </button>
+        </div>
+      )}
+      {log.length === 0 ? (
+        <p className="muted small">No print results yet.</p>
+      ) : (
+        <table className="vtable print-table">
+          <thead>
+            <tr>
+              <th>Result</th>
+              <th>Material</th>
+              <th>Rule</th>
+              <th>Printed at</th>
+              <th>Note</th>
+              <th>When</th>
+              <th />
+            </tr>
+          </thead>
+          <tbody>
+            {log.map((p) => (
+              <tr key={p.id}>
+                <td>
+                  <span className={`print-result print-${p.result}`}>{p.result}</span>
+                </td>
+                <td>{p.material || '—'}</td>
+                <td>{p.rule || '—'}</td>
+                <td className="mono small">{p.value !== null ? fmtMeasure(p.value, p.unit) : '—'}</td>
+                <td className="small">
+                  {p.note}
+                  {p.rule_set_id === null && <span className="tag-pill">applies everywhere</span>}
+                  {p.author && <span className="tag-pill">{p.author}</span>}
+                </td>
+                <td className="small muted">{fmtDate(p.created_at)}</td>
+                <td className="version-tools">
+                  {confirmRemove === p.id ? (
+                    <>
+                      <button
+                        className="btn danger small"
+                        onClick={() =>
+                          api
+                            .removePrintResult(p.id)
+                            .then(() => {
+                              setConfirmRemove(null);
+                              load();
+                            })
+                            .catch((e) => toast.error(errText(e)))
+                        }
+                      >
+                        Remove
+                      </button>
+                      <button className="btn small" onClick={() => setConfirmRemove(null)}>
+                        Keep
+                      </button>
+                    </>
+                  ) : (
+                    <button className="icon-btn" title="Remove this result…" aria-label="Remove this result" onClick={() => setConfirmRemove(p.id)}>
+                      <X size={14} />
+                    </button>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </section>
+  );
 }
 
 export default function RuleSetView({ ruleSet, projects, onChanged, onDeleted, onOpenProject }: Props) {
@@ -242,6 +414,8 @@ export default function RuleSetView({ ruleSet, projects, onChanged, onDeleted, o
             )}
           </div>
         </section>
+
+        <PrintLogPanel ruleSet={ruleSet} />
 
         <section className="panel">
           <div className="row" style={{ marginTop: 0 }}>

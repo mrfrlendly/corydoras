@@ -13,6 +13,7 @@
 
 use crate::analysis;
 use crate::conformance::{Measurement, Report};
+use crate::geometry::GeometryReport;
 use crate::library::Library;
 use crate::util::{fnv1a64, now_iso};
 use anyhow::{anyhow, bail, Context, Result};
@@ -30,7 +31,7 @@ pub const ACCEPTED_WEIGHT: i64 = 2;
 pub const REJECTED_WEIGHT: i64 = 3;
 
 const COLS: &str = "id, language_id, project, name, file_name, width, height, language_version, author, note, \
-    family, measurements, check_json, verdict, verdict_note, item_id, created_at, decided_at";
+    family, measurements, check_json, verdict, verdict_note, item_id, created_at, decided_at, geometry_json";
 
 #[derive(Serialize, Clone, Debug)]
 pub struct Output {
@@ -51,6 +52,8 @@ pub struct Output {
     pub family: String,
     pub measurements: Vec<Measurement>,
     pub check: Option<Report>,
+    /// The geometry check of a model of this design, if one ran.
+    pub geometry: Option<GeometryReport>,
     /// "pending", "accepted" or "rejected"
     pub verdict: String,
     pub verdict_note: String,
@@ -66,7 +69,9 @@ fn from_row(r: &Row) -> rusqlite::Result<Output> {
     let file_name: String = r.get(4)?;
     let measurements: String = r.get(11)?;
     let check: Option<String> = r.get(12)?;
+    let geometry: Option<String> = r.get(18)?;
     Ok(Output {
+        geometry: geometry.and_then(|g| serde_json::from_str(&g).ok()),
         file_rel: format!("languages/{language_id}/outputs/{file_name}"),
         thumb_rel: format!("languages/{language_id}/outputs/{id}.thumb.jpg"),
         project: r.get(2)?,
@@ -91,7 +96,7 @@ fn from_row(r: &Row) -> rusqlite::Result<Output> {
 
 impl Library {
     /// Runs a write on a connection that may be query-only (the MCP server).
-    fn with_writes<T>(&self, f: impl FnOnce(&rusqlite::Connection) -> Result<T>) -> Result<T> {
+    pub(crate) fn with_writes<T>(&self, f: impl FnOnce(&rusqlite::Connection) -> Result<T>) -> Result<T> {
         let c = self.c();
         let query_only: i64 = c.query_row("PRAGMA query_only", [], |r| r.get(0))?;
         c.execute_batch("PRAGMA query_only=OFF;")?;
@@ -227,6 +232,18 @@ impl Library {
         let json = serde_json::to_string(report)?;
         self.with_writes(|c| {
             let n = c.execute("UPDATE outputs SET check_json = ?2 WHERE id = ?1", params![output_id, json])?;
+            if n == 0 {
+                bail!("No output with the ID {output_id}.");
+            }
+            Ok(())
+        })
+    }
+
+    /// Saves a geometry report with an output (works on a query-only connection).
+    pub fn save_output_geometry(&self, output_id: &str, report: &GeometryReport) -> Result<()> {
+        let json = serde_json::to_string(report)?;
+        self.with_writes(|c| {
+            let n = c.execute("UPDATE outputs SET geometry_json = ?2 WHERE id = ?1", params![output_id, json])?;
             if n == 0 {
                 bail!("No output with the ID {output_id}.");
             }

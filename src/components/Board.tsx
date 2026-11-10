@@ -1,7 +1,26 @@
-import { DragEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { DragEvent, FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { open } from '@tauri-apps/plugin-dialog';
-import { Grid2x2, ImagePlus, Loader, Move } from 'lucide-react';
-import { api, CanvasPlacement, DOC_EXT_RE, errText, fileToBase64, fileUrl, fmtDuration, IMAGE_URL_RE, Item, Language, VIDEO_EXT_RE, VIDEO_EXTENSIONS, VideoNote } from '../api';
+import { listen } from '@tauri-apps/api/event';
+import { Grid2x2, ImagePlus, Import, Loader, Move, Search, X } from 'lucide-react';
+import {
+  api,
+  BoardHit,
+  CanvasPlacement,
+  DOC_EXT_RE,
+  errText,
+  fileToBase64,
+  fileUrl,
+  fmtDuration,
+  IMAGE_URL_RE,
+  Item,
+  Language,
+  MODEL_EXT_RE,
+  MODEL_EXTENSIONS,
+  Swatch,
+  VIDEO_EXT_RE,
+  VIDEO_EXTENSIONS,
+  VideoNote,
+} from '../api';
 import ItemInspector from './ItemInspector';
 import CanvasView from './CanvasView';
 import { useToast } from './Toast';
@@ -80,6 +99,11 @@ export default function Board({
   const [busy, setBusy] = useState(0);
   const [filter, setFilter] = useState('');
   const [showAnti, setShowAnti] = useState(true);
+  const [query, setQuery] = useState('');
+  const [hits, setHits] = useState<BoardHit[] | null>(null);
+  const [palette, setPalette] = useState<Swatch[]>([]);
+  const [boardUrl, setBoardUrl] = useState<string | null>(null);
+  const [boardBusy, setBoardBusy] = useState<string | null>(null);
   const [mode, setModeState] = useState<BoardMode>(() => loadMode(language.id));
   const setMode = (m: BoardMode) => {
     setModeState(m);
@@ -99,6 +123,90 @@ export default function Board({
   }, [language.id, toast]);
 
   useEffect(load, [load, tick]);
+
+  // Images of older versions have no palette yet: find their colours one time.
+  useEffect(() => {
+    let alive = true;
+    api
+      .backfillPalettes(language.id)
+      .then((n) => alive && n > 0 && load())
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [language.id, load]);
+
+  // The palette of the board follows the items.
+  useEffect(() => {
+    let alive = true;
+    api
+      .languagePalette(language.id)
+      .then((p) => alive && setPalette(p))
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [language.id, items]);
+
+  // Search: the same search that agents use, a moment after the last key.
+  useEffect(() => {
+    const q = query.trim();
+    if (!q) {
+      setHits(null);
+      return;
+    }
+    let alive = true;
+    const t = setTimeout(() => {
+      api
+        .searchBoard(language.id, q)
+        .then((h) => alive && setHits(h))
+        .catch((e) => alive && toast.error(errText(e)));
+    }, 180);
+    return () => {
+      alive = false;
+      clearTimeout(t);
+    };
+  }, [query, language.id, items, toast]);
+
+  // Progress of a board import.
+  useEffect(() => {
+    const un = listen<{ done: number; total: number }>('board-import-progress', (e) =>
+      setBoardBusy(`Importing ${e.payload.done} of ${e.payload.total}…`),
+    );
+    return () => {
+      un.then((f) => f());
+    };
+  }, []);
+
+  const importBoard = async (e: FormEvent) => {
+    e.preventDefault();
+    const url = (boardUrl ?? '').trim();
+    if (!url || boardBusy) return;
+    setBoardBusy('Reading the board…');
+    try {
+      const preview = await api.previewBoard(url);
+      if (preview.items.length === 0) {
+        toast.error(`“${preview.title}” has no images to import.`);
+        return;
+      }
+      setBoardBusy(`Importing 0 of ${preview.items.length}…`);
+      const r = await api.importBoard(language.id, url);
+      r.errors.slice(0, 3).forEach((x) => toast.error(x));
+      toast.info(
+        `${r.added} image${r.added === 1 ? '' : 's'} from “${preview.title}” (${preview.service}) added.` +
+          (r.duplicates > 0 ? ` ${r.duplicates} were here already.` : '') +
+          (r.errors.length > 3 ? ` ${r.errors.length} could not be read.` : '') +
+          (preview.note ? ` ${preview.note}` : ''),
+      );
+      setBoardUrl(null);
+      load();
+      onChanged();
+    } catch (err) {
+      toast.error(errText(err));
+    } finally {
+      setBoardBusy(null);
+    }
+  };
 
   const afterImport = useCallback(
     (added: number, errors: string[], videos: VideoNote[] = []) => {
@@ -132,6 +240,17 @@ export default function Board({
             try {
               await api.importSourceBytes(language.id, f.name, await fileToBase64(f));
               docs++;
+            } catch (e) {
+              errors.push(errText(e));
+            }
+            continue;
+          }
+          if (MODEL_EXT_RE.test(f.name)) {
+            // A 3D model: the app draws four views of it.
+            toast.info(`Drawing the views of “${f.name}”…`);
+            try {
+              await api.importModelBytes(language.id, f);
+              added++;
             } catch (e) {
               errors.push(errText(e));
             }
@@ -263,14 +382,18 @@ export default function Board({
   const addFromDialog = async () => {
     const picked = await open({
       multiple: true,
-      title: 'Add images or videos',
+      title: 'Add images, videos or 3D models',
       filters: [
-        { name: 'Images and videos', extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp', 'tif', 'tiff', ...VIDEO_EXTENSIONS] },
+        {
+          name: 'Images, videos and 3D models',
+          extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp', 'tif', 'tiff', ...VIDEO_EXTENSIONS, ...MODEL_EXTENSIONS],
+        },
       ],
     });
     const paths = Array.isArray(picked) ? picked : typeof picked === 'string' ? [picked] : [];
     if (paths.length === 0) return;
     if (paths.some((p) => VIDEO_EXT_RE.test(p))) toast.info('Reading key frames from the video…');
+    if (paths.some((p) => MODEL_EXT_RE.test(p))) toast.info('Drawing the views of the 3D model…');
     setBusy((b) => b + 1);
     try {
       const r = await api.importFiles(language.id, paths);
@@ -288,10 +411,14 @@ export default function Board({
     return Array.from(s).sort();
   }, [items]);
 
-  const shown = useMemo(
-    () => items.filter((i) => (showAnti || !i.anti) && (!filter || i.tags.includes(filter))),
-    [items, showAnti, filter],
-  );
+  const shown = useMemo(() => {
+    const base = items.filter((i) => (showAnti || !i.anti) && (!filter || i.tags.includes(filter)));
+    if (!hits) return base;
+    // With a search: only the matches, best first.
+    const rank = new Map(hits.map((h, n) => [h.item_id, n]));
+    return base.filter((i) => rank.has(i.id)).sort((a, b) => rank.get(a.id)! - rank.get(b.id)!);
+  }, [items, showAnti, filter, hits]);
+  const hitOf = useMemo(() => new Map((hits ?? []).map((h) => [h.item_id, h])), [hits]);
   const selectedItem = items.find((i) => i.id === selected) ?? null;
 
   // The canvas saved new places: keep the item list in step, so a switch to Grid
@@ -346,13 +473,25 @@ export default function Board({
           <button className="btn small primary" onClick={addFromDialog}>
             <ImagePlus size={13} /> Add images…
           </button>
-          <span className="hint">Drag from Finder or a browser · Videos give their key frames · Paste a screenshot with ⌘V · Links and documents go to Sources</span>
+          <button className="btn small" onClick={() => setBoardUrl(boardUrl === null ? '' : null)} title="Import the images of an Are.na channel or a Pinterest board">
+            <Import size={13} /> Import board…
+          </button>
+          <span className="hint">Drag images, videos or 3D models (STL, 3MF, OBJ, STEP) · Paste a screenshot with ⌘V · Links and documents go to Sources</span>
           <div className="spacer" />
           {busy > 0 && (
             <span className="chip chip-busy">
               <Loader size={12} className="spin" /> Importing…
             </span>
           )}
+          <label className="board-search" title="Search tags, notes, marks and what the analysis saw">
+            <Search size={13} />
+            <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search this board" aria-label="Search this board" />
+            {query && (
+              <button className="icon-btn" onClick={() => setQuery('')} title="Clear the search" aria-label="Clear the search">
+                <X size={12} />
+              </button>
+            )}
+          </label>
           <select value={filter} onChange={(e) => setFilter(e.target.value)} className="select small">
             <option value="">All tags</option>
             {allTags.map((t) => (
@@ -375,14 +514,69 @@ export default function Board({
           </div>
         </div>
 
+        {boardUrl !== null && (
+          <form className="board-import" onSubmit={importBoard}>
+            <input
+              autoFocus
+              value={boardUrl}
+              onChange={(e) => setBoardUrl(e.target.value)}
+              placeholder="Link of an Are.na channel or a Pinterest board, then Return"
+              disabled={!!boardBusy}
+              onKeyDown={(e) => e.key === 'Escape' && !boardBusy && setBoardUrl(null)}
+            />
+            <button className="btn small primary" type="submit" disabled={!!boardBusy || !boardUrl.trim()}>
+              {boardBusy ? (
+                <>
+                  <Loader size={12} className="spin" /> {boardBusy}
+                </>
+              ) : (
+                'Import'
+              )}
+            </button>
+            <button className="btn small" type="button" onClick={() => setBoardUrl(null)} disabled={!!boardBusy}>
+              Cancel
+            </button>
+            <span className="hint">Are.na: every image of a public channel. Pinterest: the newest 25 pins of a public board.</span>
+          </form>
+        )}
+
+        {items.length > 0 && (palette.length > 0 || hits) && (
+          <div className="board-strip">
+            {palette.length > 0 && (
+              <div className="palette" title="The main colours of the references, by weight. Click a colour to copy it.">
+                {palette.map((c) => (
+                  <button
+                    key={c.hex}
+                    className="palette-chip"
+                    style={{ background: c.hex, flexGrow: Math.max(0.06, c.share) }}
+                    title={`${c.hex} · ${Math.round(c.share * 100)} %`}
+                    aria-label={`Copy ${c.hex}`}
+                    onClick={() =>
+                      navigator.clipboard
+                        .writeText(c.hex)
+                        .then(() => toast.info(`Copied ${c.hex}.`))
+                        .catch(() => {})
+                    }
+                  />
+                ))}
+              </div>
+            )}
+            {hits && (
+              <span className="hint">
+                {shown.length === 0 ? `Nothing on this board matches “${query.trim()}”.` : `${shown.length} of ${items.length} match “${query.trim()}”, best first`}
+              </span>
+            )}
+          </div>
+        )}
+
         {items.length === 0 ? (
           <div className="board-empty">
             <div className="drop-target">
               <ImagePlus size={34} strokeWidth={1.3} className="drop-glyph" />
               <div className="drop-big">Drop images here</div>
               <p>
-                Drag images from Finder or a browser, or paste a screenshot with ⌘V. Each image gets analyzed automatically. The language
-                document appears after the analysis finishes.
+                Drag images from Finder or a browser, or paste a screenshot with ⌘V. A 3D model (STL, 3MF, OBJ, STEP) becomes four drawn
+                views. Each image gets analyzed automatically. The language document appears after the analysis finishes.
               </p>
               <button className="btn primary" onClick={addFromDialog}>
                 <ImagePlus size={14} /> Add images…
@@ -407,6 +601,7 @@ export default function Board({
                 key={item.id}
                 className={`card ${item.anti ? 'anti' : ''} ${selected === item.id ? 'selected' : ''}`}
                 onClick={() => setSelected(item.id === selected ? null : item.id)}
+                title={hitOf.get(item.id)?.snippets.join('\n')}
               >
                 <img
                   src={fileUrl(item.thumb_rel)}
@@ -416,6 +611,7 @@ export default function Board({
                   style={{ aspectRatio: `${Math.max(1, item.width)} / ${Math.max(1, item.height)}` }}
                 />
                 {item.anti && <span className="anti-badge">Not this</span>}
+                {item.kind === 'model' && <span className="model-badge">3D</span>}
                 <figcaption>
                   <Caption item={item} />
                 </figcaption>

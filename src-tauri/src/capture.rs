@@ -46,7 +46,7 @@ struct CaptureDone {
 }
 
 /// The capture language: the saved one, else the language that changed last.
-fn target_language(lib: &Library, cfg: &CaptureConfig) -> Option<Language> {
+pub(crate) fn target_language(lib: &Library, cfg: &CaptureConfig) -> Option<Language> {
     let langs = lib.list_languages().ok()?;
     if let Some(id) = &cfg.language_id {
         if let Some(l) = langs.iter().find(|l| &l.id == id) {

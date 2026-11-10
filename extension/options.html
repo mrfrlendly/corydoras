@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Corydoras extension</title>
+    <style>
+      :root { color-scheme: light dark; }
+      body { font: 14px/1.5 -apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif; max-width: 560px; margin: 40px auto; padding: 0 20px; }
+      h1 { font-size: 20px; margin: 0 0 6px; }
+      p { margin: 6px 0 14px; opacity: 0.8; }
+      label { display: block; margin: 12px 0 4px; font-size: 12px; opacity: 0.75; }
+      input, select { width: 100%; box-sizing: border-box; padding: 7px 9px; font: inherit; border-radius: 6px; border: 1px solid rgba(128, 128, 128, 0.5); background: transparent; color: inherit; }
+      input.mono { font-family: ui-monospace, 'SF Mono', Menlo, monospace; font-size: 12px; }
+      button { margin-top: 16px; padding: 7px 14px; font: inherit; border-radius: 6px; border: 0; background: #c8440f; color: #fff; cursor: pointer; }
+      button.plain { background: transparent; color: inherit; border: 1px solid rgba(128, 128, 128, 0.5); margin-left: 6px; }
+      #status { margin-top: 14px; min-height: 22px; }
+      #status.bad { color: #c2412d; }
+      #status.good { color: #3d7249; }
+    </style>
+  </head>
+  <body>
+    <h1>Corydoras</h1>
+    <p>
+      This extension sends the images and pages that you choose to the Corydoras app on this computer. In the app, open
+      <b>Settings › Browser extension</b>, turn on the bridge, and copy the port and the token here.
+    </p>
+    <label for="port">Port</label>
+    <input id="port" type="number" min="1024" max="65535" />
+    <label for="token">Token</label>
+    <input id="token" class="mono" type="password" autocomplete="off" spellcheck="false" />
+    <label for="language">Language that a right-click adds to first</label>
+    <select id="language"><option value="">The capture language of the app</option></select>
+    <div>
+      <button id="save">Save and test</button>
+      <button id="show" class="plain" type="button">Show the token</button>
+    </div>
+    <div id="status" role="status"></div>
+    <script src="options.js"></script>
+  </body>
+</html>

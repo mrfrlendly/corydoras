@@ -104,6 +104,12 @@ function Shell() {
     if (view.kind === 'home' && languages.length > 0) setView({ kind: 'language', id: languages[0].id });
   }, [languages, view.kind]);
 
+  // Screen captures go into the language that is open.
+  const openLanguageId = view.kind === 'language' ? view.id : null;
+  useEffect(() => {
+    if (openLanguageId) api.followOpenLanguage(openLanguageId).catch(() => {});
+  }, [openLanguageId]);
+
   if (!info)
     return (
       <div className="boot">

@@ -315,6 +315,21 @@ pub fn set_capture(app: AppHandle, language_id: Option<String>, shortcut: Option
     Ok(view(&app))
 }
 
+/// Captures follow the language open in the window: opening a language makes
+/// it the capture language (the menu bar can still pick another one).
+#[tauri::command]
+pub fn follow_open_language(app: AppHandle, language_id: String) -> CmdResult<()> {
+    let mut cfg = AppConfig::load();
+    if cfg.capture.language_id.as_deref() == Some(language_id.as_str()) {
+        return Ok(());
+    }
+    cfg.capture.language_id = Some(language_id);
+    cfg.save().map_err(|e| e.to_string())?;
+    refresh_tray(&app);
+    let _ = app.emit("capture-changed", ());
+    Ok(())
+}
+
 #[tauri::command]
 pub fn capture_now(app: AppHandle) {
     start(&app);

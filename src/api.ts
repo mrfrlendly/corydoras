@@ -958,6 +958,7 @@ export const api = {
   setCapture: (languageId: string | null, shortcut: string | null) =>
     invoke<CaptureView>('set_capture', { languageId, shortcut }),
   captureNow: () => invoke<void>('capture_now'),
+  followOpenLanguage: (languageId: string) => invoke<void>('follow_open_language', { languageId }),
   importModelBytes: async (languageId: string, file: File) =>
     invoke<Item>('import_model_bytes', new Uint8Array(await file.arrayBuffer()), {
       headers: { 'x-language-id': encodeURIComponent(languageId), 'x-file-name': encodeURIComponent(file.name || 'model.stl') },

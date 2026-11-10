@@ -68,7 +68,8 @@ export default function CapturePanel() {
       </h3>
       <p className="muted small">
         The fish in the menu bar and the keyboard shortcut capture part of the screen into a language, also when the Corydoras window is
-        closed. Drag over a region, press Space to pick a window, or press Escape to cancel.
+        closed. Drag over a region, press Space to pick a window, or press Escape to cancel. Captures go into the language you opened
+        last; the menu bar can pick another one.
       </p>
       <div className="grid2">
         <label className="field">

@@ -1274,6 +1274,7 @@ fn main() {
             capture::get_capture,
             capture::set_capture,
             capture::capture_now,
+            capture::follow_open_language,
             bridge::get_bridge,
             bridge::set_bridge,
             features::import_model_bytes,

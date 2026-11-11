@@ -747,6 +747,15 @@ textarea {
   max-width: 420px;
 }
 
+/* Toasts stay left of an open inspector (400px, or 460px for sources). */
+body:has(.board-wrap.with-inspector) .toasts {
+  right: 418px;
+}
+
+body:has(.board-wrap.with-inspector.wide) .toasts {
+  right: 478px;
+}
+
 /* Each toast sits in a slot that collapses when it leaves, so the toasts
    around it slide together instead of jumping. The gap is padding inside
    the slot, so it collapses too. */

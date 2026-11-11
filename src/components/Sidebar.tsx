@@ -1,4 +1,4 @@
-import { FormEvent, useState } from 'react';
+import { FormEvent, MouseEvent, useState } from 'react';
 import { api, errText, fmtTokens, Language, Project, RuleSet, shortStatus, StatusReport } from '../api';
 import type { View } from '../App';
 import { Activity, Gauge, Layers, Pause, Plus, Settings, ShieldCheck, Swatch } from './icons';
@@ -36,13 +36,19 @@ function NewForm({ placeholder, onSubmit, onCancel }: { placeholder: string; onS
         autoFocus
         value={name}
         placeholder={placeholder}
+        aria-label={placeholder.replace(', then Return', '')}
         onChange={(e) => setName(e.target.value)}
         onKeyDown={(e) => e.key === 'Escape' && onCancel()}
+        // An empty field closes when you click elsewhere.
+        onBlur={() => !name.trim() && !busy && onCancel()}
         disabled={busy}
       />
     </form>
   );
 }
+
+/** Keeps the focus in an open "new name" field, so its blur does not close it before the + button toggles it. */
+const keepFocus = (e: MouseEvent) => e.preventDefault();
 
 export default function Sidebar({ languages, projects, ruleSets, status, view, onView, onChanged }: Props) {
   const toast = useToast();
@@ -55,8 +61,9 @@ export default function Sidebar({ languages, projects, ruleSets, status, view, o
 
   return (
     <aside className="sidebar">
-      <div className="side-top" data-tauri-drag-region>
-        <div className="brand" data-tauri-drag-region>
+      {/* "deep": the fish and the name also drag the window. */}
+      <div className="side-top" data-tauri-drag-region="deep">
+        <div className="brand">
           <Logo size={38} />
           <span className="brand-word">Corydoras</span>
         </div>
@@ -64,11 +71,11 @@ export default function Sidebar({ languages, projects, ruleSets, status, view, o
 
       <div className="side-scroll">
         <div className="side-head">
-          <span className="side-head-label">
+          <span className="side-head-label" role="heading" aria-level={2}>
             <Swatch size={13} strokeWidth={1.8} />
             Languages
           </span>
-          <button className="icon-btn" title="New language" onClick={() => setNewLang(true)}>
+          <button className="icon-btn" title="New language" aria-expanded={newLang} onMouseDown={newLang ? keepFocus : undefined} onClick={() => setNewLang((v) => !v)}>
             <Plus size={15} />
           </button>
         </div>
@@ -93,11 +100,26 @@ export default function Sidebar({ languages, projects, ruleSets, status, view, o
           const st = statusOf(l.id);
           const active = view.kind === 'language' && view.id === l.id;
           return (
-            <button key={l.id} className={`side-item ${active ? 'active' : ''}`} onClick={() => onView({ kind: 'language', id: l.id })}>
+            <button
+              key={l.id}
+              className={`side-item ${active ? 'active' : ''}`}
+              aria-current={active ? 'page' : undefined}
+              onClick={() => onView({ kind: 'language', id: l.id })}
+            >
               <span className="side-name">{l.name}</span>
               <span className="side-meta">
-                {st && st.pending_items > 0 && <span className="dot dot-busy" title={`${st.pending_items} in analysis`} />}
-                {st && st.error_items > 0 && <span className="dot dot-error" title={`${st.error_items} failed`} />}
+                {st && st.pending_items > 0 && (
+                  <>
+                    <span className="dot dot-busy" title={`${st.pending_items} in analysis`} aria-hidden />
+                    <span className="sr-only">, {st.pending_items} in analysis</span>
+                  </>
+                )}
+                {st && st.error_items > 0 && (
+                  <>
+                    <span className="dot dot-error" title={`${st.error_items} failed`} aria-hidden />
+                    <span className="sr-only">, {st.error_items} failed</span>
+                  </>
+                )}
                 {l.latest_version ? `v${l.latest_version}` : '—'}
               </span>
             </button>
@@ -105,11 +127,11 @@ export default function Sidebar({ languages, projects, ruleSets, status, view, o
         })}
 
         <div className="side-head">
-          <span className="side-head-label">
+          <span className="side-head-label" role="heading" aria-level={2}>
             <Layers size={13} strokeWidth={1.8} />
             Projects
           </span>
-          <button className="icon-btn" title="New project" onClick={() => setNewProject(true)}>
+          <button className="icon-btn" title="New project" aria-expanded={newProject} onMouseDown={newProject ? keepFocus : undefined} onClick={() => setNewProject((v) => !v)}>
             <Plus size={15} />
           </button>
         </div>
@@ -134,7 +156,12 @@ export default function Sidebar({ languages, projects, ruleSets, status, view, o
           const active = view.kind === 'project' && view.id === p.id;
           const primary = p.pins.find((x) => x.role === 'primary');
           return (
-            <button key={p.id} className={`side-item ${active ? 'active' : ''}`} onClick={() => onView({ kind: 'project', id: p.id })}>
+            <button
+              key={p.id}
+              className={`side-item ${active ? 'active' : ''}`}
+              aria-current={active ? 'page' : undefined}
+              onClick={() => onView({ kind: 'project', id: p.id })}
+            >
               <span className="side-name">{p.name}</span>
               <span className="side-meta" title={primary ? `${primary.language_name} v${primary.version}` : ''}>
                 {primary ? `v${primary.version}` : 'no pin'}
@@ -144,7 +171,7 @@ export default function Sidebar({ languages, projects, ruleSets, status, view, o
         })}
 
         <div className="side-head">
-          <span className="side-head-label">
+          <span className="side-head-label" role="heading" aria-level={2}>
             <ShieldCheck size={13} strokeWidth={1.8} />
             Rule sets
           </span>
@@ -153,11 +180,12 @@ export default function Sidebar({ languages, projects, ruleSets, status, view, o
               className={`icon-btn ${view.kind === 'slicer' ? 'active' : ''}`}
               title="Import a slicer profile (Bambu Studio, OrcaSlicer)"
               aria-label="Import a slicer profile"
+              aria-current={view.kind === 'slicer' ? 'page' : undefined}
               onClick={() => onView({ kind: 'slicer' })}
             >
               <FileDown size={14} />
             </button>
-            <button className="icon-btn" title="New rule set" onClick={() => setNewRuleSet(true)}>
+            <button className="icon-btn" title="New rule set" aria-expanded={newRuleSet} onMouseDown={newRuleSet ? keepFocus : undefined} onClick={() => setNewRuleSet((v) => !v)}>
               <Plus size={15} />
             </button>
           </span>
@@ -182,7 +210,12 @@ export default function Sidebar({ languages, projects, ruleSets, status, view, o
         {ruleSets.map((r) => {
           const active = view.kind === 'ruleset' && view.id === r.id;
           return (
-            <button key={r.id} className={`side-item ${active ? 'active' : ''}`} onClick={() => onView({ kind: 'ruleset', id: r.id })}>
+            <button
+              key={r.id}
+              className={`side-item ${active ? 'active' : ''}`}
+              aria-current={active ? 'page' : undefined}
+              onClick={() => onView({ kind: 'ruleset', id: r.id })}
+            >
               <span className="side-name">{r.name}</span>
               <span className="side-meta" title={r.always ? 'Applies to every project' : `${r.project_count} project(s)`}>
                 {r.always ? <span className="always-pill">always</span> : `${r.rules.length}`}
@@ -196,6 +229,7 @@ export default function Sidebar({ languages, projects, ruleSets, status, view, o
         <button
           className={`worker worker-btn ${status?.current ? 'worker-working' : status?.paused || status?.worker.state === 'paused' ? 'worker-paused' : 'worker-idle'} ${view.kind === 'activity' ? 'active' : ''}`}
           onClick={() => onView({ kind: 'activity' })}
+          aria-current={view.kind === 'activity' ? 'page' : undefined}
           title="Open Activity"
         >
           <span className="worker-icon">
@@ -229,7 +263,11 @@ export default function Sidebar({ languages, projects, ruleSets, status, view, o
             {status.budget > 0 ? ` / ${fmtTokens(status.budget)}` : ''} tokens
           </div>
         )}
-        <button className={`side-item settings-btn ${view.kind === 'settings' ? 'active' : ''}`} onClick={() => onView({ kind: 'settings' })}>
+        <button
+          className={`side-item settings-btn ${view.kind === 'settings' ? 'active' : ''}`}
+          aria-current={view.kind === 'settings' ? 'page' : undefined}
+          onClick={() => onView({ kind: 'settings' })}
+        >
           <Settings size={15} strokeWidth={1.8} />
           <span className="side-name">Settings</span>
           {status && !status.has_key && <span className="side-meta warn">Set up a provider</span>}

@@ -231,6 +231,8 @@ export default function DocumentView({ language, version, tick, openProposals, o
   const [md, setMd] = useState('');
   const [tokens, setTokens] = useState('');
   const [saving, setSaving] = useState(false);
+  // The version that an open edit started from.
+  const [editBase, setEditBase] = useState<number | null>(null);
 
   const latest = versions[0]?.version ?? null;
   const shown = version ?? latest;
@@ -280,6 +282,7 @@ export default function DocumentView({ language, version, tick, openProposals, o
     if (!content) return;
     setMd(content.markdown);
     setTokens(JSON.stringify(content.tokens, null, 2));
+    setEditBase(content.info.version);
     setEditing(true);
   };
 
@@ -408,7 +411,7 @@ export default function DocumentView({ language, version, tick, openProposals, o
               Cancel
             </button>
             <button className="btn small primary" onClick={save} disabled={saving}>
-              <Check size={13} /> Save as new version
+              <Check size={13} /> Save as v{(latest ?? 0) + 1}
             </button>
           </>
         )}
@@ -447,6 +450,13 @@ export default function DocumentView({ language, version, tick, openProposals, o
         <div className="notice">
           This version uses the older format (one global rule set). Click <b>Synthesize now</b> to make a version with object families,
           measures with evidence, and exceptions. For the best result, click <b>Analyze all again</b> first.
+        </div>
+      )}
+
+      {editing && editBase !== null && latest !== null && editBase !== latest && (
+        <div className="notice warn">
+          Your edit starts from v{editBase}. Saving makes v{latest + 1} from it. The changes of{' '}
+          {editBase + 1 === latest ? `v${latest}` : `v${editBase + 1} to v${latest}`} are not in it.
         </div>
       )}
 

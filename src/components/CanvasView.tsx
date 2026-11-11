@@ -23,9 +23,12 @@ interface Props {
   /** The items to show (already filtered by tag and "not this"). */
   items: Item[];
   selected: string | null;
-  onSelect: (id: string | null) => void;
-  /** The caption under each card (status dot, weight, tags). */
+  /** `byKey`: the keyboard chose it, so the inspector takes the focus. */
+  onSelect: (id: string | null, byKey?: boolean) => void;
+  /** The caption under each card (weight, status, tags). */
   renderCaption: (item: Item) => ReactNode;
+  /** What a screen reader says for a card. */
+  cardLabel: (item: Item) => string;
   /** Places were saved; the parent keeps its item list in step. */
   onPlaced: (places: CanvasPlacement[]) => void;
 }
@@ -88,7 +91,7 @@ type Gesture =
   | { kind: 'move'; id: string; sx: number; sy: number; x: number; y: number; moved: boolean }
   | { kind: 'resize'; id: string; sx: number; w: number };
 
-export default function CanvasView({ languageId, items, selected, onSelect, renderCaption, onPlaced }: Props) {
+export default function CanvasView({ languageId, items, selected, onSelect, renderCaption, cardLabel, onPlaced }: Props) {
   const toast = useToast();
   const wrapRef = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState<Record<string, CanvasPos>>({});
@@ -327,6 +330,27 @@ export default function CanvasView({ languageId, items, selected, onSelect, rend
     });
   };
 
+  /** Pans (at the same zoom) so that a card the keyboard reached is in view. */
+  const reveal = useCallback(
+    (id: string) => {
+      const el = wrapRef.current;
+      const p = pos[id];
+      const it = items.find((x) => x.id === id);
+      if (!el || !p || !it) return;
+      const v = targetRef.current ?? viewRef.current;
+      const pad = 24;
+      const x0 = p.x * v.z + v.tx;
+      const y0 = p.y * v.z + v.ty;
+      const x1 = (p.x + p.w) * v.z + v.tx;
+      const y1 = (p.y + p.w * aspect(it)) * v.z + v.ty;
+      const shift = (a: number, b: number, size: number) => (a < pad ? pad - a : b > size - pad ? Math.max(pad - a, size - pad - b) : 0);
+      const dx = shift(x0, x1, el.clientWidth);
+      const dy = shift(y0, y1, el.clientHeight);
+      if (dx || dy) animateTo({ ...v, tx: v.tx + dx, ty: v.ty + dy });
+    },
+    [items, pos, animateTo],
+  );
+
   // Fit on the first open of a language, and after a tidy, once the places are in.
   useEffect(() => {
     if (!fitted.current && Object.keys(pos).length > 0) {
@@ -347,8 +371,22 @@ export default function CanvasView({ languageId, items, selected, onSelect, rend
             <figure
               key={it.id}
               data-item={it.id}
+              data-card={it.id}
+              tabIndex={0}
+              role="button"
+              aria-pressed={selected === it.id}
+              aria-label={cardLabel(it)}
               className={`card canvas-card ${it.anti ? 'anti' : ''} ${selected === it.id ? 'selected' : ''}`}
               style={{ transform: `translate(${p.x}px, ${p.y}px)`, width: p.w }}
+              onKeyDown={(e) => {
+                if (e.target !== e.currentTarget || e.repeat || (e.key !== 'Enter' && e.key !== ' ')) return;
+                e.preventDefault();
+                onSelect(it.id === selected ? null : it.id, it.id !== selected);
+              }}
+              onFocus={(e) => {
+                // Only a keyboard focus pans; a click on a card at the edge must not move the board under the pointer.
+                if (e.currentTarget.matches(':focus-visible')) reveal(it.id);
+              }}
             >
               <img src={src} alt={it.original_name} draggable={false} style={{ aspectRatio: `${Math.max(1, it.width)} / ${Math.max(1, it.height)}` }} />
               {it.anti && <span className="anti-badge">Not this</span>}
@@ -357,7 +395,7 @@ export default function CanvasView({ languageId, items, selected, onSelect, rend
             </figure>
           );
         }),
-    [items, pos, view.z, selected, renderCaption],
+    [items, pos, view.z, selected, renderCaption, cardLabel, onSelect, reveal],
   );
 
   return (
@@ -368,6 +406,14 @@ export default function CanvasView({ languageId, items, selected, onSelect, rend
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
       onPointerCancel={onPointerUp}
+      onScroll={(e) => {
+        // WebKit scrolls this clipped box to show a focused card; the view transform does the panning.
+        const el = e.currentTarget;
+        if (el.scrollLeft || el.scrollTop) {
+          el.scrollLeft = 0;
+          el.scrollTop = 0;
+        }
+      }}
     >
       <div
         className={`canvas-world ${arranging ? 'arranging' : ''}`}

@@ -936,13 +936,35 @@ textarea {
 }
 
 .weight {
-  font-size: 7px;
-  letter-spacing: 1px;
-  color: var(--accent);
+  display: inline-flex;
+  gap: 2px;
 }
 
-.weight-off {
-  color: var(--rule);
+.weight i {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--ink) 20%, transparent);
+}
+
+.weight i.on {
+  background: var(--ink-2);
+}
+
+.cap-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-weight: 600;
+  color: var(--ink-2);
+}
+
+.cap-error {
+  color: var(--err);
+}
+
+.cap-busy {
+  color: var(--busy);
 }
 
 .cap-meta {
@@ -3465,4 +3487,48 @@ textarea:focus-visible,
 
 .insp-meta {
   margin-top: 4px;
+}
+
+/* Board toolbar: the search and the filters start their own line, left-aligned. */
+.toolbar-row {
+  display: flex;
+  flex: 1 0 100%;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 10px;
+  min-width: 0;
+}
+
+.board-wrap.with-inspector {
+  grid-template-columns: minmax(0, 1fr) 400px;
+}
+
+@media (max-width: 1180px) {
+  .board-wrap.with-inspector {
+    grid-template-columns: minmax(0, 1fr) 340px;
+  }
+  .board-wrap.with-inspector.wide {
+    grid-template-columns: minmax(0, 1fr) 380px;
+  }
+}
+
+/* Canvas: the help line gives way to the zoom tools on a narrow board. */
+.canvas-wrap {
+  container-type: inline-size;
+}
+
+@container (max-width: 840px) {
+  .canvas-help {
+    display: none;
+  }
+}
+
+.canvas-tools {
+  z-index: 1;
+}
+
+/* The focus ring keeps its screen size at every zoom, like the resize handle. */
+.canvas-card:focus-visible {
+  outline-width: calc(2px * var(--inv-z, 1));
+  outline-offset: calc(2px * var(--inv-z, 1));
 }

@@ -2117,7 +2117,7 @@ svg.lucide {
 
 .src-preview.tile.media-pdf svg,
 .src-preview.tile.media-doc svg {
-  color: var(--accent);
+  color: var(--ink-2);
 }
 
 .src-tile-label {
@@ -3439,6 +3439,40 @@ textarea:focus-visible,
 
 /* ---- WP-E: sources and outputs ---- */
 
+/* Source cards take the keyboard focus; the ring keeps the corner radius of the card. */
+.src-card:focus-visible {
+  border-radius: 10px;
+}
+
+/* State of the analysis in words, and the weight as five dots. The board (WP-B) uses the same
+   declarations; the duplicates go at the merge. */
+.cap-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-weight: 600;
+  color: var(--ink-2);
+}
+.cap-error {
+  color: var(--err);
+}
+.cap-busy {
+  color: var(--busy);
+}
+.weight {
+  display: inline-flex;
+  gap: 2px;
+}
+.weight i {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--ink) 20%, transparent);
+}
+.weight i.on {
+  background: var(--ink-2);
+}
+
 /* Outputs: the thumbnail opens the full image; the description shows four lines until More. */
 .output-thumb {
   display: block;
@@ -3478,4 +3512,13 @@ textarea:focus-visible,
   overflow-wrap: anywhere;
   user-select: text;
   -webkit-user-select: text;
+}
+
+/* In the inspector heading the state reads as a note beside the heading, not as part of it. */
+.src-inspector h3 .cap-status {
+  margin-left: 6px;
+  font-weight: 500;
+}
+.src-inspector h3 .cap-status:not(.cap-error):not(.cap-busy) {
+  color: var(--ink-3);
 }

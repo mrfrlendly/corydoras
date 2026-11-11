@@ -1263,11 +1263,15 @@ textarea {
 
 .tokens {
   position: sticky;
-  top: 0;
+  /* Under the sticky document toolbar; DocumentView measures its height. */
+  top: calc(var(--doc-bar, 52px) + 12px);
+  max-height: calc(100cqh - var(--doc-bar, 52px));
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .tokens .json {
-  max-height: 60vh;
+  max-height: none;
 }
 
 .cmf {
@@ -3433,4 +3437,39 @@ textarea:focus-visible,
   .palette-chip {
     transition: none;
   }
+}
+
+/* ---- WP-C: reading ---- */
+
+/* Document: the toolbar stays at the top while the document scrolls; the side column scrolls on its own. */
+.doc {
+  container-type: size;
+}
+
+.doc > .toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  margin: 0 -28px 16px;
+  padding-left: 28px;
+  padding-right: 28px;
+  background: var(--bg);
+  border-bottom: 1px solid var(--rule);
+  /* WebKit insets a sticky bar by the padding-top of its scroller: cover the band above it. */
+  box-shadow: 0 -24px 0 var(--bg);
+}
+
+.tokens-json > summary {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-2);
+  padding: 2px 0;
+}
+
+.tokens-json[open] > summary {
+  margin-bottom: 8px;
+}
+
+.tokens-json > summary:focus-visible {
+  outline-offset: -2px;
 }

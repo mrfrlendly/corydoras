@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import ReactMarkdown from 'react-markdown';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import ReactMarkdown, { Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { save as saveDialog } from '@tauri-apps/plugin-dialog';
 import { api, errText, EXPORT_FORMATS, ExportFormat, fmtDate, Inheritance, Language, VersionContent, VersionInfo } from '../api';
@@ -80,6 +80,50 @@ function CmfSwatches({ tokens }: { tokens: unknown }) {
   );
 }
 
+interface Heading {
+  level: 2 | 3;
+  label: string;
+  id: string;
+}
+
+/** The anchor of a heading. The markdown text and the rendered text give the same id. */
+function headingId(text: string): string {
+  return `doc-${text
+    .replace(/[`*_]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')}`;
+}
+
+/** The sections of a document for the "Jump to" menu. A family heading drops its (`id`). */
+function headingsOf(markdown: string): Heading[] {
+  const text = markdown.replace(/^```[\s\S]*?^```/gm, '');
+  return [...text.matchAll(/^(##|###) (.+)$/gm)].map((m) => {
+    const raw = m[2].trim();
+    return {
+      level: m[1].length === 2 ? 2 : 3,
+      label: raw.replace(/\s*\(`[^`]*`\)$/, '').replace(/[`*_]/g, ''),
+      id: headingId(raw),
+    };
+  });
+}
+
+/** The plain text of a rendered markdown node. */
+function nodeText(node: unknown): string {
+  const n = node as { value?: unknown; children?: unknown[] } | undefined;
+  if (!n) return '';
+  if (typeof n.value === 'string') return n.value;
+  return (n.children ?? []).map(nodeText).join('');
+}
+
+const MARKDOWN: Components = {
+  h2: ({ node, ...p }) => <h2 id={headingId(nodeText(node))} {...p} />,
+  h3: ({ node, ...p }) => <h3 id={headingId(nodeText(node))} {...p} />,
+  // A link opens in the browser. In the app window it would replace the app with no way back.
+  a: ({ node, href, ...p }) =>
+    href && /^[a-z][a-z0-9+.-]*:/i.test(href) ? <a href={href} target="_blank" rel="noreferrer" {...p} /> : <a href={href} {...p} />,
+};
+
 function showValue(v: unknown): string {
   if (v === null || v === undefined) return 'nothing';
   const s = typeof v === 'string' ? `“${v}”` : JSON.stringify(v);
@@ -140,8 +184,8 @@ function InheritancePanel({ language, tick, onChanged }: { language: Language; t
       {inh.error && <div className="error-box">{inh.error}</div>}
       {inh.overrides.length === 0 ? (
         <div className="small muted">
-          No changes yet: this document is the same as the base. Click <b>Edit</b> and change tokens.json; the difference to the base becomes the changes of
-          this language, and they stay when the base gets a new version.
+          No changes yet: this document is the same as the base. Click <b>Edit document</b> and change tokens.json; the difference to the base becomes the
+          changes of this language, and they stay when the base gets a new version.
         </div>
       ) : (
         <ul className="overrides">
@@ -190,6 +234,17 @@ export default function DocumentView({ language, version, tick, openProposals, o
 
   const latest = versions[0]?.version ?? null;
   const shown = version ?? latest;
+  const headings = useMemo(() => (content ? headingsOf(content.markdown) : []), [content]);
+
+  // The toolbar stays at the top while the document scrolls. Its height (it wraps in a narrow
+  // window) sets where the side column and the jump targets stop under it.
+  const measureBar = useCallback((bar: HTMLDivElement | null) => {
+    const doc = bar?.parentElement;
+    if (!bar || !doc) return;
+    const ro = new ResizeObserver(() => doc.style.setProperty('--doc-bar', `${bar.offsetHeight}px`));
+    ro.observe(bar);
+    return () => ro.disconnect();
+  }, []);
 
   useEffect(() => {
     api
@@ -226,6 +281,15 @@ export default function DocumentView({ language, version, tick, openProposals, o
     setMd(content.markdown);
     setTokens(JSON.stringify(content.tokens, null, 2));
     setEditing(true);
+  };
+
+  // Scrolls a section to just under the sticky toolbar.
+  const jumpTo = (id: string) => {
+    const target = document.getElementById(id);
+    const doc = target?.closest('.doc');
+    const bar = doc?.querySelector(':scope > .toolbar');
+    if (!target || !doc || !bar) return;
+    doc.scrollTop += target.getBoundingClientRect().top - bar.getBoundingClientRect().bottom - 16;
   };
 
   const save = async () => {
@@ -266,8 +330,13 @@ export default function DocumentView({ language, version, tick, openProposals, o
 
   return (
     <div className="doc">
-      <div className="toolbar">
-        <select className="select small" value={shown} onChange={(e) => onVersion(Number(e.target.value) === latest ? null : Number(e.target.value))}>
+      <div className="toolbar" ref={measureBar}>
+        <select
+          className="select small"
+          value={shown}
+          onChange={(e) => onVersion(Number(e.target.value) === latest ? null : Number(e.target.value))}
+          aria-label="Version"
+        >
           {versions.map((v) => (
             <option key={v.version} value={v.version}>
               v{v.version}
@@ -290,6 +359,16 @@ export default function DocumentView({ language, version, tick, openProposals, o
         <div className="spacer" />
         {!editing && (
           <>
+            {headings.length > 1 && (
+              <select className="select small" value="" onChange={(e) => e.target.value && jumpTo(e.target.value)} aria-label="Jump to section">
+                <option value="">Jump to…</option>
+                {headings.map((h, i) => (
+                  <option key={i} value={h.id}>
+                    {h.level === 3 ? `\u00a0\u00a0\u00a0${h.label}` : h.label}
+                  </option>
+                ))}
+              </select>
+            )}
             {content && content.info.schema >= 2 && (
               <select
                 className="select small"
@@ -309,8 +388,17 @@ export default function DocumentView({ language, version, tick, openProposals, o
             <button className="btn small" onClick={copyForAgent} title="Copy the text that agents get">
               <Copy size={13} /> Copy for agent
             </button>
-            <button className="btn small" onClick={startEdit} disabled={!content}>
-              <Pencil size={13} /> Edit
+            <button
+              className="btn small"
+              onClick={startEdit}
+              disabled={!content}
+              title={
+                content && content.info.schema < 2
+                  ? 'Edit language.md and tokens.json. Saving makes a new version.'
+                  : 'Edit tokens.json. Saving makes a new version.'
+              }
+            >
+              <Pencil size={13} /> Edit document
             </button>
           </>
         )}
@@ -395,12 +483,16 @@ export default function DocumentView({ language, version, tick, openProposals, o
         content && (
           <div className="doc-body">
             <article className="markdown">
-              <ReactMarkdown remarkPlugins={[remarkGfm]}>{content.markdown}</ReactMarkdown>
+              <ReactMarkdown remarkPlugins={[remarkGfm]} components={MARKDOWN}>
+                {content.markdown}
+              </ReactMarkdown>
             </article>
             <aside className="tokens">
               <CmfSwatches tokens={content.tokens} />
-              <h3>tokens.json</h3>
-              <pre className="json">{JSON.stringify(content.tokens, null, 2)}</pre>
+              <details className="tokens-json">
+                <summary>tokens.json</summary>
+                <pre className="json">{JSON.stringify(content.tokens, null, 2)}</pre>
+              </details>
             </aside>
           </div>
         )

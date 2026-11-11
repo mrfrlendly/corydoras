@@ -18,10 +18,21 @@
   --accent-soft: rgba(226, 86, 27, 0.12);
   --ok: #3d7249;
   --warn: #8f6200;
-  --err: #c2412d;
-  --busy: #3c78b5;
+  /* --err is for red text and lines; --err-fill is the red behind white text. */
+  --err: #b3392a;
+  --err-fill: #c2412d;
+  --busy: #2d6699;
   --shadow: 0 1px 2px rgba(0, 0, 0, 0.06), 0 6px 24px rgba(0, 0, 0, 0.06);
+  /* Radius scale: small marks, controls, cards and panels, big cards. */
+  --radius-sm: 5px;
+  --radius-ctl: 7px;
   --radius: 10px;
+  --radius-lg: 16px;
+  /* Every control in a row (input, select, small button, segments) has this height. */
+  --control-h: 28px;
+  --hover: color-mix(in srgb, var(--ink) 8%, transparent);
+  /* lucide chevrons-up-down, in --ink-3 */
+  --select-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2368665f' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m7 15 5 5 5-5'/%3E%3Cpath d='m7 9 5-5 5 5'/%3E%3C/svg%3E");
   --mono: 'SF Mono', ui-monospace, Menlo, monospace;
   --sans: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', sans-serif;
   color-scheme: light;
@@ -38,7 +49,11 @@
     --accent: #e2561b;
     --ok: #5aa468;
     --warn: #d9a21b;
+    --err: #ef6f5a;
+    --busy: #5b9bd5;
     --rule: #33322e;
+    /* lucide chevrons-up-down, in --ink-2 */
+    --select-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23a9a79f' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m7 15 5 5 5-5'/%3E%3Cpath d='m7 9 5-5 5 5'/%3E%3C/svg%3E");
     --accent-soft: rgba(226, 86, 27, 0.18);
     --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 6px 24px rgba(0, 0, 0, 0.3);
     color-scheme: dark;
@@ -240,7 +255,7 @@ h3 {
 }
 
 .side-item:hover {
-  background: rgba(127, 127, 127, 0.1);
+  background: var(--hover);
 }
 
 .side-item.active {
@@ -343,7 +358,7 @@ h3 {
   align-items: center;
   gap: 6px;
   padding: 7px 14px;
-  border-radius: 7px;
+  border-radius: var(--radius-ctl);
   border: 1px solid var(--rule);
   background: var(--panel);
   cursor: default;
@@ -375,8 +390,8 @@ h3 {
 }
 
 .btn.danger {
-  background: var(--err);
-  border-color: var(--err);
+  background: var(--err-fill);
+  border-color: var(--err-fill);
   color: #fff;
 }
 
@@ -389,7 +404,7 @@ h3 {
   height: 22px;
   display: inline-grid;
   place-items: center;
-  border-radius: 5px;
+  border-radius: var(--radius-sm);
   border: 0;
   background: transparent;
   color: var(--ink-2);
@@ -405,7 +420,7 @@ h3 {
 }
 
 .icon-btn:hover {
-  background: rgba(127, 127, 127, 0.15);
+  background: var(--hover);
 }
 
 .link-btn {
@@ -425,7 +440,7 @@ textarea,
 .select {
   border: 1px solid var(--rule);
   background: var(--panel);
-  border-radius: 7px;
+  border-radius: var(--radius-ctl);
   padding: 6px 9px;
   outline: none;
 }
@@ -628,7 +643,7 @@ textarea {
 .seg {
   display: inline-flex;
   border: 1px solid var(--rule);
-  border-radius: 7px;
+  border-radius: var(--radius-ctl);
   overflow: hidden;
 }
 
@@ -714,7 +729,7 @@ textarea {
 }
 
 .toast-error {
-  background: var(--err);
+  background: var(--err-fill);
   color: #fff;
 }
 
@@ -733,7 +748,7 @@ textarea {
   max-width: 560px;
   background: var(--panel);
   border: 1px solid var(--rule);
-  border-radius: 16px;
+  border-radius: var(--radius-lg);
   padding: 36px 40px;
   box-shadow: var(--shadow);
 }
@@ -885,7 +900,7 @@ textarea {
 
 .card {
   margin: 0;
-  border-radius: 9px;
+  border-radius: var(--radius);
   overflow: hidden;
   background: var(--panel);
   border: 1px solid var(--rule);
@@ -920,7 +935,7 @@ textarea {
   left: 8px;
   padding: 2px 8px;
   border-radius: 5px;
-  background: var(--err);
+  background: var(--err-fill);
   color: #fff;
   font-size: 11px;
   font-weight: 600;
@@ -1111,9 +1126,9 @@ textarea {
 }
 
 .weight-btn.on {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: #fff;
+  background: var(--accent-fill);
+  border-color: var(--accent-fill);
+  color: var(--accent-ink);
 }
 
 .analysis p {
@@ -1140,7 +1155,7 @@ textarea {
   width: 14px;
   height: 14px;
   border-radius: 3px;
-  border: 1px solid rgba(0, 0, 0, 0.15);
+  border: 1px solid color-mix(in srgb, var(--ink) 16%, transparent);
 }
 
 .kw {
@@ -1282,7 +1297,7 @@ textarea {
   gap: 10px;
   background: var(--panel);
   border: 1px solid var(--rule);
-  border-radius: 8px;
+  border-radius: var(--radius);
   padding: 8px;
   font-size: 11.5px;
 }
@@ -1291,7 +1306,7 @@ textarea {
   width: 48px;
   min-height: 48px;
   border-radius: 6px;
-  border: 1px solid rgba(0, 0, 0, 0.12);
+  border: 1px solid color-mix(in srgb, var(--ink) 16%, transparent);
   flex: none;
 }
 
@@ -1418,7 +1433,7 @@ textarea {
 
 .proc-editor {
   border: 1px solid var(--accent);
-  border-radius: 9px;
+  border-radius: var(--radius);
   padding: 14px;
   margin: 10px 0;
   background: var(--bg);
@@ -1460,7 +1475,7 @@ textarea {
 .review {
   border: 1px solid color-mix(in srgb, var(--warn) 50%, transparent);
   background: color-mix(in srgb, var(--warn) 10%, transparent);
-  border-radius: 9px;
+  border-radius: var(--radius);
   padding: 10px 14px;
   margin-bottom: 14px;
   font-size: 12.5px;
@@ -1497,7 +1512,12 @@ textarea {
 
 .worker-btn:hover,
 .worker-btn.active {
-  background: rgba(127, 127, 127, 0.1);
+  background: var(--hover);
+}
+
+/* The open view looks the same in every sidebar row. */
+.worker-btn.active {
+  background: color-mix(in srgb, var(--ink) 11%, transparent);
 }
 
 .worker-idle .dot {
@@ -1999,7 +2019,9 @@ svg.lucide {
 .toast-action {
   border: 0;
   background: none;
-  color: var(--accent);
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
   font-weight: 600;
   padding: 0;
   margin-left: 6px;
@@ -2026,7 +2048,7 @@ svg.lucide {
   min-width: 260px;
   padding: 3px 3px 3px 10px;
   border: 1px solid var(--rule);
-  border-radius: 8px;
+  border-radius: var(--radius-ctl);
   background: var(--panel);
 }
 
@@ -2056,7 +2078,7 @@ svg.lucide {
 
 .src-card {
   margin: 0;
-  border-radius: 10px;
+  border-radius: var(--radius);
   overflow: hidden;
   background: var(--panel);
   border: 1px solid var(--rule);
@@ -2305,7 +2327,7 @@ svg.lucide {
   gap: 8px;
   align-items: flex-start;
   padding: 9px 11px;
-  border-radius: 7px;
+  border-radius: var(--radius-ctl);
   background: color-mix(in srgb, var(--warn) 12%, transparent);
   color: var(--ink);
   font-size: 12px;
@@ -2559,11 +2581,18 @@ textarea:focus-visible,
     --rule: #8f8d86;
     --ink-2: var(--ink);
     --ink-3: var(--ink-2);
+    --accent-soft: color-mix(in srgb, var(--accent) 30%, transparent);
   }
   .btn,
   .chip,
   .card {
     border-width: 1.5px;
+  }
+  .side-item.active {
+    background: color-mix(in srgb, var(--ink) 18%, transparent);
+  }
+  .notice {
+    border: 1px solid var(--rule);
   }
 }
 
@@ -2838,7 +2867,7 @@ textarea:focus-visible,
 }
 
 .canvas-zoom:hover {
-  background: rgba(127, 127, 127, 0.15);
+  background: var(--hover);
 }
 
 .canvas-sep {
@@ -3005,7 +3034,7 @@ textarea:focus-visible,
   padding: 0 6px 0 8px;
   height: 26px;
   border: 1px solid var(--rule);
-  border-radius: 7px;
+  border-radius: var(--radius-ctl);
   background: var(--panel);
   color: var(--ink-3);
 }
@@ -3054,7 +3083,7 @@ textarea:focus-visible,
   height: 14px;
   border-radius: 7px;
   overflow: hidden;
-  border: 1px solid var(--rule);
+  border: 1px solid color-mix(in srgb, var(--ink) 16%, transparent);
 }
 
 .palette-chip {
@@ -3111,7 +3140,7 @@ textarea:focus-visible,
   width: 16px;
   height: 16px;
   border-radius: 4px;
-  border: 1px solid rgba(0, 0, 0, 0.15);
+  border: 1px solid color-mix(in srgb, var(--ink) 16%, transparent);
 }
 
 /* Outputs: geometry check and print log */

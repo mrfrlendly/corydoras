@@ -37,6 +37,7 @@ export default function Onboarding({ info, onDone }: { info: AppInfo; onDone: (i
           Corydoras keeps your reference images, notes and language documents in one library folder. Plain files hold the images
           and documents, and SQLite holds the index. You can back up or sync the folder with any tool.
         </p>
+        <p>Next, add a model provider in Settings.</p>
         <div className="onboarding-actions">
           <button className="btn primary" disabled={busy} onClick={() => use(info.default_library)}>
             Use {info.default_library.replace(/^\/Users\/[^/]+/, '~')}

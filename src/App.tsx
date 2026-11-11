@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { listen } from '@tauri-apps/api/event';
 import { api, AppInfo, CaptureDone, errText, Language, Project, RuleSet, StatusReport } from './api';
 import Sidebar from './components/Sidebar';
@@ -8,7 +8,6 @@ import SettingsView from './components/SettingsView';
 import ActivityView from './components/ActivityView';
 import RuleSetView from './components/RuleSetView';
 import SlicerImportView from './components/SlicerImportView';
-import QueueToggle from './components/QueueToggle';
 import Onboarding from './components/Onboarding';
 import Logo from './components/Logo';
 import { ToastProvider, useToast } from './components/Toast';
@@ -110,6 +109,39 @@ function Shell() {
     if (openLanguageId) api.followOpenLanguage(openLanguageId).catch(() => {});
   }, [openLanguageId]);
 
+  // ⌘, opens Settings, as in every Mac app.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.metaKey && !e.ctrlKey && !e.altKey && e.key === ',') {
+        e.preventDefault();
+        setView({ kind: 'settings' });
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
+  // One sentence about the queue for screen readers. It changes only when the queue changes
+  // state (no time counter), and the first state after launch is not read out.
+  const queueNow = !status
+    ? null
+    : status.current
+      ? status.current.kind === 'synthesize'
+        ? `Writing a new version of ${status.current.language_name}.`
+        : `Analysis runs in ${status.current.language_name}.`
+      : status.paused
+        ? 'The queue is paused.'
+        : status.queued > 0
+          ? 'Jobs wait in the queue.'
+          : 'The queue is empty.';
+  const [queueSay, setQueueSay] = useState('');
+  const lastQueue = useRef<string | null>(null);
+  useEffect(() => {
+    if (queueNow === null) return;
+    if (lastQueue.current !== null && lastQueue.current !== queueNow) setQueueSay(queueNow);
+    lastQueue.current = queueNow;
+  }, [queueNow]);
+
   if (!info)
     return (
       <div className="boot">
@@ -133,7 +165,9 @@ function Shell() {
         onView={setView}
         onChanged={bump}
       />
-      <QueueToggle status={status} onChanged={bump} />
+      <div className="sr-only" role="status" aria-live="polite">
+        {queueSay}
+      </div>
       <main className="main">
         {view.kind === 'language' && lang && (
           <LanguageView
@@ -193,12 +227,31 @@ function Shell() {
           <ActivityView languages={languages} onChanged={bump} onOpenLanguage={(id) => setView({ kind: 'language', id })} />
         )}
         {view.kind === 'home' && (
-          <div className="empty-main">
+          <div className="empty-main" data-tauri-drag-region>
             <div className="empty-card">
               <Logo size={56} />
               <div className="eyebrow">Corydoras</div>
               <h1>Make your first design language.</h1>
-              <p>Click + next to Languages in the sidebar. Then drag images into the board.</p>
+              <ol className="first-steps">
+                <li>
+                  Add a model provider and its API key.
+                  {status?.has_key ? (
+                    <span className="first-done">Done.</span>
+                  ) : (
+                    <button className="link-btn" onClick={() => setView({ kind: 'settings' })}>
+                      Open Settings
+                    </button>
+                  )}
+                </li>
+                <li>Click + next to Languages, type a name, and press Return.</li>
+                <li>Drag images into the board. The first language document follows the analysis.</li>
+                <li>
+                  Connect an agent: Settings › Agents (MCP server).
+                  <button className="link-btn" onClick={() => setView({ kind: 'settings' })}>
+                    Open Settings
+                  </button>
+                </li>
+              </ol>
             </div>
           </div>
         )}

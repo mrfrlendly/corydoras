@@ -18,10 +18,21 @@
   --accent-soft: rgba(226, 86, 27, 0.12);
   --ok: #3d7249;
   --warn: #8f6200;
-  --err: #c2412d;
-  --busy: #3c78b5;
+  /* --err is for red text and lines; --err-fill is the red behind white text. */
+  --err: #b3392a;
+  --err-fill: #c2412d;
+  --busy: #2d6699;
   --shadow: 0 1px 2px rgba(0, 0, 0, 0.06), 0 6px 24px rgba(0, 0, 0, 0.06);
+  /* Radius scale: small marks, controls, cards and panels, big cards. */
+  --radius-sm: 5px;
+  --radius-ctl: 7px;
   --radius: 10px;
+  --radius-lg: 16px;
+  /* Every control in a row (input, select, small button, segments) has this height. */
+  --control-h: 28px;
+  --hover: color-mix(in srgb, var(--ink) 8%, transparent);
+  /* lucide chevrons-up-down, in --ink-3 */
+  --select-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2368665f' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m7 15 5 5 5-5'/%3E%3Cpath d='m7 9 5-5 5 5'/%3E%3C/svg%3E");
   --mono: 'SF Mono', ui-monospace, Menlo, monospace;
   --sans: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', sans-serif;
   color-scheme: light;
@@ -38,7 +49,11 @@
     --accent: #e2561b;
     --ok: #5aa468;
     --warn: #d9a21b;
+    --err: #ef6f5a;
+    --busy: #5b9bd5;
     --rule: #33322e;
+    /* lucide chevrons-up-down, in --ink-2 */
+    --select-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23a9a79f' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m7 15 5 5 5-5'/%3E%3Cpath d='m7 9 5-5 5 5'/%3E%3C/svg%3E");
     --accent-soft: rgba(226, 86, 27, 0.18);
     --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 6px 24px rgba(0, 0, 0, 0.3);
     color-scheme: dark;
@@ -81,7 +96,17 @@ textarea,
 .markdown,
 pre,
 .mono,
-.wrap {
+.wrap,
+.error-box,
+.analysis,
+.src-notes,
+.kw,
+.text-preview,
+.log-text,
+.output-note,
+.finding-body,
+.geo-list,
+.notice {
   user-select: text;
   -webkit-user-select: text;
 }
@@ -122,6 +147,19 @@ h3 {
 
 .muted {
   color: var(--ink-3);
+}
+
+/* Text for screen readers only. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
 }
 
 .small {
@@ -240,7 +278,7 @@ h3 {
 }
 
 .side-item:hover {
-  background: rgba(127, 127, 127, 0.1);
+  background: var(--hover);
 }
 
 .side-item.active {
@@ -266,7 +304,7 @@ h3 {
 }
 
 .side-meta.warn {
-  color: var(--accent);
+  color: var(--warn);
 }
 
 .side-empty {
@@ -343,7 +381,7 @@ h3 {
   align-items: center;
   gap: 6px;
   padding: 7px 14px;
-  border-radius: 7px;
+  border-radius: var(--radius-ctl);
   border: 1px solid var(--rule);
   background: var(--panel);
   cursor: default;
@@ -359,7 +397,8 @@ h3 {
 }
 
 .btn.small {
-  padding: 4px 10px;
+  height: var(--control-h);
+  padding: 0 10px;
   font-size: 12px;
 }
 
@@ -374,9 +413,18 @@ h3 {
   border-color: var(--accent-fill);
 }
 
+/* A disabled primary is grey, not a faded orange that looks like it is loading. */
+.btn.primary:disabled {
+  background: var(--panel-2);
+  border-color: var(--rule);
+  color: var(--ink-3);
+  opacity: 1;
+  filter: none;
+}
+
 .btn.danger {
-  background: var(--err);
-  border-color: var(--err);
+  background: var(--err-fill);
+  border-color: var(--err-fill);
   color: #fff;
 }
 
@@ -389,7 +437,7 @@ h3 {
   height: 22px;
   display: inline-grid;
   place-items: center;
-  border-radius: 5px;
+  border-radius: var(--radius-sm);
   border: 0;
   background: transparent;
   color: var(--ink-2);
@@ -405,19 +453,22 @@ h3 {
 }
 
 .icon-btn:hover {
-  background: rgba(127, 127, 127, 0.15);
+  background: var(--hover);
 }
 
 .link-btn {
   border: 0;
   background: none;
   padding: 0;
-  color: var(--accent);
+  color: var(--ink);
   text-align: left;
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--ink) 30%, transparent);
+  text-underline-offset: 2px;
 }
 
 .link-btn:hover {
-  text-decoration: underline;
+  text-decoration-color: currentColor;
 }
 
 input:not([type='checkbox']):not([type='radio']),
@@ -425,20 +476,42 @@ textarea,
 .select {
   border: 1px solid var(--rule);
   background: var(--panel);
-  border-radius: 7px;
+  border-radius: var(--radius-ctl);
   padding: 6px 9px;
   outline: none;
+}
+
+/* One height for every single-line control. The big title fields keep their own. */
+input:not([type='checkbox']):not([type='radio']):not(.title-input),
+.select {
+  height: var(--control-h);
+  padding-top: 0;
+  padding-bottom: 0;
+}
+
+/* The native select is 20px tall and ignores padding; draw our own box and chevron. */
+.select {
+  -webkit-appearance: none;
+  appearance: none;
+  padding: 0 26px 0 9px;
+  background: var(--panel) var(--select-chevron) no-repeat right 8px center / 12px 12px;
+}
+
+/* Fields that sit inside a framed control (search, link form) fill it. */
+.board-search input:not([type='checkbox']):not([type='radio']),
+.link-form input:not([type='checkbox']):not([type='radio']) {
+  height: auto;
 }
 
 input:focus,
 textarea:focus,
 .select:focus {
   border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-soft);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 45%, transparent);
 }
 
 .select.small {
-  padding: 3px 8px;
+  padding: 0 24px 0 8px;
   font-size: 12px;
 }
 
@@ -574,9 +647,16 @@ textarea {
 
 .notice {
   padding: 10px 12px;
-  border-radius: 8px;
-  background: var(--accent-soft);
+  border-radius: var(--radius-ctl);
+  background: var(--panel-2);
+  color: var(--ink);
   margin-bottom: 12px;
+}
+
+/* A notice that asks for attention (paused queue, model change). */
+.notice.warn {
+  background: color-mix(in srgb, var(--warn) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--warn) 35%, transparent);
 }
 
 .error-box {
@@ -627,8 +707,9 @@ textarea {
 
 .seg {
   display: inline-flex;
+  height: var(--control-h);
   border: 1px solid var(--rule);
-  border-radius: 7px;
+  border-radius: var(--radius-ctl);
   overflow: hidden;
 }
 
@@ -640,16 +721,17 @@ textarea {
 }
 
 .seg button.active {
-  background: var(--ink);
-  color: var(--panel);
+  background: color-mix(in srgb, var(--ink) 12%, var(--panel));
+  color: var(--ink);
+  font-weight: 500;
 }
 
 .tag-pill {
   margin-left: 6px;
   padding: 1px 6px;
   border-radius: 4px;
-  background: var(--accent-soft);
-  color: var(--accent);
+  background: var(--panel-2);
+  color: var(--ink-2);
   font-size: 11px;
 }
 
@@ -663,6 +745,15 @@ textarea {
   flex-direction: column;
   z-index: 100;
   max-width: 420px;
+}
+
+/* Toasts stay left of an open inspector (400px, or 460px for sources). */
+body:has(.board-wrap.with-inspector) .toasts {
+  right: 418px;
+}
+
+body:has(.board-wrap.with-inspector.wide) .toasts {
+  right: 478px;
 }
 
 /* Each toast sits in a slot that collapses when it leaves, so the toasts
@@ -714,7 +805,7 @@ textarea {
 }
 
 .toast-error {
-  background: var(--err);
+  background: var(--err-fill);
   color: #fff;
 }
 
@@ -733,7 +824,7 @@ textarea {
   max-width: 560px;
   background: var(--panel);
   border: 1px solid var(--rule);
-  border-radius: 16px;
+  border-radius: var(--radius-lg);
   padding: 36px 40px;
   box-shadow: var(--shadow);
 }
@@ -754,6 +845,25 @@ textarea {
   gap: 10px;
   margin-top: 24px;
   flex-wrap: wrap;
+}
+
+/* Home card: the first steps, in order. */
+.first-steps {
+  margin: 4px 0 0;
+  padding-left: 20px;
+  display: grid;
+  gap: 8px;
+  color: var(--ink-2);
+}
+
+.first-steps .link-btn {
+  margin-left: 4px;
+}
+
+.first-done {
+  margin-left: 4px;
+  color: var(--ok);
+  font-weight: 500;
 }
 
 /* ---------------------------------------------------------------- Language view */
@@ -781,7 +891,7 @@ textarea {
 }
 
 .lang-title h1 {
-  cursor: text;
+  cursor: default;
 }
 
 .lang-desc {
@@ -812,8 +922,16 @@ textarea {
 .title-input.plain {
   border-color: transparent !important;
   background: transparent !important;
-  padding-left: 0 !important;
+  padding: 0 !important;
+  height: auto;
+  line-height: 1.2;
+  border-radius: 4px;
   width: 100%;
+}
+
+/* The plain title is the same height as an h1 title; a rule under it shows that it is a field. */
+.title-input.plain:hover {
+  box-shadow: inset 0 -1px 0 var(--rule);
 }
 
 .tabs {
@@ -850,6 +968,11 @@ textarea {
   position: relative;
 }
 
+/* Every tab starts its content 16px under the tabs. */
+.lang-body .toolbar:first-child {
+  padding-top: 0;
+}
+
 /* ---------------------------------------------------------------- Board */
 
 .board-wrap {
@@ -865,7 +988,7 @@ textarea {
 
 .board-main {
   overflow-y: auto;
-  padding: 0 28px 28px;
+  padding: 16px 28px 28px;
   min-width: 0;
 }
 
@@ -885,7 +1008,7 @@ textarea {
 
 .card {
   margin: 0;
-  border-radius: 9px;
+  border-radius: var(--radius);
   overflow: hidden;
   background: var(--panel);
   border: 1px solid var(--rule);
@@ -920,7 +1043,7 @@ textarea {
   left: 8px;
   padding: 2px 8px;
   border-radius: 5px;
-  background: var(--err);
+  background: var(--err-fill);
   color: #fff;
   font-size: 11px;
   font-weight: 600;
@@ -1111,9 +1234,9 @@ textarea {
 }
 
 .weight-btn.on {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: #fff;
+  background: var(--accent-fill);
+  border-color: var(--accent-fill);
+  color: var(--accent-ink);
 }
 
 .analysis p {
@@ -1140,7 +1263,7 @@ textarea {
   width: 14px;
   height: 14px;
   border-radius: 3px;
-  border: 1px solid rgba(0, 0, 0, 0.15);
+  border: 1px solid color-mix(in srgb, var(--ink) 16%, transparent);
 }
 
 .kw {
@@ -1155,7 +1278,7 @@ textarea {
 .versions {
   height: 100%;
   overflow-y: auto;
-  padding: 0 28px 32px;
+  padding: 16px 28px 32px;
 }
 
 .doc-empty {
@@ -1286,7 +1409,7 @@ textarea {
   gap: 10px;
   background: var(--panel);
   border: 1px solid var(--rule);
-  border-radius: 8px;
+  border-radius: var(--radius);
   padding: 8px;
   font-size: 11.5px;
 }
@@ -1295,7 +1418,7 @@ textarea {
   width: 48px;
   min-height: 48px;
   border-radius: 6px;
-  border: 1px solid rgba(0, 0, 0, 0.12);
+  border: 1px solid color-mix(in srgb, var(--ink) 16%, transparent);
   flex: none;
 }
 
@@ -1326,7 +1449,7 @@ textarea {
   border: 1px solid var(--rule);
   border-radius: var(--radius);
   overflow: hidden;
-  margin: 14px 0 18px;
+  margin: 0 0 18px;
 }
 
 .vtable th,
@@ -1381,7 +1504,19 @@ textarea {
   flex: 1;
   overflow-y: auto;
   padding: 20px 28px 32px;
+  max-width: none;
+}
+
+/* The pane scrolls at the window edge; the content keeps a readable width. */
+.project-body > *,
+.settings-body > * {
   max-width: 980px;
+}
+
+/* The header actions end where the content ends (28px gutter + 980px). */
+.settings > .lang-head,
+.project > .lang-head {
+  padding-right: max(28px, calc(100% - 1008px));
 }
 
 .pin-row {
@@ -1422,7 +1557,7 @@ textarea {
 
 .proc-editor {
   border: 1px solid var(--accent);
-  border-radius: 9px;
+  border-radius: var(--radius);
   padding: 14px;
   margin: 10px 0;
   background: var(--bg);
@@ -1464,7 +1599,7 @@ textarea {
 .review {
   border: 1px solid color-mix(in srgb, var(--warn) 50%, transparent);
   background: color-mix(in srgb, var(--warn) 10%, transparent);
-  border-radius: 9px;
+  border-radius: var(--radius);
   padding: 10px 14px;
   margin-bottom: 14px;
   font-size: 12.5px;
@@ -1501,7 +1636,12 @@ textarea {
 
 .worker-btn:hover,
 .worker-btn.active {
-  background: rgba(127, 127, 127, 0.1);
+  background: var(--hover);
+}
+
+/* The open view looks the same in every sidebar row. */
+.worker-btn.active {
+  background: color-mix(in srgb, var(--ink) 11%, transparent);
 }
 
 .worker-idle .dot {
@@ -1739,12 +1879,12 @@ button.chip {
 /* ---------------------------------------------------------------- Rule sets */
 
 .always-pill {
-  padding: 0 6px;
+  padding: 0;
   border-radius: 4px;
-  background: var(--ink);
-  color: var(--panel);
+  background: none;
+  color: var(--ink-3);
   font-size: 11px;
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .rtable th:nth-child(1) {
@@ -1799,7 +1939,8 @@ button.chip {
 
 .note-area {
   resize: none;
-  min-height: 32px;
+  padding: 4px 9px;
+  min-height: var(--control-h);
   line-height: 1.4;
   display: block;
 }
@@ -1814,26 +1955,59 @@ button.chip {
 
 /* ---------------------------------------------------------------- Queue toggle */
 
+/* Compact Auto / Manual control in the sidebar foot, under the queue line.
+   Run queue / Stop wraps to its own line when the sidebar is too narrow. */
 .queue-toggle {
-  position: fixed;
-  top: 8px;
-  right: 16px;
-  z-index: 50;
   display: flex;
   align-items: center;
-  gap: 8px;
+  flex-wrap: wrap;
+  gap: 6px 8px;
+  padding: 2px 8px 8px 31px;
+}
+
+.queue-label {
+  font-size: 11px;
+  color: var(--ink-3);
 }
 
 .queue-toggle .btn.small {
-  padding: 3px 10px;
+  height: 24px;
+  padding: 0 9px;
+  font-size: 11.5px;
+}
+
+.queue-toggle .seg {
+  height: 24px;
+  padding: 2px;
+  border: 0;
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--ink) 7%, transparent);
 }
 
 .queue-toggle .seg button {
-  padding: 3px 10px;
+  padding: 0 8px;
+  border-radius: 5px;
+  font-size: 11.5px;
+  background: transparent;
+  color: var(--ink-2);
 }
 
+.queue-toggle .seg button.active {
+  background: var(--panel);
+  color: var(--ink);
+  box-shadow: inset 0 0 0 1px var(--rule);
+}
+
+/* In dark mode the selected segment is lighter than the track, as in macOS. */
+@media (prefers-color-scheme: dark) {
+  .queue-toggle .seg button.active {
+    background: color-mix(in srgb, var(--ink) 16%, var(--panel));
+  }
+}
+
+/* The window's traffic lights sit in the sidebar; the header keeps the same top space as the sidebar. */
 .lang-head {
-  padding-top: 40px;
+  padding-top: 36px;
 }
 
 /* ---------------------------------------------------------------- 0.4: logo and glyphs */
@@ -2003,7 +2177,9 @@ svg.lucide {
 .toast-action {
   border: 0;
   background: none;
-  color: var(--accent);
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
   font-weight: 600;
   padding: 0;
   margin-left: 6px;
@@ -2028,14 +2204,23 @@ svg.lucide {
   flex: 1;
   max-width: 560px;
   min-width: 260px;
-  padding: 3px 3px 3px 10px;
+  height: var(--control-h);
+  padding: 0 2px 0 10px;
   border: 1px solid var(--rule);
-  border-radius: 8px;
+  border-radius: var(--radius-ctl);
   background: var(--panel);
+}
+
+/* The submit button sits inside the 28px frame. */
+.link-form .btn.small {
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 5px;
 }
 
 .link-form:focus-within {
   border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 45%, transparent);
 }
 
 .link-form-icon {
@@ -2060,7 +2245,7 @@ svg.lucide {
 
 .src-card {
   margin: 0;
-  border-radius: 10px;
+  border-radius: var(--radius);
   overflow: hidden;
   background: var(--panel);
   border: 1px solid var(--rule);
@@ -2276,6 +2461,15 @@ svg.lucide {
   display: flex;
   align-items: center;
   gap: 8px;
+  /* Section heads are larger than body text, not smaller. */
+  font-size: 15px;
+  color: var(--ink);
+  letter-spacing: -0.01em;
+  margin-bottom: 10px;
+}
+
+.panel p {
+  max-width: 75ch;
 }
 
 .panel h3 svg {
@@ -2296,8 +2490,8 @@ svg.lucide {
 }
 
 .chip-accent {
-  color: var(--accent);
-  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  color: var(--ink-2);
+  border-color: var(--rule);
 }
 
 .chip {
@@ -2309,7 +2503,7 @@ svg.lucide {
   gap: 8px;
   align-items: flex-start;
   padding: 9px 11px;
-  border-radius: 7px;
+  border-radius: var(--radius-ctl);
   background: color-mix(in srgb, var(--warn) 12%, transparent);
   color: var(--ink);
   font-size: 12px;
@@ -2349,7 +2543,7 @@ svg.lucide {
   align-items: center;
   gap: 12px;
   padding: 10px 12px;
-  cursor: pointer;
+  cursor: default;
 }
 
 .prov-head:hover {
@@ -2517,14 +2711,15 @@ svg.lucide {
   background: color-mix(in srgb, var(--ink) 16%, transparent);
 }
 
-/* Keyboard focus is always visible; mouse clicks do not draw a ring. */
+/* Keyboard focus is always visible; mouse clicks do not draw a ring.
+   The ring follows each element's own corners. */
 :focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
-  border-radius: 6px;
 }
 
-input:focus-visible,
+/* Text fields show focus with the border and halo instead; checkboxes and radios keep the ring. */
+input:not([type='checkbox']):not([type='radio']):focus-visible,
 textarea:focus-visible,
 .select:focus-visible {
   outline: none;
@@ -2533,6 +2728,10 @@ textarea:focus-visible,
 .tab:focus-visible,
 .seg button:focus-visible {
   outline-offset: -2px;
+}
+
+.tab:focus-visible {
+  border-radius: 6px 6px 0 0;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -2563,11 +2762,18 @@ textarea:focus-visible,
     --rule: #8f8d86;
     --ink-2: var(--ink);
     --ink-3: var(--ink-2);
+    --accent-soft: color-mix(in srgb, var(--accent) 30%, transparent);
   }
   .btn,
   .chip,
   .card {
     border-width: 1.5px;
+  }
+  .side-item.active {
+    background: color-mix(in srgb, var(--ink) 18%, transparent);
+  }
+  .notice {
+    border: 1px solid var(--rule);
   }
 }
 
@@ -2842,7 +3048,7 @@ textarea:focus-visible,
 }
 
 .canvas-zoom:hover {
-  background: rgba(127, 127, 127, 0.15);
+  background: var(--hover);
 }
 
 .canvas-sep {
@@ -2971,7 +3177,7 @@ textarea:focus-visible,
   color: var(--err);
 }
 .finding-warn .finding-verdict {
-  color: var(--accent);
+  color: var(--warn);
 }
 
 .finding-body {
@@ -3009,15 +3215,16 @@ textarea:focus-visible,
   align-items: center;
   gap: 6px;
   padding: 0 6px 0 8px;
-  height: 26px;
+  height: var(--control-h);
   border: 1px solid var(--rule);
-  border-radius: 7px;
+  border-radius: var(--radius-ctl);
   background: var(--panel);
   color: var(--ink-3);
 }
 
 .board-search:focus-within {
   border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 45%, transparent);
 }
 
 .board-search input:not([type='checkbox']):not([type='radio']) {
@@ -3060,7 +3267,7 @@ textarea:focus-visible,
   height: 14px;
   border-radius: 7px;
   overflow: hidden;
-  border: 1px solid var(--rule);
+  border: 1px solid color-mix(in srgb, var(--ink) 16%, transparent);
 }
 
 .palette-chip {
@@ -3117,14 +3324,14 @@ textarea:focus-visible,
   width: 16px;
   height: 16px;
   border-radius: 4px;
-  border: 1px solid rgba(0, 0, 0, 0.15);
+  border: 1px solid color-mix(in srgb, var(--ink) 16%, transparent);
 }
 
 /* Outputs: geometry check and print log */
 .outputs {
   height: 100%;
   overflow-y: auto;
-  padding: 0 28px 32px;
+  padding: 16px 28px 32px;
   align-content: start;
 }
 
@@ -3269,7 +3476,11 @@ textarea:focus-visible,
 .insight {
   height: 100%;
   overflow-y: auto;
-  padding: 0 28px 32px;
+  padding: 16px 28px 32px;
+  max-width: none;
+}
+
+.insight > * {
   max-width: 1100px;
 }
 

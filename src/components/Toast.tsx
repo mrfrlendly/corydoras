@@ -29,21 +29,29 @@ const EXIT_MS = 160;
 const Ctx = createContext<ToastApi>({ info: () => {}, error: () => {} });
 
 function lifetime(m: ToastMsg) {
-  return m.kind === 'error' ? 8000 : m.action ? 6000 : 3500;
+  // A toast with a button stays longer: you must read it and then reach the button.
+  return m.kind === 'error' ? 8000 : m.action ? 10000 : 3500;
 }
 
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [msgs, setMsgs] = useState<ToastMsg[]>([]);
   const [hovered, setHovered] = useState(false);
+  const [focused, setFocused] = useState(false);
   const [hidden, setHidden] = useState(() => document.hidden);
 
-  // The timers stop while the pointer is over the toasts and while the window is hidden:
-  // a toast must not expire before anyone could read it.
+  // The timers stop while the pointer or the keyboard focus is in the toasts, and while the
+  // window is hidden: a toast must not expire before anyone could read it.
   useEffect(() => {
     const onVis = () => setHidden(document.hidden);
     document.addEventListener('visibilitychange', onVis);
     return () => document.removeEventListener('visibilitychange', onVis);
   }, []);
+
+  // A removed toast takes the focus with it without a blur event; drop the pause then.
+  const box = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (focused && !box.current?.contains(document.activeElement)) setFocused(false);
+  }, [msgs, focused]);
 
   const dismiss = useCallback((id: number) => {
     setMsgs((all) => all.map((x) => (x.id === id ? { ...x, leaving: true } : x)));
@@ -64,9 +72,19 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   return (
     <Ctx.Provider value={value}>
       {children}
-      <div className="toasts" onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}>
+      <div
+        ref={box}
+        className="toasts"
+        aria-live="polite"
+        onMouseEnter={() => setHovered(true)}
+        onMouseLeave={() => setHovered(false)}
+        onFocus={() => setFocused(true)}
+        onBlur={(e) => {
+          if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setFocused(false);
+        }}
+      >
         {msgs.map((m) => (
-          <ToastItem key={m.id} msg={m} paused={hovered || hidden} onDismiss={dismiss} />
+          <ToastItem key={m.id} msg={m} paused={hovered || focused || hidden} onDismiss={dismiss} />
         ))}
       </div>
     </Ctx.Provider>
@@ -89,7 +107,7 @@ function ToastItem({ msg: m, paused, onDismiss }: { msg: ToastMsg; paused: boole
   return (
     <div className={`toast-slot ${m.leaving ? 'leaving' : ''}`}>
       <div className="toast-clip">
-        <div className={`toast toast-${m.kind}`} onClick={() => onDismiss(m.id)} role={m.kind === 'error' ? 'alert' : 'status'}>
+        <div className={`toast toast-${m.kind}`} onClick={() => onDismiss(m.id)} aria-live={m.kind === 'error' ? 'assertive' : undefined}>
           {m.kind === 'error' ? <CircleAlert size={15} className="toast-icon" /> : <CircleCheck size={15} className="toast-icon" />}
           <span className="toast-text">{m.text}</span>
           {m.action && (

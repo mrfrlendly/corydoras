@@ -1,7 +1,8 @@
-import { DragEvent, FormEvent, useCallback, useEffect, useRef, useState } from 'react';
+import { DragEvent, FormEvent, KeyboardEvent as ReactKeyboardEvent, useCallback, useEffect, useRef, useState } from 'react';
 import { open } from '@tauri-apps/plugin-dialog';
 import {
   BookOpen,
+  CircleAlert,
   CirclePlay,
   ExternalLink,
   FilePlus,
@@ -47,17 +48,45 @@ export function MediaIcon({ media, size = 16 }: { media: string; size?: number }
   }
 }
 
-function statusLabel(s: Source): string {
+/** The state of the analysis in one word, for the card label. */
+function statusWord(s: Source): string {
   switch (s.analysis_status) {
     case 'done':
       return 'Read';
     case 'error':
-      return `Failed: ${s.analysis_error ?? ''}`;
+      return 'Failed';
     case 'analyzing':
-      return 'Reading now';
+      return 'Reading';
     default:
-      return 'In the queue';
+      return 'Waiting';
   }
+}
+
+/** The state of the analysis in words; nothing when the model has read the source. */
+function SourceStatus({ source }: { source: Source }) {
+  switch (source.analysis_status) {
+    case 'done':
+      return null;
+    case 'error':
+      return (
+        <span className="cap-status cap-error" title={source.analysis_error || 'The model could not read this source.'}>
+          <CircleAlert size={11} aria-hidden="true" /> Failed
+        </span>
+      );
+    case 'analyzing':
+      return (
+        <span className="cap-status cap-busy">
+          <Loader size={11} className="spin" aria-hidden="true" /> Reading
+        </span>
+      );
+    default:
+      return <span className="cap-status">Waiting</span>;
+  }
+}
+
+/** A text field has the keys; the view must not act on them. */
+function inField(t: EventTarget | null) {
+  return t instanceof HTMLElement && !!t.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"])');
 }
 
 /** Preview of a source: its image, or a tile with a glyph and the first words. */
@@ -86,20 +115,35 @@ function Preview({ source, large }: { source: Source; large?: boolean }) {
 
 function SourceCard({ source, selected, onClick }: { source: Source; selected: boolean; onClick: () => void }) {
   return (
-    <figure className={`src-card ${selected ? 'selected' : ''}`} onClick={onClick}>
+    <figure
+      className={`src-card ${selected ? 'selected' : ''}`}
+      data-card={source.id}
+      tabIndex={0}
+      role="button"
+      aria-pressed={selected}
+      aria-label={`${source.title}. ${statusWord(source)}. ${mediaLabel(source.media)}. Weight ${source.weight} of 5.`}
+      onClick={onClick}
+      onKeyDown={(e) => {
+        if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) {
+          e.preventDefault();
+          onClick();
+        }
+      }}
+    >
       <Preview source={source} />
       <figcaption>
         <div className="src-title" title={source.title}>
           {source.title}
         </div>
         <div className="src-meta">
-          <span className={`dot status-${source.analysis_status}`} title={statusLabel(source)} />
+          <SourceStatus source={source} />
           <MediaIcon media={source.media} size={12} />
           <span className="src-site">{source.site || source.original_name || mediaLabel(source.media)}</span>
           <span className="src-words">{fmtWords(source.word_count)}</span>
-          <span className="weight" title={`Weight ${source.weight}/5`}>
-            {'●'.repeat(source.weight)}
-            <span className="weight-off">{'●'.repeat(5 - source.weight)}</span>
+          <span className="weight" role="img" aria-label={`Weight ${source.weight} of 5`} title={`Weight ${source.weight} of 5`}>
+            {[1, 2, 3, 4, 5].map((n) => (
+              <i key={n} className={n <= source.weight ? 'on' : ''} />
+            ))}
           </span>
         </div>
       </figcaption>
@@ -199,6 +243,14 @@ function SourceInspector({
   const [weight, setWeight] = useState(source.weight);
   const [confirmRemove, setConfirmRemove] = useState(false);
   const [showText, setShowText] = useState(false);
+  const closeRef = useRef<HTMLButtonElement>(null);
+  const removeRef = useRef<HTMLButtonElement>(null);
+  const refocusRemove = useRef(false);
+  const removed = useRef(false);
+  /** The last title sent with saveTitle, so that the unmount does not send it again. */
+  const sentTitle = useRef(source.title);
+  const latest = useRef({ source, title, note, weight, onChanged });
+  latest.current = { source, title, note, weight, onChanged };
 
   useEffect(() => {
     api
@@ -207,30 +259,95 @@ function SourceInspector({
       .catch((e) => toast.error(errText(e)));
   }, [source.id, source.analysis_status, tick, toast]);
 
-  const save = async (w?: number) => {
+  // The inspector closes when another card opens. A changed title is saved then; a changed note is not,
+  // because a new note makes the model read the source again, so a message offers to save it.
+  useEffect(
+    () => () => {
+      if (removed.current) return;
+      const { source: s, title: t0, note: n, weight: w, onChanged: changed } = latest.current;
+      const t = t0.trim() || s.title;
+      const fail = (e: unknown) => toast.error(errText(e));
+      if (t !== s.title && t !== sentTitle.current) api.updateSource(s.id, t, s.note, w).then(changed).catch(fail);
+      if (n.trim() !== s.note) {
+        toast.info(`The note for “${t}” is not saved.`, {
+          label: 'Save',
+          run: () => {
+            api.updateSource(s.id, t, n, w).then(changed).catch(fail);
+          },
+        });
+      }
+    },
+    [toast],
+  );
+
+  useEffect(() => {
+    if (!confirmRemove && refocusRemove.current) {
+      refocusRemove.current = false;
+      removeRef.current?.focus();
+    }
+  }, [confirmRemove]);
+
+  /** Saves the note (it makes the model read the source again), with the title and the weight. */
+  const save = async () => {
     try {
-      await api.updateSource(source.id, title.trim() || source.title, note, w ?? weight);
+      await api.updateSource(source.id, title.trim() || source.title, note, weight);
       onChanged();
     } catch (e) {
       toast.error(errText(e));
     }
   };
 
+  /** Saves the title and the weight; the saved note stays, so the source is not read again. */
+  const saveQuiet = async (w: number) => {
+    try {
+      await api.updateSource(source.id, title.trim() || source.title, source.note, w);
+      onChanged();
+      return true;
+    } catch (e) {
+      toast.error(errText(e));
+      return false;
+    }
+  };
+
+  const saveTitle = () => {
+    const t = title.trim();
+    if (!t) setTitle(source.title);
+    else if (t !== source.title && t !== sentTitle.current) {
+      sentTitle.current = t;
+      saveQuiet(weight).then((ok) => {
+        if (!ok) sentTitle.current = source.title;
+      });
+    }
+  };
+
+  const cancelRemove = () => {
+    refocusRemove.current = true;
+    setConfirmRemove(false);
+  };
+
+  // Escape in a field leaves the field; elsewhere the window handler of the view closes the inspector.
+  const onKeyDown = (e: ReactKeyboardEvent) => {
+    if (e.key !== 'Escape' || !inField(e.target)) return;
+    e.preventDefault();
+    (e.target as HTMLElement).blur();
+    closeRef.current?.focus();
+  };
+
   const openIt = () => api.openSource(source.id).catch((e) => toast.error(errText(e)));
   const isPdf = source.media === 'pdf' && !!source.file_rel;
 
   return (
-    <aside className="inspector src-inspector">
+    <aside className="inspector src-inspector" aria-labelledby="src-insp-title" onKeyDown={onKeyDown}>
       <div className="insp-head">
         <div>
           <div className="eyebrow">
             Source {shortId(source.id)} · {mediaLabel(source.media)}
           </div>
-          <div className="insp-name" title={source.title}>
+          <div className="insp-name" id="src-insp-title" title={source.title}>
             {source.title}
           </div>
         </div>
-        <button className="icon-btn" onClick={onClose} title="Close">
+        <button ref={closeRef} className="icon-btn" onClick={onClose} title="Close" aria-label="Close source">
           <X size={15} />
         </button>
       </div>
@@ -257,7 +374,7 @@ function SourceInspector({
           <h3>Annotation</h3>
           <label className="field">
             <span>Title</span>
-            <input value={title} onChange={(e) => setTitle(e.target.value)} />
+            <input value={title} onChange={(e) => setTitle(e.target.value)} onBlur={saveTitle} onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()} />
           </label>
           <label className="field">
             <span>Note — what must the language take from this source?</span>
@@ -269,15 +386,17 @@ function SourceInspector({
             />
           </label>
           <div className="field">
-            <span>Weight</span>
-            <div className="weights">
+            <span id="src-weight-label">Weight</span>
+            <div className="weights" role="group" aria-labelledby="src-weight-label">
               {[1, 2, 3, 4, 5].map((w) => (
                 <button
                   key={w}
-                  className={`weight-btn ${w <= weight ? 'on' : ''}`}
+                  className={`weight-btn ${w < weight ? 'on' : ''} ${w === weight ? 'current' : ''}`}
+                  aria-pressed={w === weight}
+                  aria-label={`Weight ${w} of 5`}
                   onClick={() => {
                     setWeight(w);
-                    save(w);
+                    saveQuiet(w);
                   }}
                 >
                   {w}
@@ -285,19 +404,19 @@ function SourceInspector({
               ))}
             </div>
           </div>
-          {(title !== source.title || note !== source.note) && (
+          {note.trim() !== source.note && (
             <div className="row">
-              <button className="btn primary small" onClick={() => save()}>
-                Save annotation
+              <button className="btn primary small" onClick={save}>
+                Save note
               </button>
-              {note !== source.note && <span className="muted small">A new note makes the model read the source again.</span>}
+              <span className="muted small">A new note makes the model read the source again.</span>
             </div>
           )}
         </section>
 
         <section className="insp-section">
           <h3>
-            Notes from the model <span className={`dot status-${source.analysis_status}`} />
+            Notes from the model <SourceStatus source={source} />
           </h3>
           {source.analysis_status === 'error' && <div className="error-box">{source.analysis_error}</div>}
           {source.analysis_status === 'pending' && <div className="muted small">In the queue.</div>}
@@ -338,24 +457,35 @@ function SourceInspector({
 
         <section className="insp-section">
           {confirmRemove ? (
-            <div className="row">
+            <div
+              className="row"
+              onKeyDown={(e) => {
+                if (e.key === 'Escape') {
+                  e.preventDefault();
+                  cancelRemove();
+                }
+              }}
+            >
               <button
                 className="btn danger small"
                 onClick={() =>
                   api
                     .removeSource(source.id)
-                    .then(onRemoved)
+                    .then(() => {
+                      removed.current = true;
+                      onRemoved();
+                    })
                     .catch((e) => toast.error(errText(e)))
                 }
               >
                 <Trash2 size={13} /> Remove from language
               </button>
-              <button className="btn small" onClick={() => setConfirmRemove(false)}>
+              <button className="btn small" autoFocus onClick={cancelRemove}>
                 Cancel
               </button>
             </div>
           ) : (
-            <button className="btn small ghost-danger" onClick={() => setConfirmRemove(true)}>
+            <button ref={removeRef} className="btn small ghost-danger" onClick={() => setConfirmRemove(true)}>
               <Trash2 size={13} /> Remove…
             </button>
           )}
@@ -382,6 +512,7 @@ export default function SourcesView({ language, tick, onChanged }: { language: L
   const [busy, setBusy] = useState(0);
   const [dragging, setDragging] = useState(false);
   const dragDepth = useRef(0);
+  const rootRef = useRef<HTMLDivElement>(null);
 
   const load = useCallback(() => {
     api
@@ -505,8 +636,51 @@ export default function SourcesView({ language, tick, onChanged }: { language: L
 
   const selectedSource = sources.find((s) => s.id === selected) ?? null;
 
+  /** Moves the keyboard focus to a card, after the layout has followed the selection. */
+  const focusCard = (id: string) =>
+    requestAnimationFrame(() => {
+      const el = rootRef.current?.querySelector<HTMLElement>(`[data-card="${CSS.escape(id)}"]`);
+      if (!el) return;
+      el.focus({ preventScroll: true });
+      el.scrollIntoView({ block: 'nearest' });
+    });
+
+  const close = () => {
+    const id = selected;
+    setSelected(null);
+    if (id) focusCard(id);
+  };
+
+  // ← and → open the previous and the next source; Escape closes the inspector. Only while the focus is in
+  // this view (or nowhere), and never in a text field or with ⌘, ⌃ or ⌥.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey || inField(e.target)) return;
+      const t = e.target;
+      if (t instanceof Node && t !== document.body && !rootRef.current?.contains(t)) return;
+      if (e.key === 'Escape') {
+        if (!selected) return;
+        e.preventDefault();
+        close();
+        return;
+      }
+      if ((e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') || sources.length === 0) return;
+      const step = e.key === 'ArrowRight' ? 1 : -1;
+      const i = sources.findIndex((x) => x.id === selected);
+      const next = i < 0 ? (step > 0 ? 0 : sources.length - 1) : Math.min(sources.length - 1, Math.max(0, i + step));
+      const id = sources[next].id;
+      if (id === selected) return;
+      e.preventDefault();
+      setSelected(id);
+      focusCard(id);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  });
+
   return (
     <div
+      ref={rootRef}
       className={`board-wrap ${selectedSource ? 'with-inspector wide' : ''}`}
       onDragEnter={(e) => {
         e.preventDefault();
@@ -527,7 +701,7 @@ export default function SourcesView({ language, tick, onChanged }: { language: L
         <div className="toolbar">
           <form className="link-form" onSubmit={submit}>
             <Link2 size={14} className="link-form-icon" />
-            <input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="Paste a link to a tutorial, article, video or PDF" />
+            <input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="Paste a link to a tutorial, article, video or PDF" aria-label="Link" />
             <button className="btn small primary" type="submit" disabled={!url.trim()}>
               <Plus size={13} /> Add link
             </button>
@@ -571,11 +745,15 @@ export default function SourcesView({ language, tick, onChanged }: { language: L
           key={selectedSource.id}
           source={selectedSource}
           tick={tick}
-          onClose={() => setSelected(null)}
+          onClose={close}
           onChanged={changed}
           onRemoved={() => {
+            // The focus goes to the card after the removed one (or before it, at the end).
+            const i = sources.findIndex((x) => x.id === selectedSource.id);
+            const next = sources[i + 1] ?? sources[i - 1];
             setSelected(null);
             changed();
+            if (next) focusCard(next.id);
           }}
         />
       )}

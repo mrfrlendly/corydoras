@@ -382,6 +382,9 @@ export default function ItemInspector({ item, tick, focusOnOpen = false, onClose
                 <input
                   className="small-input"
                   placeholder="tag"
+                  spellCheck={false}
+                  autoCorrect="off"
+                  autoCapitalize="off"
                   aria-label={`Tag of mark r${i + 1}`}
                   value={r.tag}
                   onChange={(e) => {
@@ -443,6 +446,9 @@ export default function ItemInspector({ item, tick, focusOnOpen = false, onClose
               }}
               onBlur={saveIfDirty}
               placeholder="edge, grip, colour"
+              spellCheck={false}
+              autoCorrect="off"
+              autoCapitalize="off"
             />
           </label>
           <label className="field">

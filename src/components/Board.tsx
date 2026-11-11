@@ -688,6 +688,9 @@ export default function Board({
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 placeholder="Search this board"
+                spellCheck={false}
+                autoCorrect="off"
+                autoCapitalize="off"
                 aria-label="Search this board"
               />
               {query && (
@@ -726,6 +729,9 @@ export default function Board({
               value={boardUrl}
               onChange={(e) => setBoardUrl(e.target.value)}
               placeholder="Link of an Are.na channel or a Pinterest board, then Return"
+              spellCheck={false}
+              autoCorrect="off"
+              autoCapitalize="off"
               disabled={!!boardBusy}
               onKeyDown={(e) => e.key === 'Escape' && !e.defaultPrevented && !boardBusy && setBoardUrl(null)}
             />

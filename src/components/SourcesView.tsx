@@ -719,7 +719,7 @@ export default function SourcesView({ language, tick, onChanged }: { language: L
         <div className="toolbar">
           <form className="link-form" onSubmit={submit}>
             <Link2 size={14} className="link-form-icon" />
-            <input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="Paste a link to a tutorial, article, video or PDF" aria-label="Link" />
+            <input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="Paste a link to a tutorial, article, video or PDF" aria-label="Link" spellCheck={false} autoCorrect="off" autoCapitalize="off" />
             <button className="btn small primary" type="submit" disabled={!url.trim()}>
               <Plus size={13} /> Add link
             </button>

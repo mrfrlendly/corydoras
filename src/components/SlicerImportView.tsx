@@ -59,7 +59,7 @@ function ProfilePick({ kind, profiles, value, onValue }: { kind: Kind; profiles:
         {KIND_LABEL[kind]} <span className="muted">· {KIND_HINT[kind]}</span>
       </span>
       <div className="row nowrap" style={{ marginTop: 0 }}>
-        <input className="small-input" placeholder={`Filter ${mine.length} profiles`} value={filter} onChange={(e) => setFilter(e.target.value)} />
+        <input className="small-input" placeholder={`Filter ${mine.length} profiles`} spellCheck={false} autoCorrect="off" autoCapitalize="off" value={filter} onChange={(e) => setFilter(e.target.value)} />
         <select className="select grow-input" value={listed ? value! : ''} onChange={(e) => onValue(e.target.value || null)} aria-label={KIND_LABEL[kind]}>
           <option value="">{kind === 'process' ? 'Choose a profile…' : 'None'}</option>
           {groups.map((g) => (

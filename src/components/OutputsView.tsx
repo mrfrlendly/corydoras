@@ -347,6 +347,9 @@ function OutputCard({
             <input
               className="small-input"
               placeholder="Material, for example PETG clear"
+              spellCheck={false}
+              autoCorrect="off"
+              autoCapitalize="off"
               aria-label="Material"
               value={material}
               onChange={(e) => setMaterial(e.target.value)}

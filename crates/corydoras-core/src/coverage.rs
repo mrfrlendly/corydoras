@@ -229,7 +229,7 @@ pub fn report(lib: &Library, language_key: &str) -> Result<Coverage> {
             "stale-evidence",
             "medium",
             None,
-            format!("The document cites {} reference{} that are no longer on the board", stale.len(), if stale.len() == 1 { "" } else { "s" }),
+            format!("The document cites {} reference{} no longer on the board", stale.len(), if stale.len() == 1 { " that is" } else { "s that are" }),
             "A rule that cites a removed reference has no evidence that an agent can look at.".into(),
             "Click Synthesize now, so that the next version cites the references that exist.".into(),
             stale,

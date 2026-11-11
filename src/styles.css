@@ -3307,8 +3307,14 @@ textarea:focus-visible,
   transition: flex-grow 0.18s var(--ease-out);
 }
 
-.palette-chip:hover {
+.palette-chip:hover,
+.palette-chip:focus-visible {
   flex-grow: 1 !important;
+}
+
+/* The strip clips its overflow, so the ring goes inside the chip. */
+.palette-chip:focus-visible {
+  outline-offset: -2px;
 }
 
 .model-badge {

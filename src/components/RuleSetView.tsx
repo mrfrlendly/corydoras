@@ -150,7 +150,7 @@ function PrintLogPanel({ ruleSet }: { ruleSet: RuleSet }) {
               </option>
             ))}
           </select>
-          <input className="small-input" placeholder="Material" aria-label="Material" value={material} onChange={(e) => setMaterial(e.target.value)} maxLength={120} />
+          <input className="small-input" placeholder="Material" aria-label="Material" spellCheck={false} autoCorrect="off" autoCapitalize="off" value={material} onChange={(e) => setMaterial(e.target.value)} maxLength={120} />
           <select className="select small" value={rule} onChange={(e) => setRule(e.target.value)} aria-label="Rule">
             <option value="">No rule (about the material)</option>
             {limits.map((r) => (

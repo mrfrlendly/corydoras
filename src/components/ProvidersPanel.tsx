@@ -144,7 +144,7 @@ function Editor({
         </label>
         <label className="field span2">
           <span>Address (base URL)</span>
-          <input className="mono" value={d.base_url} onChange={(e) => set({ base_url: e.target.value })} placeholder="https://…/v1" />
+          <input className="mono" value={d.base_url} onChange={(e) => set({ base_url: e.target.value })} placeholder="https://…/v1" spellCheck={false} autoCorrect="off" autoCapitalize="off" />
         </label>
         <label className="field span2">
           <span>Model</span>
@@ -155,6 +155,9 @@ function Editor({
               value={d.model}
               onChange={(e) => set({ model: e.target.value, vision: e.target.value === initial.model ? initial.vision : null })}
               placeholder="Type a model ID, or load the list"
+              spellCheck={false}
+              autoCorrect="off"
+              autoCapitalize="off"
             />
             <button className="btn small" onClick={loadModels} disabled={loadingModels} title="Ask the provider for its models">
               {loadingModels ? <Loader size={13} className="spin" /> : <ListRestart size={13} />} Load models

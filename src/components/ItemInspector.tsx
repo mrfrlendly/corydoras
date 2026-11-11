@@ -1,4 +1,4 @@
-import { PointerEvent, useEffect, useRef, useState } from 'react';
+import { KeyboardEvent as ReactKeyboardEvent, PointerEvent, useEffect, useRef, useState } from 'react';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { api, errText, fileUrl, fmtDate, Item, ItemDetail, RegionInput, shortId } from '../api';
 import { RefreshCw, Trash2, X } from 'lucide-react';
@@ -7,10 +7,22 @@ import { useToast } from './Toast';
 interface Props {
   item: Item;
   tick: number;
+  /** The keyboard opened the inspector: focus its close button. */
+  focusOnOpen?: boolean;
   onClose: () => void;
   onChanged: () => void;
   onRemoved: () => void;
 }
+
+const parseTags = (t: string) =>
+  t
+    .split(',')
+    .map((x) => x.trim())
+    .filter(Boolean);
+
+/** Keys in these places belong to the field. */
+const isField = (t: EventTarget | null) =>
+  t instanceof HTMLElement && (t.isContentEditable || !!t.closest('input, textarea, select'));
 
 type Draft = RegionInput & { key: string };
 
@@ -51,7 +63,7 @@ function AnalysisBlock({ analysis, model }: { analysis: Record<string, unknown>;
   );
 }
 
-export default function ItemInspector({ item, tick, onClose, onChanged, onRemoved }: Props) {
+export default function ItemInspector({ item, tick, focusOnOpen = false, onClose, onChanged, onRemoved }: Props) {
   const toast = useToast();
   const [detail, setDetail] = useState<ItemDetail | null>(null);
   const [tags, setTags] = useState(item.tags.join(', '));
@@ -63,6 +75,15 @@ export default function ItemInspector({ item, tick, onClose, onChanged, onRemove
   const [confirmRemove, setConfirmRemove] = useState(false);
   const [drawing, setDrawing] = useState<{ x0: number; y0: number; x: number; y: number } | null>(null);
   const frameRef = useRef<HTMLDivElement>(null);
+  const closeRef = useRef<HTMLButtonElement>(null);
+  const removeRef = useRef<HTMLButtonElement>(null);
+  const refocusRemove = useRef(false);
+
+  // Tags and note save when the field loses focus, and when the inspector closes
+  // or shows another item (it is keyed by item), so typed text is never lost.
+  const dirty = useRef(false);
+  const latest = useRef({ tags, note, weight, anti, onChanged });
+  latest.current = { tags, note, weight, anti, onChanged };
 
   useEffect(() => {
     api
@@ -76,18 +97,93 @@ export default function ItemInspector({ item, tick, onClose, onChanged, onRemove
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [item.id, tick, item.analysis_status, toast]);
 
+  useEffect(() => {
+    if (focusOnOpen) closeRef.current?.focus();
+    // Only when this item opens.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(
+    () => () => {
+      if (!dirty.current) return;
+      dirty.current = false;
+      const l = latest.current;
+      api
+        .updateItem(item.id, parseTags(l.tags), l.note, l.weight, l.anti)
+        .then(() => l.onChanged())
+        .catch((e) => toast.error(errText(e)));
+    },
+    // The save on close reads the latest values from the ref.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [],
+  );
+
   const saveAnnotation = async (over?: Partial<{ weight: number; anti: boolean }>) => {
+    dirty.current = false;
+    const l = latest.current;
     try {
-      const tagList = tags
-        .split(',')
-        .map((t) => t.trim())
-        .filter(Boolean);
-      await api.updateItem(item.id, tagList, note, over?.weight ?? weight, over?.anti ?? anti);
+      await api.updateItem(item.id, parseTags(l.tags), l.note, over?.weight ?? l.weight, over?.anti ?? l.anti);
       onChanged();
     } catch (e) {
+      dirty.current = true;
       toast.error(errText(e));
     }
   };
+  const saveIfDirty = () => {
+    if (dirty.current) saveAnnotation();
+  };
+
+  const setWeightNow = (w: number) => {
+    if (w === latest.current.weight) return;
+    setWeight(w);
+    latest.current.weight = w;
+    saveAnnotation({ weight: w });
+  };
+
+  // 1 to 5 set the weight, outside text fields.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey || isField(e.target)) return;
+      if (!/^[1-5]$/.test(e.key)) return;
+      e.preventDefault();
+      setWeightNow(Number(e.key));
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  });
+
+  // Back to "Remove…" after its confirmation is cancelled.
+  useEffect(() => {
+    if (!confirmRemove && refocusRemove.current) {
+      refocusRemove.current = false;
+      removeRef.current?.focus();
+    }
+  }, [confirmRemove]);
+
+  const cancelRemove = () => {
+    refocusRemove.current = true;
+    setConfirmRemove(false);
+  };
+
+  // Escape: cancels the remove confirmation; in a field it leaves the field; elsewhere it closes.
+  const onKeyDown = (e: ReactKeyboardEvent<HTMLElement>) => {
+    if (e.key !== 'Escape' || e.defaultPrevented) return;
+    e.preventDefault();
+    if (confirmRemove) {
+      cancelRemove();
+    } else if (isField(e.target)) {
+      (e.target as HTMLElement).blur();
+      closeRef.current?.focus();
+    } else {
+      onClose();
+    }
+  };
+
+  const reanalyze = () =>
+    api
+      .reanalyzeItem(item.id)
+      .then(onChanged)
+      .catch((e) => toast.error(errText(e)));
 
   const saveRegions = async () => {
     try {
@@ -154,23 +250,35 @@ export default function ItemInspector({ item, tick, onClose, onChanged, onRemove
 
   const src = item.source;
   const isWeb = !!src && /^https?:\/\//.test(src);
+  const statusLine =
+    item.analysis_status === 'done'
+      ? `Analyzed${detail?.analysis_model ? ` by ${detail.analysis_model}` : ''}.`
+      : item.analysis_status === 'analyzing'
+        ? 'The model reads this image now.'
+        : 'Waiting for analysis.';
 
   return (
-    <aside className="inspector">
+    <aside className="inspector" aria-labelledby="insp-title" onKeyDown={onKeyDown}>
       <div className="insp-head">
         <div>
           <div className="eyebrow">Item {shortId(item.id)}</div>
-          <div className="insp-name" title={item.original_name}>
+          <div className="insp-name" id="insp-title" title={item.original_name}>
             {item.original_name}
           </div>
         </div>
-        <button className="icon-btn" onClick={onClose} title="Close">
+        <button ref={closeRef} className="icon-btn" onClick={onClose} title="Close" aria-label="Close item">
           <X size={15} />
         </button>
       </div>
 
       <div className="insp-scroll">
-        <div className="frame" ref={frameRef}>
+        <div
+          className="frame"
+          ref={frameRef}
+          // A tall image would push everything below the fold: cap its height by narrowing the
+          // frame (the marks use the frame's box, so the image must fill it exactly).
+          style={{ width: `min(100%, calc(40vh * ${Math.max(1, item.width)} / ${Math.max(1, item.height)}))` }}
+        >
           <img src={fileUrl(item.file_rel)} alt={item.original_name} draggable={false} />
           <div className="frame-overlay" onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp}>
             {regions.map((r, i) => (
@@ -190,9 +298,49 @@ export default function ItemInspector({ item, tick, onClose, onChanged, onRemove
             )}
           </div>
         </div>
-        <div className="frame-hint">
-          Drag on the image to mark a detail. {item.width} × {item.height} px · added {fmtDate(item.added_at)}
-        </div>
+        <div className="frame-hint">Drag on the image to mark a detail · ← → next image · 1–5 weight · Esc closes</div>
+
+        {item.analysis_status === 'error' ? (
+          <div className="insp-status">
+            <div className="error-box">{item.analysis_error || 'The analysis failed.'}</div>
+            <button className="btn small" onClick={reanalyze}>
+              <RefreshCw size={13} /> Analyze again
+            </button>
+          </div>
+        ) : (
+          <div className="insp-status muted small">{statusLine}</div>
+        )}
+
+        <section className="insp-section">
+          <div className="field">
+            <span>Weight</span>
+            <div className="weights" role="group" aria-label="Weight">
+              {[1, 2, 3, 4, 5].map((w) => (
+                <button
+                  key={w}
+                  className={`weight-btn ${w < weight ? 'on' : ''} ${w === weight ? 'current' : ''}`}
+                  aria-pressed={w === weight}
+                  aria-label={`Weight ${w} of 5`}
+                  onClick={() => setWeightNow(w)}
+                >
+                  {w}
+                </button>
+              ))}
+            </div>
+          </div>
+          <label className="check">
+            <input
+              type="checkbox"
+              checked={anti}
+              onChange={(e) => {
+                setAnti(e.target.checked);
+                latest.current.anti = e.target.checked;
+                saveAnnotation({ anti: e.target.checked });
+              }}
+            />
+            Not this — the language must avoid what this image shows
+          </label>
+        </section>
 
         {regions.length > 0 && (
           <section className="insp-section">
@@ -203,6 +351,7 @@ export default function ItemInspector({ item, tick, onClose, onChanged, onRemove
                 <input
                   className="small-input"
                   placeholder="tag"
+                  aria-label={`Tag of mark r${i + 1}`}
                   value={r.tag}
                   onChange={(e) => {
                     setRegions((rs) => rs.map((x) => (x.key === r.key ? { ...x, tag: e.target.value } : x)));
@@ -212,6 +361,7 @@ export default function ItemInspector({ item, tick, onClose, onChanged, onRemove
                 <input
                   className="grow-input"
                   placeholder="What matters here?"
+                  aria-label={`Note of mark r${i + 1}`}
                   value={r.note}
                   onChange={(e) => {
                     setRegions((rs) => rs.map((x) => (x.key === r.key ? { ...x, note: e.target.value } : x)));
@@ -221,6 +371,7 @@ export default function ItemInspector({ item, tick, onClose, onChanged, onRemove
                 <button
                   className="icon-btn"
                   title="Remove mark"
+                  aria-label={`Remove mark r${i + 1}`}
                   onClick={() => {
                     setRegions((rs) => rs.filter((x) => x.key !== r.key));
                     setRegionsDirty(true);
@@ -253,44 +404,42 @@ export default function ItemInspector({ item, tick, onClose, onChanged, onRemove
           <h3>Annotation</h3>
           <label className="field">
             <span>Tags (comma separated)</span>
-            <input value={tags} onChange={(e) => setTags(e.target.value)} placeholder="edge, grip, colour" />
+            <input
+              value={tags}
+              onChange={(e) => {
+                setTags(e.target.value);
+                dirty.current = true;
+              }}
+              onBlur={saveIfDirty}
+              placeholder="edge, grip, colour"
+            />
           </label>
           <label className="field">
             <span>Note</span>
-            <textarea rows={3} value={note} onChange={(e) => setNote(e.target.value)} placeholder="Why is this image here?" />
-          </label>
-          <div className="field">
-            <span>Weight</span>
-            <div className="weights">
-              {[1, 2, 3, 4, 5].map((w) => (
-                <button
-                  key={w}
-                  className={`weight-btn ${w <= weight ? 'on' : ''}`}
-                  onClick={() => {
-                    setWeight(w);
-                    saveAnnotation({ weight: w });
-                  }}
-                >
-                  {w}
-                </button>
-              ))}
-            </div>
-          </div>
-          <label className="check">
-            <input
-              type="checkbox"
-              checked={anti}
+            <textarea
+              rows={3}
+              value={note}
               onChange={(e) => {
-                setAnti(e.target.checked);
-                saveAnnotation({ anti: e.target.checked });
+                setNote(e.target.value);
+                dirty.current = true;
               }}
+              onBlur={saveIfDirty}
+              placeholder="Why is this image here?"
             />
-            Not this — the language must avoid what this image shows
           </label>
-          {(tags !== item.tags.join(', ') || note !== item.note) && (
+        </section>
+
+        <section className="insp-section">
+          <h3>Analysis</h3>
+          {detail?.analysis ? (
+            <AnalysisBlock analysis={detail.analysis} model={detail.analysis_model} />
+          ) : (
+            <div className="muted small">No analysis yet.</div>
+          )}
+          {item.analysis_status !== 'error' && (
             <div className="row">
-              <button className="btn primary small" onClick={() => saveAnnotation()}>
-                Save annotation
+              <button className="btn small" onClick={reanalyze}>
+                <RefreshCw size={13} /> Analyze again
               </button>
             </div>
           )}
@@ -356,28 +505,8 @@ export default function ItemInspector({ item, tick, onClose, onChanged, onRemove
           ) : (
             <div className="muted small">No source recorded.</div>
           )}
-        </section>
-
-        <section className="insp-section">
-          <h3>
-            Analysis <span className={`dot status-${item.analysis_status}`} />
-          </h3>
-          {item.analysis_status === 'error' && <div className="error-box">{item.analysis_error}</div>}
-          {item.analysis_status === 'pending' && <div className="muted small">In the queue.</div>}
-          {item.analysis_status === 'analyzing' && <div className="muted small">The model reads this image now.</div>}
-          {detail?.analysis && <AnalysisBlock analysis={detail.analysis} model={detail.analysis_model} />}
-          <div className="row">
-            <button
-              className="btn small"
-              onClick={() =>
-                api
-                  .reanalyzeItem(item.id)
-                  .then(onChanged)
-                  .catch((e) => toast.error(errText(e)))
-              }
-            >
-              <RefreshCw size={13} /> Analyze again
-            </button>
+          <div className="muted small insp-meta">
+            {item.width} × {item.height} px · added {fmtDate(item.added_at)}
           </div>
         </section>
 
@@ -386,22 +515,24 @@ export default function ItemInspector({ item, tick, onClose, onChanged, onRemove
             <div className="row">
               <button
                 className="btn danger small"
-                onClick={() =>
+                onClick={() => {
+                  // A removed item has no annotation to save.
+                  dirty.current = false;
                   api
                     .removeItem(item.id)
                     .then(onRemoved)
-                    .catch((e) => toast.error(errText(e)))
-                }
+                    .catch((e) => toast.error(errText(e)));
+                }}
               >
                 <Trash2 size={13} /> Remove from language
               </button>
-              <button className="btn small" onClick={() => setConfirmRemove(false)}>
+              <button className="btn small" onClick={cancelRemove} autoFocus>
                 Cancel
               </button>
               <span className="muted small">The file moves to the _removed folder.</span>
             </div>
           ) : (
-            <button className="btn small ghost-danger" onClick={() => setConfirmRemove(true)}>
+            <button ref={removeRef} className="btn small ghost-danger" onClick={() => setConfirmRemove(true)}>
               <Trash2 size={13} /> Remove…
             </button>
           )}

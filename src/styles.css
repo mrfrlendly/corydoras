@@ -1091,7 +1091,7 @@ textarea {
 .mark-label {
   font-family: var(--mono);
   font-size: 11px;
-  color: var(--accent);
+  color: var(--ink-2);
   width: 20px;
 }
 
@@ -3433,4 +3433,36 @@ textarea:focus-visible,
   .palette-chip {
     transition: none;
   }
+}
+
+/* ---- WP-B: collecting ---- */
+
+/* Weight: the lower steps soft, the chosen step filled (two filled buttons read as two choices). */
+.weight-btn.on {
+  background: var(--accent-soft);
+  border-color: transparent;
+  color: var(--accent);
+}
+
+.weight-btn.current {
+  background: var(--accent-fill);
+  border-color: var(--accent-fill);
+  color: var(--accent-ink);
+}
+
+/* Inspector: a tall image is narrowed (see ItemInspector), and stays centred. */
+.frame {
+  margin: 0 auto;
+}
+
+.insp-status {
+  margin-top: 12px;
+}
+
+.insp-status .error-box {
+  margin-bottom: 8px;
+}
+
+.insp-meta {
+  margin-top: 4px;
 }

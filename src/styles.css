@@ -3474,8 +3474,9 @@ textarea:focus-visible,
   outline-offset: -2px;
 }
 
-/* Versions: the second step of Restore. */
-.version-confirm {
+/* Versions and proposals: the second step of Restore and Reject. */
+.version-confirm,
+.proposal-confirm {
   display: inline-flex;
   align-items: center;
   gap: 8px;

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Check, X } from 'lucide-react';
 import { api, errText, fmtDate, Language, Proposal, ProposalChange } from '../api';
 import { useToast } from './Toast';
@@ -18,11 +18,28 @@ function short(v: unknown): string {
   return s.length > 160 ? `${s.slice(0, 157)}…` : s;
 }
 
+const SINGULAR = new Map([
+  ['families', 'family'],
+  ['measures', 'measure'],
+  ['rules', 'rule'],
+]);
+
+/** A JSON Pointer as words: /families/blade-field/measures/blade pitch/value -> blade-field › blade pitch › value. */
+function readablePath(path: string): string {
+  const parts = path.split('/').filter(Boolean);
+  // "-" appends to an array.
+  const named = parts.map((p, i) => (p === '-' ? `new ${SINGULAR.get(parts[i - 1]) ?? 'item'}` : p));
+  const words = named.filter((p) => !SINGULAR.has(p));
+  return (words.length > 0 ? words : named).join(' › ') || path;
+}
+
 function ChangeRow({ c }: { c: ProposalChange }) {
   return (
     <li className="proposal-change">
       <span className={`proposal-op op-${c.op}`}>{c.op}</span>
-      <code className="mono">{c.path}</code>
+      <code className="mono" title={c.path}>
+        {readablePath(c.path)}
+      </code>
       <div className="proposal-values">
         {c.op !== 'add' && <span className="proposal-before mono">{short(c.before)}</span>}
         {c.op === 'replace' && <span aria-hidden> → </span>}
@@ -36,6 +53,10 @@ export default function ProposalsPanel({ language, openCount, tick, onAccepted }
   const toast = useToast();
   const [items, setItems] = useState<Proposal[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
+  // The proposal whose Reject waits for a second click.
+  const [confirmReject, setConfirmReject] = useState<string | null>(null);
+  // The proposal whose "Reject…" gets the focus back after Keep.
+  const refocusReject = useRef<string | null>(null);
 
   useEffect(() => {
     api
@@ -58,11 +79,17 @@ export default function ProposalsPanel({ language, openCount, tick, onAccepted }
         toast.info('Proposal rejected.');
       }
       setItems((list) => list.filter((x) => x.id !== p.id));
+      setConfirmReject(null);
     } catch (e) {
       toast.error(errText(e));
     } finally {
       setBusy(null);
     }
+  };
+
+  const keep = (id: string) => {
+    refocusReject.current = id;
+    setConfirmReject(null);
   };
 
   return (
@@ -81,12 +108,36 @@ export default function ProposalsPanel({ language, openCount, tick, onAccepted }
               </div>
             </div>
             <div className="spacer" />
-            <button className="btn small" onClick={() => decide(p, false)} disabled={busy !== null}>
-              <X size={13} /> Reject
-            </button>
-            <button className="btn small primary" onClick={() => decide(p, true)} disabled={busy !== null || p.problem !== null}>
-              <Check size={13} /> Accept as new version
-            </button>
+            {confirmReject === p.id ? (
+              <span className="proposal-confirm" onKeyDown={(e) => e.key === 'Escape' && busy === null && keep(p.id)}>
+                <button className="btn small danger" onClick={() => decide(p, false)} disabled={busy !== null}>
+                  <X size={13} /> Reject
+                </button>
+                <button className="btn small" onClick={() => keep(p.id)} disabled={busy !== null} autoFocus>
+                  Keep
+                </button>
+              </span>
+            ) : (
+              <>
+                <button
+                  className="btn small"
+                  onClick={() => setConfirmReject(p.id)}
+                  disabled={busy !== null}
+                  title="Reject this proposal. The language does not change."
+                  ref={(el) => {
+                    if (el && refocusReject.current === p.id) {
+                      refocusReject.current = null;
+                      el.focus();
+                    }
+                  }}
+                >
+                  <X size={13} /> Reject…
+                </button>
+                <button className="btn small primary" onClick={() => decide(p, true)} disabled={busy !== null || p.problem !== null}>
+                  <Check size={13} /> Accept as new version
+                </button>
+              </>
+            )}
           </header>
           {p.rationale && <p className="proposal-rationale">{p.rationale}</p>}
           {!p.problem && p.new_notes.length > 0 && (

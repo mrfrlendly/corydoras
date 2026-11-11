@@ -1263,11 +1263,15 @@ textarea {
 
 .tokens {
   position: sticky;
-  top: 0;
+  /* Under the sticky document toolbar; DocumentView measures its height. */
+  top: calc(var(--doc-bar, 52px) + 12px);
+  max-height: calc(100cqh - var(--doc-bar, 52px));
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .tokens .json {
-  max-height: 60vh;
+  max-height: none;
 }
 
 .cmf {
@@ -3295,7 +3299,7 @@ textarea:focus-visible,
 
 .gap-suggestion::before {
   content: '→ ';
-  color: var(--accent);
+  color: var(--ink-3);
 }
 
 .gap-ids code {
@@ -3433,4 +3437,94 @@ textarea:focus-visible,
   .palette-chip {
     transition: none;
   }
+}
+
+/* ---- WP-C: reading ---- */
+
+/* Document: the toolbar stays at the top while the document scrolls; the side column scrolls on its own. */
+.doc {
+  container-type: size;
+}
+
+.doc > .toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  margin: 0 -28px 16px;
+  padding-left: 28px;
+  padding-right: 28px;
+  background: var(--bg);
+  border-bottom: 1px solid var(--rule);
+  /* WebKit insets a sticky bar by the padding-top of its scroller: cover the band above it. */
+  box-shadow: 0 -24px 0 var(--bg);
+}
+
+.tokens-json > summary {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-2);
+  padding: 2px 0;
+}
+
+.tokens-json[open] > summary {
+  margin-bottom: 8px;
+}
+
+.tokens-json > summary:focus-visible {
+  outline-offset: -2px;
+}
+
+/* Versions and proposals: the second step of Restore and Reject. */
+.version-confirm,
+.proposal-confirm {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Insight: groups that open and close, reference ids that lead to the Board. */
+.gap-toggle {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  padding: 0;
+  border: 0;
+  background: none;
+}
+
+.gap-toggle:hover {
+  color: var(--ink);
+}
+
+.gap-chevron {
+  flex: none;
+  align-self: center;
+  color: var(--ink-3);
+  transition: transform 0.15s var(--ease-out);
+}
+
+.gap-toggle[aria-expanded='true'] .gap-chevron {
+  transform: rotate(90deg);
+}
+
+.gap-more {
+  display: block;
+  margin-top: 6px;
+}
+
+.id-link {
+  font: 11px var(--mono);
+  padding: 0 4px;
+  border: 0;
+  border-radius: 3px;
+  background: var(--panel-2);
+  color: var(--ink);
+}
+
+.id-link:hover {
+  color: var(--accent);
+}
+
+.gap-ids .id-link {
+  margin-right: 5px;
 }

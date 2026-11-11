@@ -281,7 +281,7 @@ h3 {
 }
 
 .side-meta.warn {
-  color: var(--accent);
+  color: var(--warn);
 }
 
 .side-empty {
@@ -390,6 +390,15 @@ h3 {
   border-color: var(--accent-fill);
 }
 
+/* A disabled primary is grey, not a faded orange that looks like it is loading. */
+.btn.primary:disabled {
+  background: var(--panel-2);
+  border-color: var(--rule);
+  color: var(--ink-3);
+  opacity: 1;
+  filter: none;
+}
+
 .btn.danger {
   background: var(--err-fill);
   border-color: var(--err-fill);
@@ -428,12 +437,15 @@ h3 {
   border: 0;
   background: none;
   padding: 0;
-  color: var(--accent);
+  color: var(--ink);
   text-align: left;
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--ink) 30%, transparent);
+  text-underline-offset: 2px;
 }
 
 .link-btn:hover {
-  text-decoration: underline;
+  text-decoration-color: currentColor;
 }
 
 input:not([type='checkbox']):not([type='radio']),
@@ -612,9 +624,16 @@ textarea {
 
 .notice {
   padding: 10px 12px;
-  border-radius: 8px;
-  background: var(--accent-soft);
+  border-radius: var(--radius-ctl);
+  background: var(--panel-2);
+  color: var(--ink);
   margin-bottom: 12px;
+}
+
+/* A notice that asks for attention (paused queue, model change). */
+.notice.warn {
+  background: color-mix(in srgb, var(--warn) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--warn) 35%, transparent);
 }
 
 .error-box {
@@ -679,16 +698,17 @@ textarea {
 }
 
 .seg button.active {
-  background: var(--ink);
-  color: var(--panel);
+  background: color-mix(in srgb, var(--ink) 12%, var(--panel));
+  color: var(--ink);
+  font-weight: 500;
 }
 
 .tag-pill {
   margin-left: 6px;
   padding: 1px 6px;
   border-radius: 4px;
-  background: var(--accent-soft);
-  color: var(--accent);
+  background: var(--panel-2);
+  color: var(--ink-2);
   font-size: 11px;
 }
 
@@ -1779,12 +1799,12 @@ button.chip {
 /* ---------------------------------------------------------------- Rule sets */
 
 .always-pill {
-  padding: 0 6px;
+  padding: 0;
   border-radius: 4px;
-  background: var(--ink);
-  color: var(--panel);
+  background: none;
+  color: var(--ink-3);
   font-size: 11px;
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .rtable th:nth-child(1) {
@@ -2347,8 +2367,8 @@ svg.lucide {
 }
 
 .chip-accent {
-  color: var(--accent);
-  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  color: var(--ink-2);
+  border-color: var(--rule);
 }
 
 .chip {
@@ -3027,7 +3047,7 @@ textarea:focus-visible,
   color: var(--err);
 }
 .finding-warn .finding-verdict {
-  color: var(--accent);
+  color: var(--warn);
 }
 
 .finding-body {

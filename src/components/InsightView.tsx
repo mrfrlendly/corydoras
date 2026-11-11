@@ -6,6 +6,9 @@ import { useToast } from './Toast';
 interface Props {
   language: Language;
   tick: number;
+  onBoard?: (idPrefix: string | null) => void;
+  onDocument?: () => void;
+  onActivity?: () => void;
 }
 
 const SEVERITY: { id: Gap['severity']; title: string; hint: string }[] = [

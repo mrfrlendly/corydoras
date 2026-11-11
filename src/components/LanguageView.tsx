@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent, useEffect, useRef, useState } from 'react';
 import { api, CurrentJob, errText, Estimate, fmtEstimate, Language, LanguageStatus, OtherModelView, Project, shortStatus, StatusReport, VersionInfo } from '../api';
 import { BookOpen, ClipboardCheck, FileText, History, LayoutGrid, Pencil, RefreshCw, ScanSearch, Sparkles, X } from 'lucide-react';
 import Board from './Board';
@@ -33,6 +33,22 @@ interface Props {
   onChanged: () => void;
   onSettings: () => void;
   onActivity: () => void;
+  /** Manual queue mode: new jobs wait for Run queue. */
+  manual?: boolean;
+}
+
+/** A pass that asks before it starts: every reference, or the analyses of another model. */
+type ConfirmPass = 'all' | 'other-model';
+
+/** The banner of another model is hidden while this stays the same. */
+const otherSig = (o: OtherModelView) => `${o.model}|${o.other.images + o.other.sources}`;
+
+function loadHiddenSig(languageId: string): string | null {
+  try {
+    return localStorage.getItem(`cory.otherModelHidden.${languageId}`);
+  } catch {
+    return null;
+  }
 }
 
 function StatusChip({
@@ -110,10 +126,23 @@ function StatusChip({
       </button>
     );
   }
-  return <span className="chip">Up to date</span>;
+  return <span className="chip chip-ok">Up to date</span>;
 }
 
-export default function LanguageView({ language, languages, projects, status, worker, current, paused, tick, onChanged, onSettings, onActivity }: Props) {
+export default function LanguageView({
+  language,
+  languages,
+  projects,
+  status,
+  worker,
+  current,
+  paused,
+  tick,
+  onChanged,
+  onSettings,
+  onActivity,
+  manual = false,
+}: Props) {
   const toast = useToast();
   const [tab, setTab] = useState<Tab>('board');
   const [docVersion, setDocVersion] = useState<number | null>(null);
@@ -123,15 +152,27 @@ export default function LanguageView({ language, languages, projects, status, wo
   const [base, setBase] = useState(language.base_id ?? '');
   const [baseVersion, setBaseVersion] = useState<number | null>(language.base_version);
   const [baseVersions, setBaseVersions] = useState<VersionInfo[]>([]);
-  const [confirmAll, setConfirmAll] = useState(false);
-  const [allEstimate, setAllEstimate] = useState<Estimate | null>(null);
+  const [confirm, setConfirm] = useState<ConfirmPass | null>(null);
+  const [est, setEst] = useState<Estimate | null>(null);
+  const [estFailed, setEstFailed] = useState(false);
   const [queueEstimate, setQueueEstimate] = useState<Estimate | null>(null);
-  const [docEstimate, setDocEstimate] = useState<Estimate | null>(null);
   const [other, setOther] = useState<OtherModelView | null>(null);
-  const [otherEstimate, setOtherEstimate] = useState<Estimate | null>(null);
+  const [hiddenSig, setHiddenSig] = useState<string | null>(() => loadHiddenSig(language.id));
+  // An Insight link asks the Board to show one reference.
+  const [focusItem, setFocusItem] = useState<string | null>(null);
+  const confirmFrom = useRef<HTMLElement | null>(null);
+  const askSeq = useRef(0);
+  const editBtnRef = useRef<HTMLButtonElement>(null);
+  const refocusEdit = useRef(false);
+  const tabRefs = useRef<Partial<Record<Tab, HTMLButtonElement | null>>>({});
 
   const baseLanguage = languages.find((l) => l.id === language.base_id) ?? null;
   const waiting = status ? status.pending_items > 0 || status.synth_due_in !== null : false;
+  const refCount = language.item_count + language.source_count;
+  const otherCount = other ? other.other.images + other.other.sources : 0;
+  const showOther = !!other && otherSig(other) !== hiddenSig;
+  // Manual mode: the worker says so while it waits for Run queue.
+  const manualWait = manual || (worker?.state === 'paused' && worker.message.startsWith('Manual'));
 
   useEffect(() => {
     setName(language.name);
@@ -177,22 +218,102 @@ export default function LanguageView({ language, languages, projects, status, wo
     let alive = true;
     api
       .otherModel(language.id)
-      .then((o) => {
-        if (!alive) return;
-        const stale = o.other.images + o.other.sources > 0;
-        setOther(stale ? o : null);
-        if (stale) {
-          api
-            .estimate(language.id, 'other-model')
-            .then((e) => alive && setOtherEstimate(e))
-            .catch(() => {});
-        }
-      })
+      .then((o) => alive && setOther(o.other.images + o.other.sources > 0 ? o : null))
       .catch(() => {});
     return () => {
       alive = false;
     };
   }, [language.id, tick]);
+
+  // A confirm for analyses that are gone (all were redone) closes.
+  useEffect(() => {
+    if (confirm === 'other-model' && !other) setConfirm(null);
+  }, [confirm, other]);
+
+  // Escape cancels the confirm bar, before any other Escape (the inspector, a form).
+  useEffect(() => {
+    if (!confirm) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape' || e.defaultPrevented) return;
+      e.preventDefault();
+      closeConfirm();
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+    // closeConfirm only uses refs and state setters.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [confirm]);
+
+  // Back to "Edit details" after the form closes from the keyboard.
+  useEffect(() => {
+    if (!editing && refocusEdit.current) {
+      refocusEdit.current = false;
+      editBtnRef.current?.focus();
+    }
+  }, [editing]);
+
+  const ask = (p: ConfirmPass, e: ReactMouseEvent<HTMLElement>) => {
+    confirmFrom.current = e.currentTarget;
+    const seq = ++askSeq.current;
+    setConfirm(p);
+    setEst(null);
+    setEstFailed(false);
+    api
+      .estimate(language.id, p)
+      .then((x) => seq === askSeq.current && setEst(x))
+      .catch(() => seq === askSeq.current && setEstFailed(true));
+  };
+
+  const closeConfirm = () => {
+    askSeq.current++;
+    setConfirm(null);
+    const from = confirmFrom.current;
+    confirmFrom.current = null;
+    if (from && from.isConnected) from.focus();
+  };
+
+  const hideOther = () => {
+    if (!other) return;
+    const sig = otherSig(other);
+    setHiddenSig(sig);
+    try {
+      localStorage.setItem(`cory.otherModelHidden.${language.id}`, sig);
+    } catch {
+      // Storage is a convenience only.
+    }
+  };
+
+  const goTab = (t: Tab) => {
+    setTab(t);
+    setFocusItem(null);
+  };
+
+  const onTabKey = (e: ReactKeyboardEvent<HTMLElement>) => {
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    const i = TABS.findIndex((x) => x.id === tab);
+    const n =
+      e.key === 'ArrowRight'
+        ? (i + 1) % TABS.length
+        : e.key === 'ArrowLeft'
+          ? (i - 1 + TABS.length) % TABS.length
+          : e.key === 'Home'
+            ? 0
+            : e.key === 'End'
+              ? TABS.length - 1
+              : -1;
+    if (n < 0) return;
+    e.preventDefault();
+    goTab(TABS[n].id);
+    tabRefs.current[TABS[n].id]?.focus();
+  };
+
+  const cancelEdit = () => {
+    setEditing(false);
+    setName(language.name);
+    setDescription(language.description);
+    setBase(language.base_id ?? '');
+    setBaseVersion(language.base_version);
+  };
 
   const saveMeta = async () => {
     try {
@@ -213,17 +334,8 @@ export default function LanguageView({ language, languages, projects, status, wo
     }
   };
 
-  const askAnalyzeAll = () => {
-    setConfirmAll(true);
-    setAllEstimate(null);
-    api
-      .estimate(language.id, 'all')
-      .then(setAllEstimate)
-      .catch(() => {});
-  };
-
   const analyzeAll = async () => {
-    setConfirmAll(false);
+    closeConfirm();
     try {
       const n = await api.reanalyzeAll(language.id);
       toast.info(`${n} item${n === 1 ? '' : 's'} queued for analysis.${language.base_id ? '' : ' A new version follows.'}`);
@@ -234,6 +346,7 @@ export default function LanguageView({ language, languages, projects, status, wo
   };
 
   const analyzeOther = async () => {
+    closeConfirm();
     try {
       const n = await api.reanalyzeOtherModel(language.id);
       toast.info(`${n} item${n === 1 ? '' : 's'} queued for analysis with ${other?.model ?? 'the current model'}.`);
@@ -247,7 +360,13 @@ export default function LanguageView({ language, languages, projects, status, wo
   const synthNow = async () => {
     try {
       await api.synthesizeNow(language.id);
-      toast.info(`The synthesis pass starts after the item analysis finishes.${docEstimate ? ` It uses ${fmtEstimate(docEstimate)}.` : ''}`);
+      toast.info(
+        status && status.pending_items > 0
+          ? 'The new version is written after the item analysis finishes.'
+          : language.latest_version
+            ? `If nothing changed since v${language.latest_version}, no call is made.`
+            : 'The first version is written next.',
+      );
       onChanged();
     } catch (e) {
       toast.error(errText(e));
@@ -259,12 +378,42 @@ export default function LanguageView({ language, languages, projects, status, wo
       <header className="lang-head" data-tauri-drag-region>
         <div className="lang-title" data-tauri-drag-region>
           {editing ? (
-            <div className="meta-edit">
-              <input className="title-input" value={name} onChange={(e) => setName(e.target.value)} placeholder="Name" autoFocus />
+            <form
+              className="meta-edit"
+              onSubmit={(e) => {
+                e.preventDefault();
+                saveMeta();
+              }}
+              onKeyDown={(e) => {
+                if (e.defaultPrevented) return;
+                if (e.key === 'Escape') {
+                  e.preventDefault();
+                  refocusEdit.current = true;
+                  cancelEdit();
+                } else if (e.key === 'Enter' && ((e.target as HTMLElement).tagName !== 'TEXTAREA' || e.metaKey || e.ctrlKey)) {
+                  refocusEdit.current = true;
+                }
+              }}
+            >
+              <input
+                className="title-input"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="Name"
+                aria-label="Name"
+                autoFocus
+              />
               <textarea
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+                    e.preventDefault();
+                    e.currentTarget.form?.requestSubmit();
+                  }
+                }}
                 placeholder="Describe the intent of this language in one or two sentences. The analysis reads this text."
+                aria-label="Description"
                 rows={2}
               />
               <div className="row base-row">
@@ -305,21 +454,14 @@ export default function LanguageView({ language, languages, projects, status, wo
                 </p>
               )}
               <div className="row">
-                <button className="btn primary small" onClick={saveMeta}>
+                <button className="btn primary small" type="submit">
                   Save
                 </button>
-                <button
-                  className="btn small"
-                  onClick={() => {
-                    setEditing(false);
-                    setName(language.name);
-                    setDescription(language.description);
-                  }}
-                >
+                <button className="btn small" type="button" onClick={cancelEdit}>
                   Cancel
                 </button>
               </div>
-            </div>
+            </form>
           ) : (
             <>
               <div className="eyebrow">
@@ -371,45 +513,27 @@ export default function LanguageView({ language, languages, projects, status, wo
             </span>
           )}
           {!editing && (
-            <button className="btn small" onClick={() => setEditing(true)} title="Edit the name, the description and the base language">
-              <Pencil size={13} /> Edit
-            </button>
-          )}
-          {confirmAll ? (
-            <>
-              <button className="btn small primary" onClick={analyzeAll} title="Uses one model call for each item">
-                Analyze {language.item_count + language.source_count} again{allEstimate ? ` · ${fmtEstimate(allEstimate)}` : ''}
-              </button>
-              <button className="btn small" onClick={() => setConfirmAll(false)}>
-                Cancel
-              </button>
-            </>
-          ) : (
-            <button
-              className="btn small"
-              onClick={askAnalyzeAll}
-              disabled={language.item_count + language.source_count === 0}
-              title="Analyze every image and source again. The next step shows what it uses."
-            >
-              <RefreshCw size={13} /> Analyze all again
+            <button ref={editBtnRef} className="btn small" onClick={() => setEditing(true)} title="Edit the name, the description and the base language">
+              <Pencil size={13} /> Edit details
             </button>
           )}
           <button
             className="btn small"
+            onClick={(e) => ask('all', e)}
+            disabled={refCount === 0}
+            aria-expanded={confirm === 'all'}
+            title="Analyze every image and source again. The next step shows what it uses."
+          >
+            <RefreshCw size={13} /> Analyze all again
+          </button>
+          <button
+            className="btn small"
             onClick={synthNow}
-            onMouseEnter={() =>
-              !language.base_id &&
-              language.item_count > 0 &&
-              api
-                .estimate(language.id, 'document')
-                .then(setDocEstimate)
-                .catch(() => {})
-            }
             disabled={language.item_count === 0 || !!language.base_id}
             title={
               language.base_id
                 ? `This language extends ${baseLanguage?.name ?? 'a base'}: its document comes from the base and your changes.`
-                : `Write a new version of the language document${docEstimate ? `: ${fmtEstimate(docEstimate)}` : ''}`
+                : 'Write the next version now instead of waiting. When nothing changed, no call is made.'
             }
           >
             <Sparkles size={13} /> Synthesize now
@@ -417,45 +541,101 @@ export default function LanguageView({ language, languages, projects, status, wo
         </div>
       </header>
 
-      {other && (
-        <div className="notice model-notice">
-          {other.other.images + other.other.sources} analys{other.other.images + other.other.sources === 1 ? 'is was' : 'es were'} written by{' '}
-          {other.other.models.length > 0 ? other.other.models.join(', ') : 'another model'}. Images now go to <b>{other.model}</b>, so the notes of the
-          references are not all from one model.{' '}
-          <button className="link-btn" onClick={analyzeOther}>
-            Analyze {other.other.images + other.other.sources === 1 ? 'it' : 'them'} again
-          </button>
-          {otherEstimate && <span className="muted">{fmtEstimate(otherEstimate)}</span>}
-          <button className="icon-btn" title="Hide until the next change" aria-label="Hide" onClick={() => setOther(null)}>
-            <X size={13} />
-          </button>
+      {(confirm || showOther) && (
+        <div className="lang-notes">
+          {confirm && (
+            <div key={confirm} className="notice confirm-bar" role="group" aria-label="Confirm">
+              <span className="confirm-text">
+                {confirm === 'all'
+                  ? `Analyze ${refCount} reference${refCount === 1 ? '' : 's'} again${language.base_id ? '' : ', then write a new version'}.`
+                  : `Analyze ${otherCount === 1 ? 'the older analysis' : `the ${otherCount} older analyses`} again with ${other?.model ?? 'the current model'}${
+                      language.base_id ? '' : ', then write a new version'
+                    }.`}{' '}
+                {est ? `It uses ${fmtEstimate(est)}.` : estFailed ? 'The cost is not known.' : 'Counting the cost…'}
+              </span>
+              <button
+                className="btn small primary"
+                onClick={confirm === 'all' ? analyzeAll : analyzeOther}
+                disabled={!est && !estFailed}
+                title="Uses one model call for each reference"
+              >
+                Analyze {confirm === 'all' ? refCount : otherCount} again
+              </button>
+              <button className="btn small" onClick={closeConfirm} autoFocus>
+                Cancel
+              </button>
+            </div>
+          )}
+          {other && showOther && (
+            <div className="notice warn model-notice">
+              <span className="notice-text">
+                {otherCount} analys{otherCount === 1 ? 'is is' : 'es are'} from {other.other.models.length > 0 ? other.other.models.join(', ') : 'another model'}. New
+                images go to <b>{other.model}</b>, so the notes are not all from one model.
+              </span>
+              <button className="btn small" onClick={(e) => ask('other-model', e)} aria-expanded={confirm === 'other-model'}>
+                Analyze {otherCount === 1 ? 'it' : `the ${otherCount}`} again…
+              </button>
+              <button className="icon-btn" title="Hide until the count or the model changes" aria-label="Hide" onClick={hideOther}>
+                <X size={13} />
+              </button>
+            </div>
+          )}
         </div>
       )}
 
-      <nav className="tabs">
+      <nav className="tabs" role="tablist" aria-label="Language" onKeyDown={onTabKey}>
         {TABS.map(({ id: t, label, icon: Icon }) => (
-          <button key={t} className={`tab ${tab === t ? 'active' : ''}`} onClick={() => setTab(t)}>
+          <button
+            key={t}
+            ref={(el) => {
+              tabRefs.current[t] = el;
+            }}
+            id={`tab-${t}`}
+            role="tab"
+            aria-selected={tab === t}
+            aria-controls="lang-panel"
+            tabIndex={tab === t ? 0 : -1}
+            className={`tab ${tab === t ? 'active' : ''}`}
+            onClick={() => goTab(t)}
+          >
             <Icon size={14} strokeWidth={1.8} />
             {label}
             {t === 'board' && language.item_count > 0 ? <span className="tab-badge">{language.item_count}</span> : null}
             {t === 'sources' && language.source_count > 0 ? <span className="tab-badge">{language.source_count}</span> : null}
             {t === 'outputs' && status && status.pending_outputs > 0 ? (
-              <span className="tab-dot" title={`${status.pending_outputs} output${status.pending_outputs === 1 ? '' : 's'} waiting for a verdict`}>
-                {status.pending_outputs}
-              </span>
+              <>
+                <span className="tab-dot" aria-hidden="true" title={`${status.pending_outputs} output${status.pending_outputs === 1 ? '' : 's'} waiting for a verdict`}>
+                  {status.pending_outputs}
+                </span>
+                <span className="sr-only">, {status.pending_outputs} waiting for a verdict</span>
+              </>
             ) : null}
             {t === 'document' && language.latest_version ? <span className="tab-badge">v{docVersion ?? language.latest_version}</span> : null}
             {t === 'document' && status && status.open_proposals > 0 ? (
-              <span className="tab-dot" title={`${status.open_proposals} proposed amendment${status.open_proposals === 1 ? '' : 's'}`}>
-                {status.open_proposals}
-              </span>
+              <>
+                <span className="tab-dot" aria-hidden="true" title={`${status.open_proposals} proposed amendment${status.open_proposals === 1 ? '' : 's'}`}>
+                  {status.open_proposals}
+                </span>
+                <span className="sr-only">
+                  , {status.open_proposals} proposed amendment{status.open_proposals === 1 ? '' : 's'}
+                </span>
+              </>
             ) : null}
           </button>
         ))}
       </nav>
 
-      <div className="lang-body">
-        {tab === 'board' && <Board language={language} tick={tick} onChanged={onChanged} onSources={() => setTab('sources')} />}
+      <div className="lang-body" role="tabpanel" id="lang-panel" aria-labelledby={`tab-${tab}`}>
+        {tab === 'board' && (
+          <Board
+            language={language}
+            tick={tick}
+            onChanged={onChanged}
+            onSources={() => goTab('sources')}
+            waits={manualWait ? 'manual' : paused ? 'paused' : null}
+            focus={focusItem}
+          />
+        )}
         {tab === 'sources' && <SourcesView language={language} tick={tick} onChanged={onChanged} />}
         {tab === 'outputs' && <OutputsView language={language} tick={tick} pending={status?.pending_outputs ?? 0} onChanged={onChanged} />}
         {tab === 'document' && (
@@ -475,12 +655,26 @@ export default function LanguageView({ language, languages, projects, status, wo
             tick={tick}
             onOpen={(v) => {
               setDocVersion(v);
-              setTab('document');
+              goTab('document');
             }}
             onChanged={onChanged}
           />
         )}
-        {tab === 'insight' && <InsightView language={language} tick={tick} />}
+        {tab === 'insight' && (
+          <InsightView
+            language={language}
+            tick={tick}
+            onBoard={(id) => {
+              setFocusItem(id);
+              setTab('board');
+            }}
+            onDocument={() => {
+              setDocVersion(null);
+              goTab('document');
+            }}
+            onActivity={onActivity}
+          />
+        )}
       </div>
     </div>
   );

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { Fragment, useEffect, useRef, useState } from 'react';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import { Check, ClipboardCheck, Loader, Printer, Ruler, Trash2, Undo2, X } from 'lucide-react';
 import { api, ConformanceFinding, errText, fileUrl, fmtDate, GeometryReport, Language, MODEL_EXTENSIONS, Output, PRINT_OUTCOMES, PrintOutcome, Spot } from '../api';
@@ -137,8 +137,24 @@ function OutputCard({
   const [outcome, setOutcome] = useState<PrintOutcome>('fine');
   const [material, setMaterial] = useState('');
   const [printNote, setPrintNote] = useState('');
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const deleteRef = useRef<HTMLButtonElement>(null);
+  const refocusDelete = useRef(false);
   useEffect(() => setNote(o.verdict_note), [o.verdict_note]);
   const c = o.check;
+
+  // Cancel puts focus back on the delete button.
+  useEffect(() => {
+    if (!confirmDelete && refocusDelete.current) {
+      refocusDelete.current = false;
+      deleteRef.current?.focus();
+    }
+  }, [confirmDelete]);
+
+  const cancelDelete = () => {
+    refocusDelete.current = true;
+    setConfirmDelete(false);
+  };
 
   const checkModel = async () => {
     const picked = await openDialog({
@@ -264,29 +280,60 @@ function OutputCard({
           </div>
         )}
 
-        <div className="output-actions">
-          <input
-            className="output-note-input"
-            placeholder={o.verdict === 'rejected' ? 'Why not (it goes to the language)' : 'Note for the language (optional)'}
-            value={note}
-            maxLength={400}
-            onChange={(e) => setNote(e.target.value)}
-            disabled={busy}
-          />
-          <button className="btn small primary" disabled={busy || o.verdict === 'accepted'} onClick={() => onDecide('accepted', note)}>
-            <Check size={13} /> Accept
-          </button>
-          <button className="btn small" disabled={busy || o.verdict === 'rejected'} onClick={() => onDecide('rejected', note)}>
-            <X size={13} /> Reject
-          </button>
-          {o.verdict !== 'pending' && (
-            <button className="btn small" disabled={busy} onClick={() => onDecide('pending', '')} title="Remove the verdict and the reference it made">
-              <Undo2 size={13} /> Undo
-            </button>
+        <div
+          className="output-actions"
+          onKeyDown={(e) => {
+            if (confirmDelete && e.key === 'Escape') {
+              e.preventDefault();
+              cancelDelete();
+            }
+          }}
+        >
+          {/* Keys: React must not reuse the buttons of one row for the other, or autoFocus does not run. */}
+          {confirmDelete ? (
+            <Fragment key="confirm">
+              <button type="button" className="btn small danger" disabled={busy} onClick={onRemove}>
+                <Trash2 size={13} /> Delete output
+              </button>
+              <button type="button" className="btn small" autoFocus disabled={busy} onClick={cancelDelete}>
+                Cancel
+              </button>
+              <span className="muted small">{o.item_id ? 'The render and the reference that it made are deleted.' : 'The render is deleted.'}</span>
+            </Fragment>
+          ) : (
+            <Fragment key="actions">
+              <input
+                className="output-note-input"
+                placeholder={o.verdict === 'rejected' ? 'Why not (it goes to the language)' : 'Note for the language (optional)'}
+                value={note}
+                maxLength={400}
+                onChange={(e) => setNote(e.target.value)}
+                disabled={busy}
+              />
+              <button className="btn small primary" disabled={busy || o.verdict === 'accepted'} onClick={() => onDecide('accepted', note)}>
+                <Check size={13} /> Accept
+              </button>
+              <button className="btn small" disabled={busy || o.verdict === 'rejected'} onClick={() => onDecide('rejected', note)}>
+                <X size={13} /> Reject
+              </button>
+              {o.verdict !== 'pending' && (
+                <button className="btn small" disabled={busy} onClick={() => onDecide('pending', '')} title="Remove the verdict and the reference it made">
+                  <Undo2 size={13} /> Undo
+                </button>
+              )}
+              <button
+                ref={deleteRef}
+                type="button"
+                className="btn small"
+                disabled={busy}
+                onClick={() => setConfirmDelete(true)}
+                title="Delete this output"
+                aria-label="Delete this output"
+              >
+                <Trash2 size={13} />
+              </button>
+            </Fragment>
           )}
-          <button className="btn small" disabled={busy} onClick={onRemove} title="Delete this output" aria-label="Delete this output">
-            <Trash2 size={13} />
-          </button>
         </div>
       </div>
     </article>
@@ -329,8 +376,8 @@ export default function OutputsView({ language, tick, pending, onChanged }: Prop
     }
   };
 
+  // The card asks first (Delete output / Cancel), so this deletes at once.
   const remove = async (o: Output) => {
-    if (!window.confirm(`Delete "${o.name}"?${o.item_id ? ' The reference that it made is removed too.' : ''}`)) return;
     setBusy(o.id);
     try {
       await api.removeOutput(o.id);

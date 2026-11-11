@@ -227,12 +227,31 @@ function Shell() {
           <ActivityView languages={languages} onChanged={bump} onOpenLanguage={(id) => setView({ kind: 'language', id })} />
         )}
         {view.kind === 'home' && (
-          <div className="empty-main">
+          <div className="empty-main" data-tauri-drag-region>
             <div className="empty-card">
               <Logo size={56} />
               <div className="eyebrow">Corydoras</div>
               <h1>Make your first design language.</h1>
-              <p>Click + next to Languages in the sidebar. Then drag images into the board.</p>
+              <ol className="first-steps">
+                <li>
+                  Add a model provider and its API key.
+                  {status?.has_key ? (
+                    <span className="first-done">Done.</span>
+                  ) : (
+                    <button className="link-btn" onClick={() => setView({ kind: 'settings' })}>
+                      Open Settings
+                    </button>
+                  )}
+                </li>
+                <li>Click + next to Languages, type a name, and press Return.</li>
+                <li>Drag images into the board. The first language document follows the analysis.</li>
+                <li>
+                  Connect an agent: Settings › Agents (MCP server).
+                  <button className="link-btn" onClick={() => setView({ kind: 'settings' })}>
+                    Open Settings
+                  </button>
+                </li>
+              </ol>
             </div>
           </div>
         )}

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { diffLines } from 'diff';
 import { Pin, Undo2 } from 'lucide-react';
 import { api, DiffChange, errText, fmtDate, Language, PinInput, Project, VersionContent, VersionDiff, VersionInfo } from '../api';
@@ -64,8 +64,25 @@ export default function VersionsView({ language, projects, tick, onOpen, onChang
   const [part, setPart] = useState<Part>('changes');
   const [confirmRestore, setConfirmRestore] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
+  const diffRef = useRef<HTMLDivElement>(null);
+  // The version whose Restore button gets the focus back after Cancel.
+  const refocusRestore = useRef<number | null>(null);
 
   const latest = versions[0]?.version ?? null;
+
+  // With many versions the comparison is below the table: bring it into view when A or B changes.
+  const showDiff = () =>
+    requestAnimationFrame(() => {
+      const el = diffRef.current;
+      const pane = el?.closest('.versions');
+      if (!el || !pane) return;
+      if (el.getBoundingClientRect().top > pane.getBoundingClientRect().bottom - 160) el.scrollIntoView({ block: 'nearest' });
+    });
+
+  const cancelRestore = () => {
+    refocusRestore.current = confirmRestore;
+    setConfirmRestore(null);
+  };
 
   useEffect(() => {
     api
@@ -130,7 +147,8 @@ export default function VersionsView({ language, projects, tick, onOpen, onChang
   const pin = async (projectId: string, v: number) => {
     const project = projects.find((p) => p.id === projectId);
     if (!project) return;
-    const pins: PinInput[] = project.pins.map((x) => ({ language_id: x.language_id, version: x.version, role: x.role, scope: x.scope }));
+    const before: PinInput[] = project.pins.map((x) => ({ language_id: x.language_id, version: x.version, role: x.role, scope: x.scope }));
+    const pins: PinInput[] = before.map((x) => ({ ...x }));
     const mine = pins.find((x) => x.language_id === language.id);
     if (mine) mine.version = v;
     else pins.push({ language_id: language.id, version: v, role: pins.some((x) => x.role === 'primary') ? 'secondary' : 'primary', scope: 'all' });
@@ -140,6 +158,14 @@ export default function VersionsView({ language, projects, tick, onOpen, onChang
         mine
           ? `“${project.name}” now uses v${v} of ${language.name}.`
           : `v${v} of ${language.name} is pinned in “${project.name}” as a ${pins[pins.length - 1].role} language.`,
+        {
+          label: 'Undo',
+          run: () =>
+            api
+              .setPins(projectId, before)
+              .then(onChanged)
+              .catch((e) => toast.error(errText(e))),
+        },
       );
       onChanged();
     } catch (e) {
@@ -185,52 +211,78 @@ export default function VersionsView({ language, projects, tick, onOpen, onChang
                 <td>{v.item_count}</td>
                 <td>
                   <label className="radio">
-                    <input type="radio" name="a" checked={a === v.version} onChange={() => setA(v.version)} /> A
+                    <input
+                      type="radio"
+                      name="a"
+                      checked={a === v.version}
+                      onChange={() => {
+                        setA(v.version);
+                        showDiff();
+                      }}
+                    />{' '}
+                    A
                   </label>
                   <label className="radio">
-                    <input type="radio" name="b" checked={b === v.version} onChange={() => setB(v.version)} /> B
+                    <input
+                      type="radio"
+                      name="b"
+                      checked={b === v.version}
+                      onChange={() => {
+                        setB(v.version);
+                        showDiff();
+                      }}
+                    />{' '}
+                    B
                   </label>
                 </td>
                 <td className="small">{users.length > 0 ? users.map((p) => p.name).join(', ') : <span className="muted">—</span>}</td>
-                <td className="version-tools">
-                  <button className="link-btn" onClick={() => onOpen(v.version)}>
-                    Open
-                  </button>
-                  {projects.length > 0 && (
-                    <select
-                      className="select small"
-                      value=""
-                      onChange={(e) => e.target.value && pin(e.target.value, v.version)}
-                      title="Make a project use this version"
-                      aria-label={`Pin version ${v.version} in a project`}
-                    >
-                      <option value="">Pin in…</option>
-                      {projects.map((p) => (
-                        <option key={p.id} value={p.id}>
-                          {p.name}
-                        </option>
-                      ))}
-                    </select>
-                  )}
-                  {v.version !== latest &&
-                    (confirmRestore === v.version ? (
-                      <>
-                        <button className="btn small primary" disabled={busy} onClick={() => restore(v.version)}>
-                          Restore as v{(latest ?? 0) + 1}
-                        </button>
-                        <button className="btn small" disabled={busy} onClick={() => setConfirmRestore(null)}>
-                          Cancel
-                        </button>
-                      </>
-                    ) : (
-                      <button
-                        className="btn small"
-                        onClick={() => setConfirmRestore(v.version)}
-                        title="Roll back: save this version again as the newest one. Agents without a project then get it."
+                <td>
+                  <div className="version-tools">
+                    <button className="link-btn" onClick={() => onOpen(v.version)}>
+                      Open
+                    </button>
+                    {projects.length > 0 && (
+                      <select
+                        className="select small"
+                        value=""
+                        onChange={(e) => e.target.value && pin(e.target.value, v.version)}
+                        title="Make a project use this version"
+                        aria-label={`Pin version ${v.version} in a project`}
                       >
-                        <Undo2 size={13} /> Restore
-                      </button>
-                    ))}
+                        <option value="">Pin in…</option>
+                        {projects.map((p) => (
+                          <option key={p.id} value={p.id}>
+                            {p.name}
+                          </option>
+                        ))}
+                      </select>
+                    )}
+                    {v.version !== latest &&
+                      (confirmRestore === v.version ? (
+                        <span className="version-confirm" onKeyDown={(e) => e.key === 'Escape' && !busy && cancelRestore()}>
+                          <button className="btn small primary" disabled={busy} onClick={() => restore(v.version)}>
+                            Restore as v{(latest ?? 0) + 1}
+                          </button>
+                          <button className="btn small" disabled={busy} onClick={cancelRestore} autoFocus>
+                            Cancel
+                          </button>
+                        </span>
+                      ) : (
+                        <button
+                          className="btn small"
+                          onClick={() => setConfirmRestore(v.version)}
+                          title="Roll back: save this version again as the newest one. Agents without a project then get it."
+                          ref={(el) => {
+                            if (el && refocusRestore.current === v.version) {
+                              refocusRestore.current = null;
+                              el.focus();
+                            }
+                          }}
+                        >
+                          <Undo2 size={13} /> Restore
+                        </button>
+                      ))}
+                  </div>
                 </td>
               </tr>
             );
@@ -245,7 +297,7 @@ export default function VersionsView({ language, projects, tick, onOpen, onChang
       )}
 
       {versions.length >= 2 && a !== null && b !== null && (
-        <div className="diff">
+        <div className="diff" ref={diffRef}>
           <div className="toolbar">
             <span className="hint">
               {part === 'changes' && diff && diff.structured
@@ -253,14 +305,14 @@ export default function VersionsView({ language, projects, tick, onOpen, onChang
                 : `Changes from v${a} (A) to v${b} (B)`}
             </span>
             <div className="spacer" />
-            <div className="seg">
-              <button className={part === 'changes' ? 'active' : ''} onClick={() => setPart('changes')}>
+            <div className="seg" role="group" aria-label="Show">
+              <button className={part === 'changes' ? 'active' : ''} aria-pressed={part === 'changes'} onClick={() => setPart('changes')}>
                 Changes
               </button>
-              <button className={part === 'markdown' ? 'active' : ''} onClick={() => setPart('markdown')}>
+              <button className={part === 'markdown' ? 'active' : ''} aria-pressed={part === 'markdown'} onClick={() => setPart('markdown')}>
                 language.md
               </button>
-              <button className={part === 'tokens' ? 'active' : ''} onClick={() => setPart('tokens')}>
+              <button className={part === 'tokens' ? 'active' : ''} aria-pressed={part === 'tokens'} onClick={() => setPart('tokens')}>
                 tokens.json
               </button>
             </div>

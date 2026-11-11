@@ -3474,6 +3474,13 @@ textarea:focus-visible,
   outline-offset: -2px;
 }
 
+/* Versions: the second step of Restore. */
+.version-confirm {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
 /* Insight: groups that open and close, reference ids that lead to the Board. */
 .gap-toggle {
   display: inline-flex;

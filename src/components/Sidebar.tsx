@@ -4,6 +4,7 @@ import type { View } from '../App';
 import { Activity, Gauge, Layers, Pause, Plus, Settings, ShieldCheck, Swatch } from './icons';
 import { FileDown } from 'lucide-react';
 import Logo from './Logo';
+import QueueToggle from './QueueToggle';
 import { useToast } from './Toast';
 
 interface Props {
@@ -220,6 +221,7 @@ export default function Sidebar({ languages, projects, ruleSets, status, view, o
             )}
           </span>
         </button>
+        <QueueToggle status={status} onChanged={onChanged} />
         {status && (
           <div className="usage" title={`Tokens in ${status.usage.month}`}>
             <Gauge size={12} />

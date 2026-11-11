@@ -2,7 +2,7 @@ import { api, errText, StatusReport } from '../api';
 import { Play, Square } from 'lucide-react';
 import { useToast } from './Toast';
 
-/** Top-right control: automatic or manual queue, plus Run / Stop in manual mode. */
+/** Sidebar control: automatic or manual queue, plus Run / Stop in manual mode. */
 export default function QueueToggle({ status, onChanged }: { status: StatusReport | null; onChanged: () => void }) {
   const toast = useToast();
   if (!status) return null;
@@ -11,6 +11,22 @@ export default function QueueToggle({ status, onChanged }: { status: StatusRepor
 
   return (
     <div className="queue-toggle">
+      <span className="queue-label" id="queue-label">
+        Queue
+      </span>
+      <div
+        className="seg"
+        role="group"
+        aria-labelledby="queue-label"
+        title="Automatic: jobs run as soon as they are due. Manual: jobs wait until you click Run queue."
+      >
+        <button className={!status.manual ? 'active' : ''} aria-pressed={!status.manual} onClick={() => status.manual && run(() => api.setManual(false))}>
+          Auto
+        </button>
+        <button className={status.manual ? 'active' : ''} aria-pressed={status.manual} onClick={() => !status.manual && run(() => api.setManual(true))}>
+          Manual
+        </button>
+      </div>
       {status.manual &&
         (status.running ? (
           <button className="btn small" onClick={() => run(() => api.runQueue(false))} title="The running job finishes; the rest wait">
@@ -26,14 +42,6 @@ export default function QueueToggle({ status, onChanged }: { status: StatusRepor
             <Play size={12} fill="currentColor" /> Run queue{status.queued > 0 ? ` (${waiting > 0 ? waiting : status.queued})` : ''}
           </button>
         ))}
-      <div className="seg" title="Automatic: jobs run as soon as they are due. Manual: jobs wait until you click Run queue.">
-        <button className={!status.manual ? 'active' : ''} onClick={() => status.manual && run(() => api.setManual(false))}>
-          Auto
-        </button>
-        <button className={status.manual ? 'active' : ''} onClick={() => !status.manual && run(() => api.setManual(true))}>
-          Manual
-        </button>
-      </div>
     </div>
   );
 }

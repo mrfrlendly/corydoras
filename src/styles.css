@@ -756,6 +756,16 @@ body:has(.board-wrap.with-inspector.wide) .toasts {
   right: 478px;
 }
 
+@media (max-width: 1180px) {
+  body:has(.board-wrap.with-inspector) .toasts {
+    right: 358px;
+  }
+
+  body:has(.board-wrap.with-inspector.wide) .toasts {
+    right: 398px;
+  }
+}
+
 /* Each toast sits in a slot that collapses when it leaves, so the toasts
    around it slide together instead of jumping. The gap is padding inside
    the slot, so it collapses too. */
@@ -2511,11 +2521,6 @@ svg.lucide {
   border-color: color-mix(in srgb, var(--ok) 45%, transparent);
 }
 
-.chip-accent {
-  color: var(--ink-2);
-  border-color: var(--rule);
-}
-
 .chip {
   white-space: nowrap;
 }
@@ -3783,40 +3788,6 @@ textarea:focus-visible,
 }
 
 /* ---- WP-E: sources and outputs ---- */
-
-/* Source cards take the keyboard focus; the ring keeps the corner radius of the card. */
-.src-card:focus-visible {
-  border-radius: 10px;
-}
-
-/* State of the analysis in words, and the weight as five dots. The board (WP-B) uses the same
-   declarations; the duplicates go at the merge. */
-.cap-status {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  font-weight: 600;
-  color: var(--ink-2);
-}
-.cap-error {
-  color: var(--err);
-}
-.cap-busy {
-  color: var(--busy);
-}
-.weight {
-  display: inline-flex;
-  gap: 2px;
-}
-.weight i {
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: color-mix(in srgb, var(--ink) 20%, transparent);
-}
-.weight i.on {
-  background: var(--ink-2);
-}
 
 /* Outputs: the thumbnail opens the full image; the description shows four lines until More. */
 .output-thumb {

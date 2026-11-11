@@ -179,6 +179,7 @@ function Shell() {
             worker={status?.worker ?? null}
             current={status?.current?.language_id === lang.id ? status.current : null}
             paused={status?.paused ?? false}
+            manual={status?.manual ?? false}
             tick={tick}
             onChanged={bump}
             onSettings={() => setView({ kind: 'settings' })}

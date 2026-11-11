@@ -2,6 +2,7 @@ import { TextareaHTMLAttributes, useEffect, useLayoutEffect, useRef, useState } 
 import { api, errText, fmtDate, fmtMeasure, PRINT_OUTCOMES, PrintOutcome, PrintResult, Project, Rule, RuleFeedback, RuleSet, RuleSetInput, RuleUnit } from '../api';
 import { ArrowDown, ArrowUp, Check, Eye, Plus, Printer, Trash2, TriangleAlert, X } from 'lucide-react';
 import { useToast } from './Toast';
+import { useConfirmRow } from './useConfirmRow';
 
 const UNITS: RuleUnit[] = ['mm', 'deg', 'percent', 'count', 'ratio'];
 
@@ -30,7 +31,7 @@ function AutoArea(props: TextareaHTMLAttributes<HTMLTextAreaElement>) {
 }
 
 /** A number field that keeps partial input such as "4." or "-" while you type. */
-function NumField({ value, onValue }: { value: number | null; onValue: (v: number | null) => void }) {
+function NumField({ value, onValue, label }: { value: number | null; onValue: (v: number | null) => void; label?: string }) {
   const [text, setText] = useState(value === null ? '' : String(value));
   useEffect(() => {
     // Follow outside changes (discard, reload) without fighting the typing.
@@ -46,6 +47,7 @@ function NumField({ value, onValue }: { value: number | null; onValue: (v: numbe
       type="text"
       inputMode="decimal"
       placeholder="—"
+      aria-label={label}
       value={text}
       onChange={(e) => {
         const t = e.target.value;
@@ -75,6 +77,9 @@ function PrintLogPanel({ ruleSet }: { ruleSet: RuleSet }) {
   const [value, setValue] = useState<number | null>(null);
   const [note, setNote] = useState('');
   const [confirmRemove, setConfirmRemove] = useState<string | null>(null);
+  // The row whose Remove was asked last; focus goes back to its button.
+  const [asked, setAsked] = useState<string | null>(null);
+  const removeTrigger = useConfirmRow(confirmRemove !== null, () => setConfirmRemove(null));
 
   const load = () => {
     api
@@ -145,7 +150,7 @@ function PrintLogPanel({ ruleSet }: { ruleSet: RuleSet }) {
               </option>
             ))}
           </select>
-          <input className="small-input" placeholder="Material" value={material} onChange={(e) => setMaterial(e.target.value)} maxLength={120} />
+          <input className="small-input" placeholder="Material" aria-label="Material" value={material} onChange={(e) => setMaterial(e.target.value)} maxLength={120} />
           <select className="select small" value={rule} onChange={(e) => setRule(e.target.value)} aria-label="Rule">
             <option value="">No rule (about the material)</option>
             {limits.map((r) => (
@@ -160,9 +165,9 @@ function PrintLogPanel({ ruleSet }: { ruleSet: RuleSet }) {
               <NumField value={value} onValue={setValue} /> {unitOf(rule) ?? ''}
             </label>
           )}
-          <input className="output-note-input" placeholder="What you saw" value={note} onChange={(e) => setNote(e.target.value)} maxLength={400} />
+          <input className="output-note-input" placeholder="What you saw" aria-label="What you saw" value={note} onChange={(e) => setNote(e.target.value)} maxLength={400} />
           <button className="btn small primary" onClick={add} disabled={!material.trim() && !rule}>
-            Save
+            Add result
           </button>
           <button className="btn small" onClick={() => setAdding(false)}>
             Cancel
@@ -199,32 +204,43 @@ function PrintLogPanel({ ruleSet }: { ruleSet: RuleSet }) {
                   {p.author && <span className="tag-pill">{p.author}</span>}
                 </td>
                 <td className="small muted">{fmtDate(p.created_at)}</td>
-                <td className="version-tools">
-                  {confirmRemove === p.id ? (
-                    <>
+                <td>
+                  <div className="version-tools">
+                    {confirmRemove === p.id ? (
+                      <>
+                        <button
+                          className="btn danger small"
+                          onClick={() =>
+                            api
+                              .removePrintResult(p.id)
+                              .then(() => {
+                                setConfirmRemove(null);
+                                load();
+                              })
+                              .catch((e) => toast.error(errText(e)))
+                          }
+                        >
+                          Remove
+                        </button>
+                        <button className="btn small" autoFocus onClick={() => setConfirmRemove(null)}>
+                          Keep
+                        </button>
+                      </>
+                    ) : (
                       <button
-                        className="btn danger small"
-                        onClick={() =>
-                          api
-                            .removePrintResult(p.id)
-                            .then(() => {
-                              setConfirmRemove(null);
-                              load();
-                            })
-                            .catch((e) => toast.error(errText(e)))
-                        }
+                        ref={asked === p.id ? removeTrigger : undefined}
+                        className="icon-btn"
+                        title="Remove this result…"
+                        aria-label="Remove this result"
+                        onClick={() => {
+                          setAsked(p.id);
+                          setConfirmRemove(p.id);
+                        }}
                       >
-                        Remove
+                        <X size={14} />
                       </button>
-                      <button className="btn small" onClick={() => setConfirmRemove(null)}>
-                        Keep
-                      </button>
-                    </>
-                  ) : (
-                    <button className="icon-btn" title="Remove this result…" aria-label="Remove this result" onClick={() => setConfirmRemove(p.id)}>
-                      <X size={14} />
-                    </button>
-                  )}
+                    )}
+                  </div>
                 </td>
               </tr>
             ))}
@@ -241,6 +257,7 @@ export default function RuleSetView({ ruleSet, projects, onChanged, onDeleted, o
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [preview, setPreview] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const deleteTrigger = useConfirmRow(confirmDelete, () => setConfirmDelete(false));
 
   // The library reloads after every queue job and gives a new object each time.
   // Follow the saved rule set only when it changes, so a rule being typed stays.
@@ -358,10 +375,10 @@ export default function RuleSetView({ ruleSet, projects, onChanged, onDeleted, o
               {draft.rules.map((r, i) => (
                 <tr key={i}>
                   <td>
-                    <input value={r.name} onChange={(e) => setRule(i, { name: e.target.value })} placeholder="Minimum wall" />
+                    <input value={r.name} onChange={(e) => setRule(i, { name: e.target.value })} placeholder="Minimum wall" aria-label="Rule name" />
                   </td>
                   <td>
-                    <NumField value={r.value} onValue={(v) => setRule(i, { value: v, unit: v === null ? null : r.unit ?? 'mm' })} />
+                    <NumField label="Value" value={r.value} onValue={(v) => setRule(i, { value: v, unit: v === null ? null : r.unit ?? 'mm' })} />
                   </td>
                   <td>
                     <select
@@ -369,6 +386,7 @@ export default function RuleSetView({ ruleSet, projects, onChanged, onDeleted, o
                       value={r.unit ?? ''}
                       disabled={r.value === null}
                       onChange={(e) => setRule(i, { unit: (e.target.value || null) as RuleUnit | null })}
+                      aria-label="Unit"
                     >
                       {r.value === null && <option value="">—</option>}
                       {UNITS.map((u) => (
@@ -384,18 +402,26 @@ export default function RuleSetView({ ruleSet, projects, onChanged, onDeleted, o
                       value={r.note}
                       onChange={(e) => setRule(i, { note: e.target.value })}
                       placeholder="Why, and where it applies"
+                      aria-label="Details"
                     />
                   </td>
                   <td className="row-tools">
-                    <button className="icon-btn" title="Move up" onClick={() => move(i, -1)} disabled={i === 0}>
+                    <button className="icon-btn" title="Move up" aria-label={`Move ${r.name || `rule ${i + 1}`} up`} onClick={() => move(i, -1)} disabled={i === 0}>
                       <ArrowUp size={14} />
                     </button>
-                    <button className="icon-btn" title="Move down" onClick={() => move(i, 1)} disabled={i === draft.rules.length - 1}>
+                    <button
+                      className="icon-btn"
+                      title="Move down"
+                      aria-label={`Move ${r.name || `rule ${i + 1}`} down`}
+                      onClick={() => move(i, 1)}
+                      disabled={i === draft.rules.length - 1}
+                    >
                       <ArrowDown size={14} />
                     </button>
                     <button
                       className="icon-btn"
                       title="Remove rule"
+                      aria-label={`Remove ${r.name || `rule ${i + 1}`}`}
                       onClick={() => setDraft((d) => ({ ...d, rules: d.rules.filter((_, k) => k !== i) }))}
                     >
                       <X size={14} />
@@ -456,15 +482,19 @@ export default function RuleSetView({ ruleSet, projects, onChanged, onDeleted, o
               >
                 <Trash2 size={13} /> Delete rule set
               </button>
-              <button className="btn small" onClick={() => setConfirmDelete(false)}>
+              <button className="btn small" autoFocus onClick={() => setConfirmDelete(false)}>
                 Keep
               </button>
               <span className="muted small">
-                {users.length > 0 ? `${users.length} project${users.length === 1 ? '' : 's'} will lose these rules.` : 'No project uses it.'}
+                {ruleSet.always
+                  ? 'It applies to every project and to agents without a project. They all lose these rules.'
+                  : users.length > 0
+                    ? `${users.length} project${users.length === 1 ? '' : 's'} will lose these rules.`
+                    : 'No project selects it.'}
               </span>
             </div>
           ) : (
-            <button className="btn small ghost-danger" onClick={() => setConfirmDelete(true)}>
+            <button ref={deleteTrigger} className="btn small ghost-danger" onClick={() => setConfirmDelete(true)}>
               <Trash2 size={13} /> Delete rule set…
             </button>
           )}

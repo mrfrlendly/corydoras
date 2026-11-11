@@ -840,7 +840,7 @@ textarea {
 }
 
 .lang-title h1 {
-  cursor: text;
+  cursor: default;
 }
 
 .lang-desc {
@@ -871,8 +871,16 @@ textarea {
 .title-input.plain {
   border-color: transparent !important;
   background: transparent !important;
-  padding-left: 0 !important;
+  padding: 0 !important;
+  height: auto;
+  line-height: 1.2;
+  border-radius: 4px;
   width: 100%;
+}
+
+/* The plain title is the same height as an h1 title; a rule under it shows that it is a field. */
+.title-input.plain:hover {
+  box-shadow: inset 0 -1px 0 var(--rule);
 }
 
 .tabs {
@@ -909,6 +917,11 @@ textarea {
   position: relative;
 }
 
+/* Every tab starts its content 16px under the tabs. */
+.lang-body .toolbar:first-child {
+  padding-top: 0;
+}
+
 /* ---------------------------------------------------------------- Board */
 
 .board-wrap {
@@ -924,7 +937,7 @@ textarea {
 
 .board-main {
   overflow-y: auto;
-  padding: 0 28px 28px;
+  padding: 16px 28px 28px;
   min-width: 0;
 }
 
@@ -1214,7 +1227,7 @@ textarea {
 .versions {
   height: 100%;
   overflow-y: auto;
-  padding: 0 28px 32px;
+  padding: 16px 28px 32px;
 }
 
 .doc-empty {
@@ -1381,7 +1394,7 @@ textarea {
   border: 1px solid var(--rule);
   border-radius: var(--radius);
   overflow: hidden;
-  margin: 14px 0 18px;
+  margin: 0 0 18px;
 }
 
 .vtable th,
@@ -1436,7 +1449,19 @@ textarea {
   flex: 1;
   overflow-y: auto;
   padding: 20px 28px 32px;
+  max-width: none;
+}
+
+/* The pane scrolls at the window edge; the content keeps a readable width. */
+.project-body > *,
+.settings-body > * {
   max-width: 980px;
+}
+
+/* The header actions end where the content ends (28px gutter + 980px). */
+.settings > .lang-head,
+.project > .lang-head {
+  padding-right: max(28px, calc(100% - 1008px));
 }
 
 .pin-row {
@@ -2347,6 +2372,15 @@ svg.lucide {
   display: flex;
   align-items: center;
   gap: 8px;
+  /* Section heads are larger than body text, not smaller. */
+  font-size: 15px;
+  color: var(--ink);
+  letter-spacing: -0.01em;
+  margin-bottom: 10px;
+}
+
+.panel p {
+  max-width: 75ch;
 }
 
 .panel h3 svg {
@@ -2420,7 +2454,7 @@ svg.lucide {
   align-items: center;
   gap: 12px;
   padding: 10px 12px;
-  cursor: pointer;
+  cursor: default;
 }
 
 .prov-head:hover {
@@ -3200,7 +3234,7 @@ textarea:focus-visible,
 .outputs {
   height: 100%;
   overflow-y: auto;
-  padding: 0 28px 32px;
+  padding: 16px 28px 32px;
   align-content: start;
 }
 
@@ -3345,7 +3379,11 @@ textarea:focus-visible,
 .insight {
   height: 100%;
   overflow-y: auto;
-  padding: 0 28px 32px;
+  padding: 16px 28px 32px;
+  max-width: none;
+}
+
+.insight > * {
   max-width: 1100px;
 }
 

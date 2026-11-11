@@ -1,7 +1,7 @@
-import { Fragment, useEffect, useRef, useState } from 'react';
+import { FormEvent, Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import { Check, ClipboardCheck, Loader, Printer, Ruler, Trash2, Undo2, X } from 'lucide-react';
-import { api, ConformanceFinding, errText, fileUrl, fmtDate, GeometryReport, Language, MODEL_EXTENSIONS, Output, PRINT_OUTCOMES, PrintOutcome, Spot } from '../api';
+import { api, ConformanceFinding, ConformanceReport, errText, fileUrl, fmtDate, GeometryReport, Language, MODEL_EXTENSIONS, Output, PRINT_OUTCOMES, PrintOutcome, Spot } from '../api';
 import { useToast } from './Toast';
 
 const UP_AXES = ['+z', '-z', '+y', '-y', '+x', '-x'];
@@ -15,14 +15,24 @@ function at(s: Spot) {
   return `near x ${s.at[0]}, y ${s.at[1]}, z ${s.at[2]}`;
 }
 
+/** The summary of a check is neutral; it takes a colour only when something fails or warns. */
+function sumClass(c: Pick<ConformanceReport, 'fail' | 'warn'> | null) {
+  return c && c.fail > 0 ? 'check-fail' : c && c.warn > 0 ? 'check-warn' : '';
+}
+
+/** The open or closed mark after a summary; the button says the state with aria-expanded. */
+function Disclosure({ open }: { open: boolean }) {
+  return <span aria-hidden="true">{open ? '▾' : '▸'}</span>;
+}
+
 /** The measured values of a geometry check, then the verdict of each. */
 function GeometryBlock({ g }: { g: GeometryReport }) {
   const [open, setOpen] = useState(false);
   const c = g.check;
   return (
     <div className="output-check">
-      <button className="link-btn small" onClick={() => setOpen((v) => !v)} aria-expanded={open}>
-        Geometry of {g.file}: {c ? `${c.pass} pass · ${c.fail} fail · ${c.warn} warn · ${c.unknown} unknown` : 'measured'} {open ? '▾' : '▸'}
+      <button type="button" className={`link-btn small check-sum ${sumClass(c)}`} onClick={() => setOpen((v) => !v)} aria-expanded={open}>
+        Geometry of {g.file}: {c ? `${c.pass} pass · ${c.fail} fail · ${c.warn} warn · ${c.unknown} unknown` : 'measured'} <Disclosure open={open} />
       </button>
       {open && (
         <>
@@ -115,6 +125,34 @@ function FindingRow({ f }: { f: ConformanceFinding }) {
   );
 }
 
+/** The description of an output: four lines, and More shows the rest. */
+function OutputNote({ text }: { text: string }) {
+  const ref = useRef<HTMLParagraphElement>(null);
+  const [open, setOpen] = useState(false);
+  const [long, setLong] = useState(false);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el || open) return;
+    const measure = () => setLong(el.scrollHeight > el.clientHeight + 1);
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [text, open]);
+  return (
+    <>
+      <p ref={ref} className={`output-note ${open ? '' : 'clamped'}`}>
+        {text}
+      </p>
+      {(long || open) && (
+        <button type="button" className="link-btn small output-more" aria-expanded={open} onClick={() => setOpen((v) => !v)}>
+          {open ? 'Less' : 'More'}
+        </button>
+      )}
+    </>
+  );
+}
+
 function OutputCard({
   o,
   busy,
@@ -139,22 +177,49 @@ function OutputCard({
   const [printNote, setPrintNote] = useState('');
   const [confirmDelete, setConfirmDelete] = useState(false);
   const deleteRef = useRef<HTMLButtonElement>(null);
-  const refocusDelete = useRef(false);
+  const printRef = useRef<HTMLButtonElement>(null);
+  const acceptRef = useRef<HTMLButtonElement>(null);
+  const undoRef = useRef<HTMLButtonElement>(null);
+  /** Set when a control of this card was used, so that focus can go to the control that replaces it. */
+  const refocus = useRef<'delete' | 'verdict' | null>(null);
   useEffect(() => setNote(o.verdict_note), [o.verdict_note]);
   const c = o.check;
 
   // Cancel puts focus back on the delete button.
   useEffect(() => {
-    if (!confirmDelete && refocusDelete.current) {
-      refocusDelete.current = false;
+    if (!confirmDelete && refocus.current === 'delete') {
+      refocus.current = null;
       deleteRef.current?.focus();
     }
   }, [confirmDelete]);
 
+  // After a verdict, or after Undo verdict, focus goes to the button that replaced the one used.
+  useEffect(() => {
+    if (refocus.current !== 'verdict') return;
+    refocus.current = null;
+    (o.verdict === 'pending' ? acceptRef : undoRef).current?.focus();
+  }, [o.verdict]);
+
+  const decideHere = (v: Output['verdict'], n: string) => {
+    refocus.current = 'verdict';
+    onDecide(v, n);
+  };
+
   const cancelDelete = () => {
-    refocusDelete.current = true;
+    refocus.current = 'delete';
     setConfirmDelete(false);
   };
+
+  const closePrint = () => {
+    setPrinting(false);
+    printRef.current?.focus();
+  };
+
+  const openImage = () =>
+    api
+      .appInfo()
+      .then((i) => (i.library_path ? api.revealPath(`${i.library_path}/${o.file_rel}`) : undefined))
+      .catch((e) => toast.error(errText(e)));
 
   const checkModel = async () => {
     const picked = await openDialog({
@@ -176,7 +241,8 @@ function OutputCard({
     }
   };
 
-  const logPrint = async () => {
+  const logPrint = async (e?: FormEvent) => {
+    e?.preventDefault();
     if (!material.trim()) {
       toast.error('Say which material the part was printed in.');
       return;
@@ -194,7 +260,7 @@ function OutputCard({
         output: o.id,
       });
       toast.info('Saved in the print log. Agents get it with the hard rules.');
-      setPrinting(false);
+      closePrint();
       setPrintNote('');
     } catch (e) {
       toast.error(errText(e));
@@ -202,9 +268,9 @@ function OutputCard({
   };
   return (
     <article className={`output output-${o.verdict}`}>
-      <a href={fileUrl(o.file_rel)} target="_blank" rel="noreferrer" className="output-thumb" title="Open the full image">
-        <img src={fileUrl(o.thumb_rel)} alt={o.name} loading="lazy" />
-      </a>
+      <button type="button" className="output-thumb" title="Open the full image" aria-label={`Open ${o.name}`} onClick={openImage}>
+        <img src={fileUrl(o.thumb_rel)} alt="" loading="lazy" />
+      </button>
       <div className="output-main">
         <div className="output-head">
           <span className="output-name">{o.name}</span>
@@ -216,12 +282,12 @@ function OutputCard({
           {o.family ? ` · ${o.family}` : ''}
           {o.project ? ` · ${o.project}` : ''} · {fmtDate(o.created_at)}
         </div>
-        {o.note && <p className="output-note">{o.note}</p>}
+        {o.note && <OutputNote text={o.note} />}
 
         {c && (
           <div className="output-check">
-            <button className="link-btn small" onClick={() => setOpen((v) => !v)} aria-expanded={open}>
-              Check: {c.pass} pass · {c.fail} fail · {c.warn} warn · {c.unknown} unknown {open ? '▾' : '▸'}
+            <button type="button" className={`link-btn small check-sum ${sumClass(c)}`} onClick={() => setOpen((v) => !v)} aria-expanded={open}>
+              Check: {c.pass} pass · {c.fail} fail · {c.warn} warn · {c.unknown} unknown <Disclosure open={open} />
             </button>
             {open && (
               <>
@@ -248,7 +314,7 @@ function OutputCard({
           </button>
           <label className="small muted up-pick" title="The axis that points up on the printer. Overhangs and bridges depend on it.">
             Build direction
-            <select className="select small" value={up} onChange={(e) => setUp(e.target.value)} disabled={checking}>
+            <select className="select small" value={up} onChange={(e) => setUp(e.target.value)} disabled={checking} aria-label="Build direction">
               {UP_AXES.map((a) => (
                 <option key={a} value={a}>
                   {a}
@@ -256,12 +322,21 @@ function OutputCard({
               ))}
             </select>
           </label>
-          <button className="btn small" disabled={busy} onClick={() => setPrinting((v) => !v)} aria-expanded={printing}>
+          <button ref={printRef} className="btn small" disabled={busy} onClick={() => setPrinting((v) => !v)} aria-expanded={printing}>
             <Printer size={13} /> Log a print…
           </button>
         </div>
         {printing && (
-          <div className="print-form">
+          <form
+            className="print-form"
+            onSubmit={logPrint}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') {
+                e.preventDefault();
+                closePrint();
+              }
+            }}
+          >
             <select className="select small" value={outcome} onChange={(e) => setOutcome(e.target.value as PrintOutcome)} aria-label="Result of the print">
               {PRINT_OUTCOMES.map((r) => (
                 <option key={r} value={r}>
@@ -269,15 +344,29 @@ function OutputCard({
                 </option>
               ))}
             </select>
-            <input className="small-input" placeholder="Material, for example PETG clear" value={material} onChange={(e) => setMaterial(e.target.value)} maxLength={120} />
-            <input className="output-note-input" placeholder="What you saw (optional)" value={printNote} onChange={(e) => setPrintNote(e.target.value)} maxLength={400} />
-            <button className="btn small primary" onClick={logPrint}>
+            <input
+              className="small-input"
+              placeholder="Material, for example PETG clear"
+              aria-label="Material"
+              value={material}
+              onChange={(e) => setMaterial(e.target.value)}
+              maxLength={120}
+            />
+            <input
+              className="output-note-input"
+              placeholder="What you saw (optional)"
+              aria-label="What you saw"
+              value={printNote}
+              onChange={(e) => setPrintNote(e.target.value)}
+              maxLength={400}
+            />
+            <button type="submit" className="btn small primary">
               Save
             </button>
-            <button className="btn small" onClick={() => setPrinting(false)}>
+            <button type="button" className="btn small" onClick={closePrint}>
               Cancel
             </button>
-          </div>
+          </form>
         )}
 
         <div
@@ -302,24 +391,41 @@ function OutputCard({
             </Fragment>
           ) : (
             <Fragment key="actions">
-              <input
-                className="output-note-input"
-                placeholder={o.verdict === 'rejected' ? 'Why not (it goes to the language)' : 'Note for the language (optional)'}
-                value={note}
-                maxLength={400}
-                onChange={(e) => setNote(e.target.value)}
-                disabled={busy}
-              />
-              <button className="btn small primary" disabled={busy || o.verdict === 'accepted'} onClick={() => onDecide('accepted', note)}>
-                <Check size={13} /> Accept
-              </button>
-              <button className="btn small" disabled={busy || o.verdict === 'rejected'} onClick={() => onDecide('rejected', note)}>
-                <X size={13} /> Reject
-              </button>
-              {o.verdict !== 'pending' && (
-                <button className="btn small" disabled={busy} onClick={() => onDecide('pending', '')} title="Remove the verdict and the reference it made">
-                  <Undo2 size={13} /> Undo
-                </button>
+              {o.verdict === 'pending' ? (
+                <Fragment key="pending">
+                  <input
+                    className="output-note-input"
+                    placeholder="Note for the language. With Reject, say why."
+                    aria-label="Note for the language"
+                    value={note}
+                    maxLength={400}
+                    onChange={(e) => setNote(e.target.value)}
+                    disabled={busy}
+                  />
+                  <button ref={acceptRef} type="button" className="btn small primary" disabled={busy} onClick={() => decideHere('accepted', note)}>
+                    <Check size={13} /> Accept
+                  </button>
+                  <button type="button" className="btn small" disabled={busy} onClick={() => decideHere('rejected', note)}>
+                    <X size={13} /> Reject
+                  </button>
+                </Fragment>
+              ) : (
+                <Fragment key="decided">
+                  <span className="output-verdict-note">
+                    {o.verdict_note ? `“${o.verdict_note}”` : o.verdict === 'accepted' ? 'Accepted without a note.' : 'Rejected without a note.'}
+                  </span>
+                  <div className="spacer" />
+                  <button
+                    ref={undoRef}
+                    type="button"
+                    className="btn small"
+                    disabled={busy}
+                    onClick={() => decideHere('pending', '')}
+                    title="Remove the verdict and the reference it made"
+                  >
+                    <Undo2 size={13} /> Undo verdict
+                  </button>
+                </Fragment>
               )}
               <button
                 ref={deleteRef}
@@ -390,8 +496,23 @@ export default function OutputsView({ language, tick, pending, onChanged }: Prop
     }
   };
 
-  if (items === null) return null;
-  if (items.length === 0) {
+  // Outputs without a verdict come first. After that the order holds, so that a card does not move away
+  // from the pointer right after its verdict; new outputs go to the top.
+  const order = useRef<{ language: string; ids: string[] }>({ language: '', ids: [] });
+  const shown = useMemo(() => {
+    if (items === null) return null;
+    if (order.current.language !== language.id) order.current = { language: language.id, ids: [] };
+    const known = new Set(order.current.ids);
+    const rank = (o: Output) => (o.verdict === 'pending' ? 0 : 1);
+    const fresh = items.filter((o) => !known.has(o.id)).sort((a, b) => rank(a) - rank(b));
+    const byId = new Map(items.map((o) => [o.id, o]));
+    const ids = [...fresh.map((o) => o.id), ...order.current.ids.filter((id) => byId.has(id))];
+    order.current.ids = ids;
+    return ids.map((id) => byId.get(id)!);
+  }, [items, language.id]);
+
+  if (shown === null) return null;
+  if (shown.length === 0) {
     return (
       <div className="board-empty">
         <div className="drop-target">
@@ -407,7 +528,7 @@ export default function OutputsView({ language, tick, pending, onChanged }: Prop
   }
   return (
     <div className="outputs">
-      {items.map((o) => (
+      {shown.map((o) => (
         <OutputCard
           key={o.id}
           o={o}

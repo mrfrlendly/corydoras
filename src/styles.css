@@ -2929,6 +2929,8 @@ textarea:focus-visible,
   margin: 8px 0 0;
   color: var(--ink-2);
   font-size: 12.5px;
+  user-select: text;
+  -webkit-user-select: text;
 }
 
 .output-check {
@@ -3433,4 +3435,47 @@ textarea:focus-visible,
   .palette-chip {
     transition: none;
   }
+}
+
+/* ---- WP-E: sources and outputs ---- */
+
+/* Outputs: the thumbnail opens the full image; the description shows four lines until More. */
+.output-thumb {
+  display: block;
+  align-self: start;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: default;
+}
+
+.output-note.clamped {
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.output-more {
+  margin-top: 2px;
+}
+
+/* A check summary is neutral; it takes a colour only when something warns or fails. */
+.check-sum {
+  color: var(--ink-2);
+}
+.check-sum.check-warn {
+  color: var(--warn);
+}
+.check-sum.check-fail {
+  color: var(--err);
+}
+
+.output-verdict-note {
+  color: var(--ink-2);
+  font-size: 12.5px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  user-select: text;
+  -webkit-user-select: text;
 }

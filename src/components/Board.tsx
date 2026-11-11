@@ -149,8 +149,11 @@ export default function Board({
   const [boardUrl, setBoardUrl] = useState<string | null>(null);
   const [boardBusy, setBoardBusy] = useState<string | null>(null);
   const [mode, setModeState] = useState<BoardMode>(() => loadMode(language.id));
+  /** Canvas: the card to pan into view. A new object asks again (scrollIntoView does nothing there). */
+  const [revealReq, setRevealReq] = useState<{ id: string } | null>(null);
   const setMode = (m: BoardMode) => {
     setModeState(m);
+    setRevealReq(null);
     try {
       localStorage.setItem(`cory.boardMode.${language.id}`, m);
     } catch {
@@ -469,6 +472,9 @@ export default function Board({
   }, [items, showAnti, filter, hits]);
   const hitOf = useMemo(() => new Map((hits ?? []).map((h) => [h.item_id, h])), [hits]);
   const selectedItem = items.find((i) => i.id === selected) ?? null;
+  /** The selection now, for callbacks that end after other keys or clicks changed it. */
+  const selectedRef = useRef(selected);
+  selectedRef.current = selected;
 
   // Keyboard: the inspector takes focus when a key opened it; a card takes it back on close.
   const openedByKey = useRef(false);
@@ -552,7 +558,10 @@ export default function Board({
     const id = wantFocus.current;
     if (id && (!document.activeElement || document.activeElement === document.body)) cardEl(id)?.focus({ preventScroll: true });
     const s = scrollReq.current;
-    if (s && cardEl(s.id)) {
+    if (s && mode === 'canvas') {
+      // The canvas pans with revealReq instead.
+      scrollReq.current = null;
+    } else if (s && cardEl(s.id)) {
       scrollReq.current = null;
       cardEl(s.id)!.scrollIntoView({ block: s.block });
     }
@@ -568,9 +577,10 @@ export default function Board({
       toast.info(`No image on this board has the ID ${focus}.`);
       return;
     }
-    scrollReq.current = { id: it.id, block: 'center' };
+    if (mode === 'canvas') setRevealReq({ id: it.id });
+    else scrollReq.current = { id: it.id, block: 'center' };
     select(it.id);
-  }, [focus, loaded, items, select, toast]);
+  }, [focus, loaded, items, mode, select, toast]);
 
   // Keys of the board: Escape closes the inspector, arrows go to the next card, ⌘F searches.
   useEffect(() => {
@@ -585,6 +595,9 @@ export default function Board({
         return;
       }
       if (e.metaKey || e.ctrlKey || e.altKey || isField(e.target)) return;
+      // Keys pressed outside the board (the sidebar, the language header, a message) are not for it.
+      const t = e.target;
+      if (t instanceof Node && t !== document.body && !wrapEl?.contains(t)) return;
       if (e.key === 'Escape') {
         if (!selected) return;
         e.preventDefault();
@@ -608,6 +621,8 @@ export default function Board({
       }
       if (!next) return;
       e.preventDefault();
+      // Canvas: pan to the card. A focused card pans only on a visible focus, and the inspector can keep the focus.
+      if (mode === 'canvas') setRevealReq({ id: next });
       if (!selected) {
         // Nothing open: the arrows only move the focus.
         focusCard(next);
@@ -616,12 +631,12 @@ export default function Board({
       // With focus in the inspector it stays there; otherwise it follows the card.
       const inInspector = !!document.activeElement?.closest('.inspector');
       select(next, inInspector);
-      if (inInspector) scrollReq.current = { id: next, block: 'nearest' };
-      else focusCard(next);
+      if (!inInspector) focusCard(next);
+      else if (mode === 'grid') scrollReq.current = { id: next, block: 'nearest' };
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [shown, columns, selected, mode, closeInspector, focusCard, select]);
+  }, [shown, columns, selected, mode, wrapEl, closeInspector, focusCard, select]);
 
   const onCardKey = (e: ReactKeyboardEvent<HTMLElement>, id: string) => {
     if (e.target !== e.currentTarget || e.repeat) return;
@@ -782,6 +797,7 @@ export default function Board({
             renderCaption={renderCaption}
             cardLabel={cardLabel}
             onPlaced={onPlaced}
+            revealReq={revealReq}
           />
         ) : (
           <div className="masonry" ref={setGridEl}>
@@ -832,14 +848,17 @@ export default function Board({
             onChanged();
           }}
           onRemoved={() => {
-            // Focus goes to the next card (or the one before it).
-            const i = shown.findIndex((x) => x.id === selectedItem.id);
-            const next = i < 0 ? undefined : (shown[i + 1] ?? shown[i - 1]);
-            const back = focusWasInInspector();
-            setSelected(null);
-            if (next && back) focusCard(next.id);
+            const removedId = selectedItem.id;
             load();
             onChanged();
+            // The removal takes a moment: when another card was opened meanwhile, it stays open.
+            if (selectedRef.current !== removedId) return;
+            // Focus goes to the next card (or the one before it).
+            const i = shown.findIndex((x) => x.id === removedId);
+            const next = i < 0 ? undefined : (shown[i + 1] ?? shown[i - 1]);
+            const back = focusWasInInspector();
+            setSelected((cur) => (cur === removedId ? null : cur));
+            if (next && back) focusCard(next.id);
           }}
         />
       )}

@@ -246,9 +246,14 @@ function SourceInspector({
   const closeRef = useRef<HTMLButtonElement>(null);
   const removeRef = useRef<HTMLButtonElement>(null);
   const refocusRemove = useRef(false);
+  /** Set when "Remove from language" starts: a removed source has nothing to save. */
   const removed = useRef(false);
-  /** The last title sent with saveTitle, so that the unmount does not send it again. */
+  /** The last title sent with saveTitle or save, so that the unmount does not send it again. */
   const sentTitle = useRef(source.title);
+  /** The last note sent with save (trimmed, as the library keeps it). Until the list reloads,
+   *  `source.note` is the old note: the unmount must not call the new one unsaved, and a title
+   *  or weight change must not send the old one back (that makes the model read the source again). */
+  const sentNote = useRef<string | null>(null);
   const latest = useRef({ source, title, note, weight, onChanged });
   latest.current = { source, title, note, weight, onChanged };
 
@@ -266,9 +271,10 @@ function SourceInspector({
       if (removed.current) return;
       const { source: s, title: t0, note: n, weight: w, onChanged: changed } = latest.current;
       const t = t0.trim() || s.title;
+      const savedNote = sentNote.current ?? s.note;
       const fail = (e: unknown) => toast.error(errText(e));
-      if (t !== s.title && t !== sentTitle.current) api.updateSource(s.id, t, s.note, w).then(changed).catch(fail);
-      if (n.trim() !== s.note) {
+      if (t !== s.title && t !== sentTitle.current) api.updateSource(s.id, t, savedNote, w).then(changed).catch(fail);
+      if (n.trim() !== savedNote) {
         toast.info(`The note for “${t}” is not saved.`, {
           label: 'Save',
           run: () => {
@@ -289,10 +295,16 @@ function SourceInspector({
 
   /** Saves the note (it makes the model read the source again), with the title and the weight. */
   const save = async () => {
+    const t = title.trim() || source.title;
+    const before = { note: sentNote.current, title: sentTitle.current };
+    sentNote.current = note.trim();
+    sentTitle.current = t;
     try {
-      await api.updateSource(source.id, title.trim() || source.title, note, weight);
+      await api.updateSource(source.id, t, note, weight);
       onChanged();
     } catch (e) {
+      sentNote.current = before.note;
+      sentTitle.current = before.title;
       toast.error(errText(e));
     }
   };
@@ -300,7 +312,7 @@ function SourceInspector({
   /** Saves the title and the weight; the saved note stays, so the source is not read again. */
   const saveQuiet = async (w: number) => {
     try {
-      await api.updateSource(source.id, title.trim() || source.title, source.note, w);
+      await api.updateSource(source.id, title.trim() || source.title, sentNote.current ?? source.note, w);
       onChanged();
       return true;
     } catch (e) {
@@ -468,15 +480,18 @@ function SourceInspector({
             >
               <button
                 className="btn danger small"
-                onClick={() =>
+                onClick={() => {
+                  if (removed.current) return;
+                  // Set before the call: an arrow key during the removal must not save this source on close.
+                  removed.current = true;
                   api
                     .removeSource(source.id)
-                    .then(() => {
-                      removed.current = true;
-                      onRemoved();
-                    })
-                    .catch((e) => toast.error(errText(e)))
-                }
+                    .then(onRemoved)
+                    .catch((e) => {
+                      removed.current = false;
+                      toast.error(errText(e));
+                    });
+                }}
               >
                 <Trash2 size={13} /> Remove from language
               </button>
@@ -635,6 +650,9 @@ export default function SourcesView({ language, tick, onChanged }: { language: L
   };
 
   const selectedSource = sources.find((s) => s.id === selected) ?? null;
+  /** The selection now, for callbacks that end after other keys or clicks changed it. */
+  const selectedRef = useRef(selected);
+  selectedRef.current = selected;
 
   /** Moves the keyboard focus to a card, after the layout has followed the selection. */
   const focusCard = (id: string) =>
@@ -748,11 +766,14 @@ export default function SourcesView({ language, tick, onChanged }: { language: L
           onClose={close}
           onChanged={changed}
           onRemoved={() => {
-            // The focus goes to the card after the removed one (or before it, at the end).
-            const i = sources.findIndex((x) => x.id === selectedSource.id);
-            const next = sources[i + 1] ?? sources[i - 1];
-            setSelected(null);
+            const removedId = selectedSource.id;
             changed();
+            // The removal takes a moment: when another source was opened meanwhile, it stays open.
+            if (selectedRef.current !== removedId) return;
+            // The focus goes to the card after the removed one (or before it, at the end).
+            const i = sources.findIndex((x) => x.id === removedId);
+            const next = i < 0 ? undefined : (sources[i + 1] ?? sources[i - 1]);
+            setSelected((cur) => (cur === removedId ? null : cur));
             if (next) focusCard(next.id);
           }}
         />

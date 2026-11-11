@@ -33,6 +33,8 @@ function toDrafts(d: ItemDetail | null): Draft[] {
   return (d?.regions ?? []).map((r) => ({ ...r, id: r.id, key: newKey() }));
 }
 
+const toInputs = (rs: Draft[]): RegionInput[] => rs.map(({ id, x, y, w, h, note, tag }) => ({ id, x, y, w, h, note, tag }));
+
 function AnalysisBlock({ analysis, model }: { analysis: Record<string, unknown>; model: string | null }) {
   const [raw, setRaw] = useState(false);
   const summary = typeof analysis.summary === 'string' ? analysis.summary : '';
@@ -74,16 +76,24 @@ export default function ItemInspector({ item, tick, focusOnOpen = false, onClose
   const [regionsDirty, setRegionsDirty] = useState(false);
   const [confirmRemove, setConfirmRemove] = useState(false);
   const [drawing, setDrawing] = useState<{ x0: number; y0: number; x: number; y: number } | null>(null);
+  const asideRef = useRef<HTMLElement>(null);
   const frameRef = useRef<HTMLDivElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
   const removeRef = useRef<HTMLButtonElement>(null);
   const refocusRemove = useRef(false);
+  /** Set when "Remove from language" starts: a removed item has nothing to save. */
+  const removing = useRef(false);
 
   // Tags and note save when the field loses focus, and when the inspector closes
   // or shows another item (it is keyed by item), so typed text is never lost.
   const dirty = useRef(false);
   const latest = useRef({ tags, note, weight, anti, onChanged });
   latest.current = { tags, note, weight, anti, onChanged };
+  // Marks do not save on close: a save analyzes the item again (it costs tokens), so a message asks.
+  // `sent` is the list that saveRegions is sending, so that a close during that save does not ask.
+  const marks = useRef<{ regions: Draft[]; dirty: boolean; sent: Draft[] | null }>({ regions, dirty: regionsDirty, sent: null });
+  marks.current.regions = regions;
+  marks.current.dirty = regionsDirty;
 
   useEffect(() => {
     api
@@ -105,15 +115,30 @@ export default function ItemInspector({ item, tick, focusOnOpen = false, onClose
 
   useEffect(
     () => () => {
+      const l = latest.current;
+      const m = marks.current;
+      if (!removing.current && m.dirty && m.regions !== m.sent) {
+        toast.info(`The changes to the marks on “${item.original_name}” are not saved.`, {
+          label: 'Save',
+          run: () => {
+            api
+              .setRegions(item.id, toInputs(m.regions))
+              .then(() => {
+                toast.info('Marks saved. The item gets analyzed again with the crops.');
+                l.onChanged();
+              })
+              .catch((e) => toast.error(errText(e)));
+          },
+        });
+      }
       if (!dirty.current) return;
       dirty.current = false;
-      const l = latest.current;
       api
         .updateItem(item.id, parseTags(l.tags), l.note, l.weight, l.anti)
         .then(() => l.onChanged())
         .catch((e) => toast.error(errText(e)));
     },
-    // The save on close reads the latest values from the ref.
+    // The save on close reads the latest values from the refs.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [],
   );
@@ -140,11 +165,18 @@ export default function ItemInspector({ item, tick, focusOnOpen = false, onClose
     saveAnnotation({ weight: w });
   };
 
-  // 1 to 5 set the weight, outside text fields.
+  // 1 to 5 set the weight, outside text fields. Only keys pressed on this board count (or with the focus
+  // nowhere), and not on the card of another item.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey || isField(e.target)) return;
       if (!/^[1-5]$/.test(e.key)) return;
+      const t = e.target;
+      if (t instanceof Node && t !== document.body) {
+        if (!asideRef.current?.closest('.board-wrap')?.contains(t)) return;
+        const card = t instanceof Element ? t.closest<HTMLElement>('[data-card]') : null;
+        if (card && card.dataset.card !== item.id) return;
+      }
       e.preventDefault();
       setWeightNow(Number(e.key));
     };
@@ -186,15 +218,14 @@ export default function ItemInspector({ item, tick, focusOnOpen = false, onClose
       .catch((e) => toast.error(errText(e)));
 
   const saveRegions = async () => {
+    marks.current.sent = regions;
     try {
-      await api.setRegions(
-        item.id,
-        regions.map(({ id, x, y, w, h, note: n, tag }) => ({ id, x, y, w, h, note: n, tag })),
-      );
+      await api.setRegions(item.id, toInputs(regions));
       setRegionsDirty(false);
       toast.info('Marks saved. The item gets analyzed again with the crops.');
       onChanged();
     } catch (e) {
+      marks.current.sent = null;
       toast.error(errText(e));
     }
   };
@@ -258,7 +289,7 @@ export default function ItemInspector({ item, tick, focusOnOpen = false, onClose
         : 'Waiting for analysis.';
 
   return (
-    <aside className="inspector" aria-labelledby="insp-title" onKeyDown={onKeyDown}>
+    <aside ref={asideRef} className="inspector" aria-labelledby="insp-title" onKeyDown={onKeyDown}>
       <div className="insp-head">
         <div>
           <div className="eyebrow">Item {shortId(item.id)}</div>
@@ -516,12 +547,19 @@ export default function ItemInspector({ item, tick, focusOnOpen = false, onClose
               <button
                 className="btn danger small"
                 onClick={() => {
-                  // A removed item has no annotation to save.
+                  if (removing.current) return;
+                  // A removed item has no annotation or marks to save, also when it closes before the removal ends.
+                  removing.current = true;
+                  const wasDirty = dirty.current;
                   dirty.current = false;
                   api
                     .removeItem(item.id)
                     .then(onRemoved)
-                    .catch((e) => toast.error(errText(e)));
+                    .catch((e) => {
+                      removing.current = false;
+                      dirty.current = dirty.current || wasDirty;
+                      toast.error(errText(e));
+                    });
                 }}
               >
                 <Trash2 size={13} /> Remove from language

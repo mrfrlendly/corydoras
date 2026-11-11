@@ -31,6 +31,8 @@ interface Props {
   cardLabel: (item: Item) => string;
   /** Places were saved; the parent keeps its item list in step. */
   onPlaced: (places: CanvasPlacement[]) => void;
+  /** Pan so that this card is in view (a link from Insight, an arrow key). A new object asks again. */
+  revealReq?: { id: string } | null;
 }
 
 /** Share of the remaining distance that an animated zoom covers per frame. */
@@ -91,7 +93,7 @@ type Gesture =
   | { kind: 'move'; id: string; sx: number; sy: number; x: number; y: number; moved: boolean }
   | { kind: 'resize'; id: string; sx: number; w: number };
 
-export default function CanvasView({ languageId, items, selected, onSelect, renderCaption, cardLabel, onPlaced }: Props) {
+export default function CanvasView({ languageId, items, selected, onSelect, renderCaption, cardLabel, onPlaced, revealReq = null }: Props) {
   const toast = useToast();
   const wrapRef = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState<Record<string, CanvasPos>>({});
@@ -172,6 +174,8 @@ export default function CanvasView({ languageId, items, selected, onSelect, rend
     (t: View) => {
       if (reducedMotion()) {
         targetRef.current = null;
+        // Set the ref now too: a reveal in the same commit (after a fit) builds on this view.
+        viewRef.current = t;
         setView(t);
         return;
       }
@@ -358,6 +362,14 @@ export default function CanvasView({ languageId, items, selected, onSelect, rend
       fit();
     }
   }, [pos, fit]);
+
+  // A card that the board asks for: pan to it once its place is known (after the first fit, which runs above).
+  const revealed = useRef<{ id: string } | null>(null);
+  useEffect(() => {
+    if (!revealReq || revealed.current === revealReq || !pos[revealReq.id]) return;
+    revealed.current = revealReq;
+    reveal(revealReq.id);
+  }, [revealReq, pos, reveal]);
 
   const cards = useMemo(
     () =>

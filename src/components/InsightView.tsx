@@ -1,11 +1,21 @@
 import { useEffect, useState } from 'react';
-import { ScanSearch } from 'lucide-react';
+import { ChevronRight, ScanSearch } from 'lucide-react';
 import { api, Coverage, errText, fmtDate, Gap, Language, UsageInsight } from '../api';
 import { useToast } from './Toast';
 
 interface Props {
   language: Language;
   tick: number;
+  onBoard?: (idPrefix: string | null) => void;
+  onDocument?: () => void;
+  onActivity?: () => void;
+}
+
+/** Where the gap cards and the reference ids lead. */
+interface Links {
+  onBoard?: (idPrefix: string | null) => void;
+  onDocument?: () => void;
+  onActivity?: () => void;
 }
 
 const SEVERITY: { id: Gap['severity']; title: string; hint: string }[] = [
@@ -20,44 +30,88 @@ const PERIODS = [
   { days: 365, label: 'Last year' },
 ];
 
-/** Text from the report with `ids` in backticks: each one becomes a code chip. */
-function Coded({ text }: { text: string }) {
-  const parts = text.split('`');
+const SHORT_ID = /^[0-9a-f]{8}$/;
+
+/** A reference id. With a Board to go to, a button that shows the reference there. */
+function RefId({ id, onBoard }: { id: string; onBoard?: (idPrefix: string | null) => void }) {
+  if (!onBoard || !SHORT_ID.test(id)) return <code className="mono">{id}</code>;
   return (
-    <>
-      {parts.map((p, i) =>
-        i % 2 === 1 ? (
-          <code key={i} className="mono">
-            {p}
-          </code>
-        ) : (
-          p
-        ),
-      )}
-    </>
+    <button type="button" className="id-link mono" onClick={() => onBoard(id)} title="Show this reference on the Board">
+      {id}
+    </button>
   );
+}
+
+/** Text from the report with `ids` in backticks: each one becomes a code chip. */
+function Coded({ text, onBoard }: { text: string; onBoard?: (idPrefix: string | null) => void }) {
+  const parts = text.split('`');
+  return <>{parts.map((p, i) => (i % 2 === 1 ? <RefId key={i} id={p} onBoard={onBoard} /> : p))}</>;
 }
 
 function plural(n: number, one: string, many: string) {
   return n === 1 ? one : many;
 }
 
-function Ids({ ids }: { ids: string[] }) {
+function Ids({ ids, onBoard }: { ids: string[]; onBoard?: (idPrefix: string | null) => void }) {
   if (ids.length === 0) return null;
   return (
     <span className="gap-ids">
       {ids.slice(0, 8).map((id) => (
-        <code key={id} className="mono">
-          {id}
-        </code>
+        <RefId key={id} id={id} onBoard={onBoard} />
       ))}
       {ids.length > 8 && <span className="muted"> +{ids.length - 8}</span>}
     </span>
   );
 }
 
-function CoverageSection({ c }: { c: Coverage }) {
+/** Kinds of gap (crates/corydoras-core/src/coverage.rs) whose fix starts on the Board. */
+const BOARD_GAPS = [
+  'weak-measure',
+  'contradiction',
+  'thin-family',
+  'missing-views',
+  'no-measures',
+  'no-rules',
+  'no-anti-reference',
+  'no-colours',
+  'unused-reference',
+];
+
+/** The one place to go for a gap, or nothing. */
+function GapAction({ g, links }: { g: Gap; links: Links }) {
+  const { onBoard, onDocument, onActivity } = links;
+  let label = '';
+  let run: (() => void) | undefined;
+  // A failed analysis has its Retry on the card; references that wait are in Activity.
+  if ((BOARD_GAPS.includes(g.kind) || (g.kind === 'not-analyzed' && g.evidence.length > 0)) && onBoard) {
+    label = g.evidence.length > 0 ? 'Show on the Board' : 'Open the Board';
+    run = () => onBoard(g.evidence[0] ?? null);
+  } else if ((g.kind === 'review-notes' || g.kind === 'no-document') && onDocument) {
+    label = 'Open the document';
+    run = onDocument;
+  } else if (g.kind === 'not-analyzed' && onActivity) {
+    label = 'Open Activity';
+    run = onActivity;
+  }
+  if (!run) return null;
+  return (
+    <>
+      {' '}
+      <button type="button" className="link-btn small gap-action" onClick={run}>
+        {label}
+      </button>
+    </>
+  );
+}
+
+/** How many medium gaps show before "Show more". */
+const MEDIUM_FIRST = 3;
+
+function CoverageSection({ c, links }: { c: Coverage; links: Links }) {
   const [family, setFamily] = useState('');
+  // The low gaps are many and minor: they start closed.
+  const [open, setOpen] = useState<Record<Gap['severity'], boolean>>({ high: true, medium: true, low: false });
+  const [allMedium, setAllMedium] = useState(false);
   const gaps = c.gaps.filter((g) => !family || g.family === family);
   return (
     <section className="panel">
@@ -118,23 +172,49 @@ function CoverageSection({ c }: { c: Coverage }) {
         SEVERITY.map((s) => {
           const list = gaps.filter((g) => g.severity === s.id);
           if (list.length === 0) return null;
+          const isOpen = open[s.id];
+          const shown = s.id === 'medium' && !allMedium ? list.slice(0, MEDIUM_FIRST) : list;
+          const listId = `gaps-${s.id}`;
           return (
             <div key={s.id} className={`gap-group gap-${s.id}`}>
               <h4>
-                {s.title} <span className="tab-badge">{list.length}</span>
+                <button
+                  type="button"
+                  className="gap-toggle"
+                  aria-expanded={isOpen}
+                  aria-controls={listId}
+                  onClick={() => setOpen((o) => ({ ...o, [s.id]: !o[s.id] }))}
+                >
+                  <ChevronRight size={13} className="gap-chevron" aria-hidden />
+                  {s.title} <span className="tab-badge">{list.length}</span>
+                </button>
                 {s.hint && <span className="muted small"> · {s.hint}</span>}
               </h4>
-              <ul className="gaps">
-                {list.map((g, i) => (
-                  <li key={i} className="gap">
-                    <div className="gap-title">{g.title}</div>
-                    <div className="small">
-                      <Coded text={g.detail} /> {!g.detail.includes('`') && <Ids ids={g.evidence} />}
-                    </div>
-                    <div className="small gap-suggestion">{g.suggestion}</div>
-                  </li>
-                ))}
-              </ul>
+              {isOpen && (
+                <ul className="gaps" id={listId}>
+                  {shown.map((g, i) => {
+                    // The ids of a stale-evidence gap are no longer on the Board.
+                    const onBoard = g.kind === 'stale-evidence' ? undefined : links.onBoard;
+                    return (
+                      <li key={i} className="gap">
+                        <div className="gap-title">{g.title}</div>
+                        <div className="small">
+                          <Coded text={g.detail} onBoard={onBoard} /> {!g.detail.includes('`') && <Ids ids={g.evidence} onBoard={onBoard} />}
+                        </div>
+                        <div className="small gap-suggestion">
+                          {g.suggestion}
+                          <GapAction g={g} links={links} />
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+              {isOpen && shown.length < list.length && (
+                <button type="button" className="link-btn small gap-more" onClick={() => setAllMedium(true)}>
+                  Show {list.length - shown.length} more
+                </button>
+              )}
             </div>
           );
         })
@@ -143,7 +223,17 @@ function CoverageSection({ c }: { c: Coverage }) {
   );
 }
 
-function UsageSection({ u, days, onDays }: { u: UsageInsight; days: number; onDays: (d: number) => void }) {
+function UsageSection({
+  u,
+  days,
+  onDays,
+  onBoard,
+}: {
+  u: UsageInsight;
+  days: number;
+  onDays: (d: number) => void;
+  onBoard?: (idPrefix: string | null) => void;
+}) {
   return (
     <section className="panel">
       <div className="row" style={{ marginTop: 0 }}>
@@ -231,7 +321,7 @@ function UsageSection({ u, days, onDays }: { u: UsageInsight; days: number; onDa
               <b>References that agents asked to see:</b>{' '}
               {u.references.map(([id, n]) => (
                 <span key={id}>
-                  <code className="mono">{id}</code> ({n}){' '}
+                  <RefId id={id} onBoard={onBoard} /> ({n}){' '}
                 </span>
               ))}
             </p>
@@ -260,7 +350,7 @@ function UsageSection({ u, days, onDays }: { u: UsageInsight; days: number; onDa
   );
 }
 
-export default function InsightView({ language, tick }: Props) {
+export default function InsightView({ language, tick, onBoard, onDocument, onActivity }: Props) {
   const toast = useToast();
   const [coverage, setCoverage] = useState<Coverage | null>(null);
   const [usage, setUsage] = useState<UsageInsight | null>(null);
@@ -297,8 +387,8 @@ export default function InsightView({ language, tick }: Props) {
   }
   return (
     <div className="insight">
-      {coverage && <CoverageSection c={coverage} />}
-      {usage && <UsageSection u={usage} days={days} onDays={setDays} />}
+      {coverage && <CoverageSection c={coverage} links={{ onBoard, onDocument, onActivity }} />}
+      {usage && <UsageSection u={usage} days={days} onDays={setDays} onBoard={onBoard} />}
     </div>
   );
 }

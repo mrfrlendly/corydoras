@@ -3398,7 +3398,7 @@ textarea:focus-visible,
 }
 
 .cmp-delta {
-  color: var(--accent);
+  color: var(--ink);
   font-variant-numeric: tabular-nums;
   font-weight: 600;
 }

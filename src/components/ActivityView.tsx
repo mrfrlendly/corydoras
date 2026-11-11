@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { ActivityReport, api, CurrentJob, errText, fmtDuration, fmtTokens, JobView, Language, LogEntry, streamLabel } from '../api';
 import { CircleStop, Pause, Play, X } from 'lucide-react';
 import { useToast } from './Toast';
+import { useConfirmRow } from './useConfirmRow';
 
 interface Props {
   languages: Language[];
@@ -157,6 +158,7 @@ export default function ActivityView({ languages, onChanged, onOpenLanguage }: P
   const [, setTick] = useState(0);
   const [confirmAll, setConfirmAll] = useState(false);
   const [onlyProblems, setOnlyProblems] = useState(false);
+  const cancelAllTrigger = useConfirmRow(confirmAll, () => setConfirmAll(false));
 
   const load = useCallback(() => {
     api
@@ -237,12 +239,17 @@ export default function ActivityView({ languages, onChanged, onOpenLanguage }: P
               <button className="btn small danger" onClick={cancelAll}>
                 Cancel {report?.jobs.length ?? 0} job{report?.jobs.length === 1 ? '' : 's'}
               </button>
-              <button className="btn small" onClick={() => setConfirmAll(false)}>
+              <button className="btn small" autoFocus onClick={() => setConfirmAll(false)}>
                 Keep
               </button>
             </>
           ) : (
-            <button className="btn small ghost-danger" onClick={() => setConfirmAll(true)} disabled={!report || report.jobs.length === 0}>
+            <button
+              ref={cancelAllTrigger}
+              className="btn small ghost-danger"
+              onClick={() => setConfirmAll(true)}
+              disabled={!report || report.jobs.length === 0}
+            >
               <X size={13} /> Cancel all…
             </button>
           )}
@@ -251,7 +258,7 @@ export default function ActivityView({ languages, onChanged, onOpenLanguage }: P
 
       <div className="settings-body">
         {report?.paused && (
-          <div className="notice">
+          <div className="notice warn">
             The queue is paused. A running job finishes, but no new job starts. Your choice stays after a restart.
           </div>
         )}
@@ -264,14 +271,15 @@ export default function ActivityView({ languages, onChanged, onOpenLanguage }: P
             <p className="muted small">
               {waiting.length === 0
                 ? 'The queue is empty. New images, sources and annotation changes add jobs automatically.'
-                : report?.manual && !report.running
-                  ? `${waiting.length} job${waiting.length === 1 ? '' : 's'} wait. Manual mode: click Run queue at the top right to start them.`
-                  : report?.paused
+                : report?.paused
                   ? `${waiting.length} job${waiting.length === 1 ? '' : 's'} wait until you resume the queue.`
-                  : `${waiting.length} job${waiting.length === 1 ? '' : 's'} wait. The next one starts ${
-                      waiting[0].run_after_ms <= now ? 'in a moment' : `in ${fmtDuration(waiting[0].run_after_ms - now)}`
-                    }.`}
+                  : report?.manual && !report.running
+                    ? `${waiting.length} job${waiting.length === 1 ? '' : 's'} wait.`
+                    : `${waiting.length} job${waiting.length === 1 ? '' : 's'} wait. The next one starts ${
+                        waiting[0].run_after_ms <= now ? 'in a moment' : `in ${fmtDuration(waiting[0].run_after_ms - now)}`
+                      }.`}
             </p>
+            {report?.manual && <p className="muted small">Manual mode: jobs wait until you click Run queue. Pause stops Run queue too.</p>}
           </section>
         )}
 

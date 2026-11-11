@@ -374,7 +374,8 @@ h3 {
 }
 
 .btn.small {
-  padding: 4px 10px;
+  height: var(--control-h);
+  padding: 0 10px;
   font-size: 12px;
 }
 
@@ -445,6 +446,28 @@ textarea,
   outline: none;
 }
 
+/* One height for every single-line control. The big title fields keep their own. */
+input:not([type='checkbox']):not([type='radio']):not(.title-input),
+.select {
+  height: var(--control-h);
+  padding-top: 0;
+  padding-bottom: 0;
+}
+
+/* The native select is 20px tall and ignores padding; draw our own box and chevron. */
+.select {
+  -webkit-appearance: none;
+  appearance: none;
+  padding: 0 26px 0 9px;
+  background: var(--panel) var(--select-chevron) no-repeat right 8px center / 12px 12px;
+}
+
+/* Fields that sit inside a framed control (search, link form) fill it. */
+.board-search input:not([type='checkbox']):not([type='radio']),
+.link-form input:not([type='checkbox']):not([type='radio']) {
+  height: auto;
+}
+
 input:focus,
 textarea:focus,
 .select:focus {
@@ -453,7 +476,7 @@ textarea:focus,
 }
 
 .select.small {
-  padding: 3px 8px;
+  padding: 0 24px 0 8px;
   font-size: 12px;
 }
 
@@ -642,6 +665,7 @@ textarea {
 
 .seg {
   display: inline-flex;
+  height: var(--control-h);
   border: 1px solid var(--rule);
   border-radius: var(--radius-ctl);
   overflow: hidden;
@@ -1815,7 +1839,8 @@ button.chip {
 
 .note-area {
   resize: none;
-  min-height: 32px;
+  padding: 4px 9px;
+  min-height: var(--control-h);
   line-height: 1.4;
   display: block;
 }
@@ -2046,10 +2071,18 @@ svg.lucide {
   flex: 1;
   max-width: 560px;
   min-width: 260px;
-  padding: 3px 3px 3px 10px;
+  height: var(--control-h);
+  padding: 0 2px 0 10px;
   border: 1px solid var(--rule);
   border-radius: var(--radius-ctl);
   background: var(--panel);
+}
+
+/* The submit button sits inside the 28px frame. */
+.link-form .btn.small {
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 5px;
 }
 
 .link-form:focus-within {
@@ -3032,7 +3065,7 @@ textarea:focus-visible,
   align-items: center;
   gap: 6px;
   padding: 0 6px 0 8px;
-  height: 26px;
+  height: var(--control-h);
   border: 1px solid var(--rule);
   border-radius: var(--radius-ctl);
   background: var(--panel);

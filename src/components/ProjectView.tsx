@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import { api, errText, Language, PinInput, PinScope, Project, RuleSet, VersionInfo } from '../api';
-import { Check, Eye, Trash2, X } from 'lucide-react';
+import { Eye, Trash2, X } from 'lucide-react';
 import { useToast } from './Toast';
+import { useConfirmRow } from './useConfirmRow';
 
 interface Props {
   project: Project;
@@ -13,11 +14,11 @@ interface Props {
   onDeleted: () => void;
 }
 
-const SCOPES: { value: PinScope; label: string }[] = [
-  { value: 'all', label: 'All sections' },
-  { value: 'cad', label: 'CAD geometry only' },
-  { value: 'cmf', label: 'Materials and CMF only' },
-  { value: 'prompts', label: 'Image-gen prompts only' },
+const SCOPES: { value: PinScope; label: string; phrase: string }[] = [
+  { value: 'all', label: 'All sections', phrase: 'all sections' },
+  { value: 'cad', label: 'CAD geometry only', phrase: 'only the CAD geometry' },
+  { value: 'cmf', label: 'Materials and CMF only', phrase: 'only the materials and CMF' },
+  { value: 'prompts', label: 'Image-gen prompts only', phrase: 'only the image-gen prompts' },
 ];
 
 function toInputs(p: Project): PinInput[] {
@@ -31,6 +32,7 @@ export default function ProjectView({ project, languages, ruleSets, onOpenRuleSe
   const [brief, setBrief] = useState<string | null>(null);
   const [name, setName] = useState(project.name);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const deleteTrigger = useConfirmRow(confirmDelete, () => setConfirmDelete(false));
 
   // The library reloads after every queue job and gives a new object each time.
   // Follow the saved pins only when they change, so an edit in progress stays.
@@ -48,12 +50,23 @@ export default function ProjectView({ project, languages, ruleSets, onOpenRuleSe
     };
   }, [languages, tick, toast]);
 
-  const toggleRuleSet = async (id: string, on: boolean) => {
-    const ids = on ? [...project.rule_set_ids, id] : project.rule_set_ids.filter((x) => x !== id);
+  const title = `“${project.name}”`;
+
+  const toggleRuleSet = async (r: RuleSet, on: boolean) => {
+    const before = project.rule_set_ids;
+    const ids = on ? [...before, r.id] : before.filter((x) => x !== r.id);
     try {
       await api.setProjectRuleSets(project.id, ids);
       setBrief(null);
       onChanged();
+      toast.info(`${title} ${on ? 'now uses' : 'no longer uses'} ${r.name}.`, {
+        label: 'Undo',
+        run: () =>
+          api
+            .setProjectRuleSets(project.id, before)
+            .then(onChanged)
+            .catch((e) => toast.error(errText(e))),
+      });
     } catch (e) {
       toast.error(errText(e));
     }
@@ -62,37 +75,60 @@ export default function ProjectView({ project, languages, ruleSets, onOpenRuleSe
   const versioned = languages.filter((l) => (versions[l.id]?.length ?? 0) > 0);
   const primary = pins.find((p) => p.role === 'primary') ?? null;
   const secondaries = pins.filter((p) => p.role === 'secondary');
-  const dirty = JSON.stringify(pins) !== server;
   const langName = (id: string) => languages.find((l) => l.id === id)?.name ?? id;
   const latestOf = (id: string) => versions[id]?.[0]?.version ?? null;
 
-  const setPrimary = (languageId: string) => {
-    const rest = pins.filter((p) => p.role !== 'primary' && p.language_id !== languageId);
-    if (!languageId) return setPins(rest);
-    const v = latestOf(languageId);
-    if (v === null) return;
-    setPins([{ language_id: languageId, version: v, role: 'primary', scope: 'all' }, ...rest]);
+  /** Pins apply at once, like "Pin in…" on the Versions tab. The toast can undo the change. */
+  const commit = async (next: PinInput[], text: string) => {
+    const before = pins;
+    setPins(next);
+    try {
+      await api.setPins(project.id, next);
+      setBrief(null);
+      onChanged();
+      toast.info(text, {
+        label: 'Undo',
+        run: () =>
+          api
+            .setPins(project.id, before)
+            .then(() => {
+              setBrief(null);
+              onChanged();
+            })
+            .catch((e) => toast.error(errText(e))),
+      });
+    } catch (e) {
+      setPins(before);
+      toast.error(errText(e));
+    }
   };
 
-  const update = (languageId: string, patch: Partial<PinInput>) =>
-    setPins((ps) => ps.map((p) => (p.language_id === languageId ? { ...p, ...patch } : p)));
+  const setPrimary = (languageId: string) => {
+    const rest = pins.filter((p) => p.role !== 'primary' && p.language_id !== languageId);
+    if (!languageId) return commit(rest, `${title} has no primary language now.`);
+    const v = latestOf(languageId);
+    if (v === null) return;
+    commit([{ language_id: languageId, version: v, role: 'primary', scope: 'all' }, ...rest], `${title} now uses v${v} of ${langName(languageId)} as its primary language.`);
+  };
+
+  const update = (pin: PinInput, patch: Partial<PinInput>) => {
+    const next = pins.map((p) => (p.language_id === pin.language_id ? { ...p, ...patch } : p));
+    const lang = langName(pin.language_id);
+    const scope = SCOPES.find((s) => s.value === patch.scope);
+    commit(next, scope ? `${title} now takes ${scope.phrase} from ${lang}.` : `${title} now uses v${patch.version} of ${lang}.`);
+  };
 
   const addSecondary = (languageId: string) => {
     const v = latestOf(languageId);
     if (v === null || pins.some((p) => p.language_id === languageId)) return;
-    setPins([...pins, { language_id: languageId, version: v, role: 'secondary', scope: 'cmf' }]);
+    commit([...pins, { language_id: languageId, version: v, role: 'secondary', scope: 'cmf' }], `${title} now takes only the materials and CMF from v${v} of ${langName(languageId)}.`);
   };
 
-  const save = async () => {
-    try {
-      await api.setPins(project.id, pins);
-      toast.info('Pins saved.');
-      onChanged();
-      setBrief(null);
-    } catch (e) {
-      toast.error(errText(e));
-    }
-  };
+  const remove = (pin: PinInput) =>
+    commit(
+      pins.filter((p) => p.language_id !== pin.language_id),
+      `${title} no longer uses ${langName(pin.language_id)}.`,
+    );
 
   const rename = async () => {
     if (name.trim() === project.name) return;
@@ -105,8 +141,14 @@ export default function ProjectView({ project, languages, ruleSets, onOpenRuleSe
     }
   };
 
-  const VersionSelect = ({ pin }: { pin: PinInput }) => (
-    <select className="select small" value={pin.version} onChange={(e) => update(pin.language_id, { version: Number(e.target.value) })}>
+  // A plain function, not a component: a component made in render remounts and loses focus on each change.
+  const versionSelect = (pin: PinInput) => (
+    <select
+      className="select small"
+      value={pin.version}
+      onChange={(e) => update(pin, { version: Number(e.target.value) })}
+      aria-label={`Version of ${langName(pin.language_id)}`}
+    >
       {(versions[pin.language_id] ?? []).map((v) => (
         <option key={v.version} value={v.version}>
           v{v.version}
@@ -120,7 +162,7 @@ export default function ProjectView({ project, languages, ruleSets, onOpenRuleSe
   const stale = (pin: PinInput) => {
     const l = latestOf(pin.language_id);
     return l !== null && l > pin.version ? (
-      <button className="link-btn" onClick={() => update(pin.language_id, { version: l })}>
+      <button className="btn small" onClick={() => update(pin, { version: l })}>
         Update to v{l}
       </button>
     ) : null;
@@ -131,22 +173,17 @@ export default function ProjectView({ project, languages, ruleSets, onOpenRuleSe
       <header className="lang-head" data-tauri-drag-region>
         <div className="lang-title">
           <div className="eyebrow">Project</div>
-          <input className="title-input plain" value={name} onChange={(e) => setName(e.target.value)} onBlur={rename} onKeyDown={(e) => e.key === 'Enter' && (e.target as HTMLInputElement).blur()} />
+          <input
+            className="title-input plain"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            onBlur={rename}
+            onKeyDown={(e) => e.key === 'Enter' && (e.target as HTMLInputElement).blur()}
+            aria-label="Project name"
+          />
           <p className="lang-desc muted">
             Agents call <code>get_project_brief</code> with the name “{project.name}”. They get the pinned versions below, not the latest.
           </p>
-        </div>
-        <div className="lang-actions">
-          {dirty && (
-            <>
-              <button className="btn small" onClick={() => setPins(toInputs(project))}>
-                Discard
-              </button>
-              <button className="btn small primary" onClick={save}>
-                <Check size={13} /> Save pins
-              </button>
-            </>
-          )}
         </div>
       </header>
 
@@ -166,7 +203,7 @@ export default function ProjectView({ project, languages, ruleSets, onOpenRuleSe
                 return (
                   <div key={r.id} className={`rs-row ${on ? 'on' : ''}`}>
                     <label className="check" style={{ margin: 0 }}>
-                      <input type="checkbox" checked={on} disabled={r.always} onChange={(e) => toggleRuleSet(r.id, e.target.checked)} />
+                      <input type="checkbox" checked={on} disabled={r.always} onChange={(e) => toggleRuleSet(r, e.target.checked)} />
                       <span className="rs-name">{r.name}</span>
                     </label>
                     <span className="muted small">
@@ -174,7 +211,7 @@ export default function ProjectView({ project, languages, ruleSets, onOpenRuleSe
                       {r.always ? ' · applies to every project' : ''}
                     </span>
                     <div className="spacer" />
-                    <button className="link-btn" onClick={() => onOpenRuleSet(r.id)}>
+                    <button className="link-btn" onClick={() => onOpenRuleSet(r.id)} aria-label={`Open ${r.name}`}>
                       Open
                     </button>
                   </div>
@@ -191,7 +228,7 @@ export default function ProjectView({ project, languages, ruleSets, onOpenRuleSe
         <section className="panel">
           <h3>Primary language</h3>
           <div className="pin-row">
-            <select className="select" value={primary?.language_id ?? ''} onChange={(e) => setPrimary(e.target.value)}>
+            <select className="select" value={primary?.language_id ?? ''} onChange={(e) => setPrimary(e.target.value)} aria-label="Primary language">
               <option value="">— none —</option>
               {versioned.map((l) => (
                 <option key={l.id} value={l.id}>
@@ -199,7 +236,7 @@ export default function ProjectView({ project, languages, ruleSets, onOpenRuleSe
                 </option>
               ))}
             </select>
-            {primary && <VersionSelect pin={primary} />}
+            {primary && versionSelect(primary)}
             {primary && stale(primary)}
           </div>
           <p className="muted small">The primary language applies to the whole design. Its rules win in a conflict.</p>
@@ -211,8 +248,13 @@ export default function ProjectView({ project, languages, ruleSets, onOpenRuleSe
           {secondaries.map((pin) => (
             <div key={pin.language_id} className="pin-row">
               <span className="pin-name">{langName(pin.language_id)}</span>
-              <VersionSelect pin={pin} />
-              <select className="select small" value={pin.scope} onChange={(e) => update(pin.language_id, { scope: e.target.value as PinScope })}>
+              {versionSelect(pin)}
+              <select
+                className="select small"
+                value={pin.scope}
+                onChange={(e) => update(pin, { scope: e.target.value as PinScope })}
+                aria-label={`Scope of ${langName(pin.language_id)}`}
+              >
                 {SCOPES.map((s) => (
                   <option key={s.value} value={s.value}>
                     {s.label}
@@ -220,13 +262,13 @@ export default function ProjectView({ project, languages, ruleSets, onOpenRuleSe
                 ))}
               </select>
               {stale(pin)}
-              <button className="icon-btn" title="Remove" onClick={() => setPins(pins.filter((p) => p.language_id !== pin.language_id))}>
+              <button className="icon-btn" title="Remove" aria-label={`Remove ${langName(pin.language_id)}`} onClick={() => remove(pin)}>
                 <X size={14} />
               </button>
             </div>
           ))}
           <div className="pin-row">
-            <select className="select small" value="" onChange={(e) => e.target.value && addSecondary(e.target.value)}>
+            <select className="select small" value="" onChange={(e) => e.target.value && addSecondary(e.target.value)} aria-label="Add a secondary language">
               <option value="">+ Add a secondary language…</option>
               {versioned
                 .filter((l) => !pins.some((p) => p.language_id === l.id))
@@ -244,8 +286,6 @@ export default function ProjectView({ project, languages, ruleSets, onOpenRuleSe
             <h3 className="grow">Brief preview</h3>
             <button
               className="btn small"
-              disabled={dirty}
-              title={dirty ? 'Save the pins first' : ''}
               onClick={() =>
                 api
                   .projectBrief(project.id)
@@ -273,13 +313,13 @@ export default function ProjectView({ project, languages, ruleSets, onOpenRuleSe
               >
                 <Trash2 size={13} /> Delete project
               </button>
-              <button className="btn small" onClick={() => setConfirmDelete(false)}>
+              <button className="btn small" autoFocus onClick={() => setConfirmDelete(false)}>
                 Cancel
               </button>
               <span className="muted small">Only the project and its pins go. The languages stay.</span>
             </div>
           ) : (
-            <button className="btn small ghost-danger" onClick={() => setConfirmDelete(true)}>
+            <button ref={deleteTrigger} className="btn small ghost-danger" onClick={() => setConfirmDelete(true)}>
               <Trash2 size={13} /> Delete project…
             </button>
           )}

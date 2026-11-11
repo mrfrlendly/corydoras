@@ -3434,3 +3434,22 @@ textarea:focus-visible,
     transition: none;
   }
 }
+
+/* ---- WP-D: configuring ---- */
+
+/* Settings: links to the sections under the title. */
+.page-jump {
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+}
+
+.settings-body > section[id] {
+  scroll-margin-top: 16px;
+}
+
+/* A section that a link moved focus to: no ring after a click, the ring after a key. */
+.settings-body > section[id]:focus:not(:focus-visible) {
+  outline: none;
+}

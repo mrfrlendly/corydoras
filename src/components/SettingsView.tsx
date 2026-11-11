@@ -14,6 +14,24 @@ interface Props {
   onChanged: () => void;
 }
 
+/** The sections of the page, in order, for the links under the title. */
+const SECTIONS: [id: string, label: string][] = [
+  ['settings-providers', 'Providers'],
+  ['settings-agents', 'Agents'],
+  ['settings-pipeline', 'Pipeline'],
+  ['settings-capture', 'Screen capture'],
+  ['settings-extension', 'Browser extension'],
+  ['settings-library', 'Library'],
+];
+
+function jump(id: string) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  el.scrollIntoView({ behavior: reduce ? 'auto' : 'smooth', block: 'start' });
+  el.focus({ preventScroll: true });
+}
+
 async function copy(text: string): Promise<boolean> {
   try {
     await navigator.clipboard.writeText(text);
@@ -26,15 +44,26 @@ async function copy(text: string): Promise<boolean> {
 export default function SettingsView({ info, onInfo, status, onChanged }: Props) {
   const toast = useToast();
   const [settings, setSettings] = useState<Settings | null>(null);
+  // The pipeline as saved; the section waits for its Save button.
+  const [saved, setSaved] = useState<Settings | null>(null);
 
   useEffect(() => {
-    api.getSettings().then(setSettings).catch((e) => toast.error(errText(e)));
+    api
+      .getSettings()
+      .then((s) => {
+        setSettings(s);
+        setSaved(s);
+      })
+      .catch((e) => toast.error(errText(e)));
   }, [toast]);
+  const pipelineDirty = settings !== null && JSON.stringify(settings) !== JSON.stringify(saved);
   const saveSettings = async () => {
     if (!settings) return;
     try {
-      setSettings(await api.saveSettings(settings));
-      toast.info('Settings saved.');
+      const s = await api.saveSettings(settings);
+      setSettings(s);
+      setSaved(s);
+      toast.info('Pipeline saved.');
       onChanged();
     } catch (e) {
       toast.error(errText(e));
@@ -61,14 +90,52 @@ export default function SettingsView({ info, onInfo, status, onChanged }: Props)
         <div className="lang-title">
           <div className="eyebrow">Corydoras {info.version}</div>
           <h1>Settings</h1>
+          <p className="lang-desc muted">Most choices apply at once. A section with a Save button waits for it.</p>
+          <nav className="page-jump" aria-label="Settings sections">
+            {SECTIONS.map(([id, label]) => (
+              <button key={id} className="link-btn" onClick={() => jump(id)}>
+                {label}
+              </button>
+            ))}
+          </nav>
         </div>
       </header>
 
       <div className="settings-body">
         <ProvidersPanel onChanged={onChanged} />
 
+        <section className="panel" id="settings-agents" tabIndex={-1}>
+          <h3>
+            <Bot size={15} /> Agents (MCP server)
+          </h3>
+          {info.mcp_command ? (
+            <p className="small">
+              Server binary: <span className="mono">{info.mcp_command}</span>
+            </p>
+          ) : (
+            <p className="small error-text">The MCP server binary is not installed. Run scripts/setup-mac.sh again.</p>
+          )}
+          <p className="muted small">
+            For Claude Desktop, add this to <span className="mono">~/Library/Application Support/Claude/claude_desktop_config.json</span>, then
+            restart Claude. The server reads the library that the app uses, also after a move:
+          </p>
+          <pre className="json">{mcpConfig}</pre>
+          <div className="row">
+            <button className="btn small" onClick={async () => toast.info((await copy(mcpConfig)) ? 'Copied.' : 'Copy failed.')}>
+              Copy JSON
+            </button>
+          </div>
+          <p className="muted small">For Claude Code, run:</p>
+          <pre className="json">{claudeCodeCmd}</pre>
+          <div className="row">
+            <button className="btn small" onClick={async () => toast.info((await copy(claudeCodeCmd)) ? 'Copied.' : 'Copy failed.')}>
+              Copy command
+            </button>
+          </div>
+        </section>
+
         {settings && (
-          <section className="panel">
+          <section className="panel" id="settings-pipeline" tabIndex={-1}>
             <h3>
               <SlidersHorizontal size={15} /> Pipeline
             </h3>
@@ -107,11 +174,16 @@ export default function SettingsView({ info, onInfo, status, onChanged }: Props)
                 output tokens in {status.usage.requests} requests. The queue stops when it reaches the budget.
               </p>
             )}
-            <div className="row">
-              <button className="btn primary small" onClick={saveSettings}>
-                Save settings
-              </button>
-            </div>
+            {pipelineDirty && (
+              <div className="row">
+                <button className="btn small" onClick={() => setSettings(saved)}>
+                  Discard
+                </button>
+                <button className="btn primary small" onClick={saveSettings}>
+                  Save pipeline
+                </button>
+              </div>
+            )}
           </section>
         )}
 
@@ -120,36 +192,6 @@ export default function SettingsView({ info, onInfo, status, onChanged }: Props)
         <BridgePanel />
 
         <StoragePanel info={info} onInfo={onInfo} onChanged={onChanged} />
-
-        <section className="panel">
-          <h3>
-            <Bot size={15} /> Agents (MCP server)
-          </h3>
-          {info.mcp_command ? (
-            <p className="small">
-              Server binary: <span className="mono">{info.mcp_command}</span>
-            </p>
-          ) : (
-            <p className="small error-text">The MCP server binary is not installed. Run scripts/setup-mac.sh again.</p>
-          )}
-          <p className="muted small">
-            For Claude Desktop, add this to <span className="mono">~/Library/Application Support/Claude/claude_desktop_config.json</span>, then
-            restart Claude. The server reads the library that the app uses, also after a move:
-          </p>
-          <pre className="json">{mcpConfig}</pre>
-          <div className="row">
-            <button className="btn small" onClick={async () => toast.info((await copy(mcpConfig)) ? 'Copied.' : 'Copy failed.')}>
-              Copy JSON
-            </button>
-          </div>
-          <p className="muted small">For Claude Code, run:</p>
-          <pre className="json">{claudeCodeCmd}</pre>
-          <div className="row">
-            <button className="btn small" onClick={async () => toast.info((await copy(claudeCodeCmd)) ? 'Copied.' : 'Copy failed.')}>
-              Copy command
-            </button>
-          </div>
-        </section>
       </div>
     </div>
   );

@@ -142,7 +142,7 @@ export default function StoragePanel({ info, onInfo, onChanged }: { info: AppInf
   const pct = progress && progress.total > 0 ? Math.round((progress.done / progress.total) * 100) : 0;
 
   return (
-    <section className="panel">
+    <section className="panel" id="settings-library" tabIndex={-1}>
       <h3>
         <HardDrive size={15} /> Library location
       </h3>
@@ -166,7 +166,7 @@ export default function StoragePanel({ info, onInfo, onChanged }: { info: AppInf
       )}
 
       <div className="row">
-        <button className="btn small primary" onClick={chooseMove} disabled={moving}>
+        <button className="btn small" onClick={chooseMove} disabled={moving}>
           <FolderInput size={13} /> Move library…
         </button>
         <button className="btn small" onClick={chooseOther} disabled={moving}>

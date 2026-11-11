@@ -18,6 +18,7 @@ import {
 } from 'lucide-react';
 import { AiConfig, AiView, api, errText, Preset, ProviderProfile } from '../api';
 import { useToast } from './Toast';
+import { useConfirmRow } from './useConfirmRow';
 
 function VisionChip({ p }: { p: ProviderProfile }) {
   if (p.vision === true)
@@ -39,6 +40,7 @@ function Editor({
   draft: initial,
   preset,
   hasKey,
+  inUse,
   canRemove,
   onSave,
   onCancel,
@@ -49,8 +51,11 @@ function Editor({
   draft: ProviderProfile;
   preset: Preset | undefined;
   hasKey: boolean;
+  /** The provider runs the analysis or writes the language document. */
+  inUse: boolean;
   canRemove: boolean;
-  onSave: (p: ProviderProfile) => Promise<void>;
+  /** Saves the profile and gives it back as saved (the app trims names and addresses). */
+  onSave: (p: ProviderProfile) => Promise<ProviderProfile | undefined>;
   onCancel: () => void;
   onRemove: () => void;
   onKeyChanged: () => void;
@@ -64,15 +69,31 @@ function Editor({
   const [testing, setTesting] = useState(false);
   const [result, setResult] = useState<{ ok: boolean; text: string } | null>(null);
   const [confirmRemove, setConfirmRemove] = useState(false);
+  const [confirmKey, setConfirmKey] = useState(false);
+  const removeTrigger = useConfirmRow(confirmRemove, () => setConfirmRemove(false));
+  const keyTrigger = useConfirmRow(confirmKey, () => setConfirmKey(false));
+  const changed = key.trim() !== '' || JSON.stringify(d) !== JSON.stringify(initial);
   const set = (patch: Partial<ProviderProfile>) => setD((x) => ({ ...x, ...patch }));
   const listId = `models-${d.id}`;
 
   const saveKey = async () => {
     try {
-      await onSave(d); // The profile must exist before its key.
+      const saved = await onSave(d); // The profile must exist before its key.
+      if (saved) setD(saved);
       await api.setProviderKey(d.id, key);
       setKey('');
       toast.info(`Key for ${d.name} saved.`);
+      onKeyChanged();
+    } catch (e) {
+      toast.error(errText(e));
+    }
+  };
+
+  const removeKey = async () => {
+    try {
+      await api.clearProviderKey(d.id);
+      setConfirmKey(false);
+      toast.info(`Key for ${d.name} removed.`);
       onKeyChanged();
     } catch (e) {
       toast.error(errText(e));
@@ -192,20 +213,25 @@ function Editor({
             <button className="btn small primary" disabled={!key.trim()} onClick={saveKey}>
               <KeyRound size={13} /> Save key
             </button>
-            {hasKey && (
-              <button
-                className="btn small ghost-danger"
-                onClick={() =>
-                  api
-                    .clearProviderKey(d.id)
-                    .then(onKeyChanged)
-                    .catch((e) => toast.error(errText(e)))
-                }
-              >
-                Remove key
+            {hasKey && !confirmKey && (
+              <button ref={keyTrigger} className="btn small ghost-danger" onClick={() => setConfirmKey(true)}>
+                Remove key…
               </button>
             )}
           </div>
+          {hasKey && confirmKey && (
+            <div className="row confirm-row">
+              <button className="btn small danger" onClick={removeKey}>
+                Remove key
+              </button>
+              <button className="btn small" autoFocus onClick={() => setConfirmKey(false)}>
+                Keep
+              </button>
+              <span className="muted small">
+                {inUse ? 'The queue stops until you paste a key again.' : 'This provider stops working until you paste a key again.'}
+              </span>
+            </div>
+          )}
           {preset?.key_url && (
             <button className="link-btn small" onClick={() => openUrl(preset.key_url).catch(() => {})}>
               <ExternalLink size={11} /> Make a key at {new URL(preset.key_url).host}
@@ -227,11 +253,18 @@ function Editor({
       </div>
 
       <div className="row prov-actions">
-        <button className="btn small primary" onClick={() => onSave(d).catch((e) => toast.error(errText(e)))}>
+        <button
+          className="btn small primary"
+          onClick={() =>
+            onSave(d)
+              .then((saved) => saved && setD(saved))
+              .catch((e) => toast.error(errText(e)))
+          }
+        >
           <Check size={13} /> Save provider
         </button>
         <button className="btn small" onClick={onCancel}>
-          Close
+          {changed ? 'Cancel' : 'Close'}
         </button>
         <div className="spacer" />
         {canRemove &&
@@ -240,12 +273,12 @@ function Editor({
               <button className="btn small danger" onClick={onRemove}>
                 <Trash2 size={13} /> Remove provider and key
               </button>
-              <button className="btn small" onClick={() => setConfirmRemove(false)}>
-                Cancel
+              <button className="btn small" autoFocus onClick={() => setConfirmRemove(false)}>
+                Keep
               </button>
             </>
           ) : (
-            <button className="btn small ghost-danger" onClick={() => setConfirmRemove(true)}>
+            <button ref={removeTrigger} className="btn small ghost-danger" onClick={() => setConfirmRemove(true)}>
               <Trash2 size={13} /> Remove…
             </button>
           ))}
@@ -294,7 +327,7 @@ export default function ProvidersPanel({ onChanged }: { onChanged: () => void })
   };
 
   return (
-    <section className="panel">
+    <section className="panel" id="settings-providers" tabIndex={-1}>
       <h3>
         <Cpu size={15} /> Model providers
       </h3>
@@ -343,14 +376,14 @@ export default function ProvidersPanel({ onChanged }: { onChanged: () => void })
                 </div>
                 <div className="prov-chips">
                   {roles.map((r) => (
-                    <span key={r as string} className="chip chip-accent">
+                    <span key={r as string} className="chip">
                       {r}
                     </span>
                   ))}
                   <VisionChip p={p} />
                   {p.needs_key && !keys[p.id] && <span className="chip chip-warn">No key</span>}
                 </div>
-                <button className="icon-btn" title={open ? 'Close' : 'Edit'}>
+                <button className="icon-btn" title={open ? 'Close' : 'Edit'} aria-expanded={open} aria-label={`${open ? 'Close' : 'Edit'} ${p.name}`}>
                   {open ? <X size={14} /> : <Pencil size={14} />}
                 </button>
               </div>
@@ -360,10 +393,12 @@ export default function ProvidersPanel({ onChanged }: { onChanged: () => void })
                   draft={p}
                   preset={preset}
                   hasKey={!!keys[p.id] && p.needs_key}
+                  inUse={roles.length > 0}
                   canRemove={config.profiles.length > 1}
                   onCancel={() => setEditing(null)}
                   onSave={async (np) => {
-                    await save({ ...config, profiles: config.profiles.map((x) => (x.id === np.id ? np : x)) });
+                    const v = await save({ ...config, profiles: config.profiles.map((x) => (x.id === np.id ? np : x)) });
+                    return v.config.profiles.find((x) => x.id === np.id);
                   }}
                   onRemove={async () => {
                     try {
@@ -386,7 +421,7 @@ export default function ProvidersPanel({ onChanged }: { onChanged: () => void })
       </div>
 
       <div className="row">
-        <select className="select" value={addKind} onChange={(e) => setAddKind(e.target.value)}>
+        <select className="select" value={addKind} onChange={(e) => setAddKind(e.target.value)} aria-label="Provider to add">
           <option value="">Add a provider…</option>
           {presets.map((p) => (
             <option key={p.kind} value={p.kind}>

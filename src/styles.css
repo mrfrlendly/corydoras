@@ -3865,6 +3865,11 @@ textarea:focus-visible,
   min-width: 0;
 }
 
+/* A model name breaks at its hyphens otherwise ("claude-sonnet-5-" / "5"). */
+.model-notice .notice-text b {
+  white-space: nowrap;
+}
+
 /* Weight: the lower steps soft, the chosen step filled (two filled buttons read as two choices). */
 .weight-btn.on {
   background: var(--accent-soft);

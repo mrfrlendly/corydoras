@@ -56,7 +56,7 @@ API keys are files in `~/Library/Application Support/Corydoras/keys/` (folder mo
 | Validation | The app checks the structure. Errors go back to the model. |
 | Review | The app looks for numbers in text fields, unknown evidence IDs, observed values without evidence, and exceptions that point at no rule. The findings go back to the model one time. Findings that remain are saved with the version and shown at the top of the document. |
 | Version | The app renders `language.md` from `tokens.json`, so the two cannot disagree. If the inputs did not change, the app saves no version. |
-| Your edit | In the Document tab you edit `tokens.json`. The same validation applies, and the app renders a new `language.md`. |
+| Your edit | **Edit document** in the Document tab edits `tokens.json`. The same validation applies, and the app renders a new `language.md`. |
 | The loop | Agents send renders of what they made (**Outputs**), check their numbers and model files against the rules, and you log how prints came out. Your verdicts and the print log go into the next version and the next brief. |
 
 The estimate in the header of a language (for example **≈ 48 k tokens**) says what the waiting passes will use; see [Cost estimates](#cost-estimates).
@@ -118,6 +118,21 @@ Drag an STL, 3MF, OBJ or STEP file onto the Board, or choose it with **Add image
 - The strip above the cards shows the main colours of the board, counted by the weight of each reference. Click a colour to copy its hex value.
 - The inspector shows the five main colours of one image under **Colours**. These come from the pixels, not from the model, so they are there before the analysis runs.
 
+## Keyboard
+
+| Keys | Where | What they do |
+| --- | --- | --- |
+| Return or Space | A card on the Board or in Sources | Opens or closes the card |
+| ← → | Board, Sources | The previous or next card |
+| ↑ ↓ | Board grid | The card above or below |
+| 1–5 | Board, with a card open | Sets the weight |
+| Escape | Inspector, confirmation | Leaves a field, then closes the inspector; cancels a confirmation |
+| ⌘F | Board | Goes to **Search this board** |
+| ← → Home End | The tabs of a language | Goes to the next tab |
+| ⌘, | Anywhere | Opens Settings |
+
+The tags and the note of an image save when you leave the field, or when you open another card.
+
 ## Import a board
 
 **Import board…** on the Board takes the link of an Are.na channel or a Pinterest board.
@@ -140,7 +155,7 @@ The folder `extension/` holds an extension for Chrome, Edge, Brave and Arc. It a
 3. Open the options of the extension and paste the port and the token.
 4. Right-click an image or a page. Without a choice of language, it goes to the language that screen captures go to.
 
-The extension talks to a small bridge inside the app. The bridge listens on this Mac only (127.0.0.1), answers only requests that carry the token, and is off until you turn it on. Corydoras must be running; a closed window is enough. **New token** makes the old token useless.
+The extension talks to a small bridge inside the app. The bridge listens on this Mac only (127.0.0.1), answers only requests that carry the token, and is off until you turn it on. Corydoras must be running; a closed window is enough. **New token…** asks first, then makes the old token useless: the extension stops working until you paste the new token.
 
 ## Spec format (schema 2)
 
@@ -167,7 +182,7 @@ The **Versions** tab lists every version of a language with its date, model and 
 | **Changes** | Says in words what changed from A to B, by section: measures (old value → new value), rules, principles, families, colours, prompts, do and do not, and references |
 | **language.md**, **tokens.json** | The same comparison as a line-by-line text difference |
 | **Open** | Shows that version in the Document tab |
-| **Pin in…** | Makes a project use that version. A project keeps its pin when the language gets newer versions. |
+| **Pin in…** | Makes a project use that version at once; the message has **Undo**. A project keeps its pin when the language gets newer versions. |
 | **Restore** | Rolls the language back: saves that version again as the newest one. The versions in between stay in the list, so you can go forward again. |
 
 Agents get the same list of changes with `compare_versions`, for example to see what to redo after you updated a language.
@@ -176,8 +191,8 @@ Agents get the same list of changes with `compare_versions`, for example to see 
 
 A language can extend another language and change a few rules, for example "2000s Industrial PETG" on top of "2000s Industrial".
 
-1. Make a language, click **Edit**, and choose the base under **Extends**. Choose **Follow the latest version**, or one version of the base.
-2. Open the **Document** tab. The document is the base document. Edit it; each difference from the base becomes a change of this language.
+1. Make a language, click **Edit details**, and choose the base under **Extends**. Choose **Follow the latest version**, or one version of the base.
+2. Open the **Document** tab. The document is the base document. Edit it with **Edit document**; each difference from the base becomes a change of this language.
 3. The panel above the document lists the changes (old value → new value). The **×** on a change removes it, so the value of the base applies again.
 
 - A language with a base has no synthesis of its own, and its Board is optional. Evidence IDs point at the references of the base.
@@ -200,6 +215,8 @@ The **Insight** tab has two reports. Neither needs a model call.
 - references that no rule cites, evidence that points at removed items, and review notes of the last synthesis.
 
 Agents get the report with `get_coverage`, and are told not to invent a value where the language has a gap.
+
+Each gap has a link to the place where you fix it: **Show on the Board** selects the reference that the gap names, and the reference IDs in a gap open their card too. The gaps that are only worth a look start folded.
 
 **What agents use** shows the calls of the MCP server for this language in the last 30, 90 or 365 days: the calls per tool and client, which families agents asked for by name and checked, which measures a check used, which references agents asked to see, and the places in the document that got more than one amendment proposal. A family that no call names is marked **not used**. The server notes one small record for each call in the library on this Mac; use before this version is not counted.
 
@@ -242,11 +259,12 @@ Corydoras works with your own API key from any of these providers, or with a mod
 The app says what a pass will use before it runs:
 
 - The chip in the header of a language (for example **≈ 48 k tokens**) is the sum of the passes that wait for this language. Hold the pointer over it for the count of image and source analyses.
-- **Analyze all again** shows the estimate in its confirmation, and **Synthesize now** in its tooltip.
+- **Analyze all again** opens a bar under the header with the estimate. Nothing starts until you click **Analyze N again** there; Escape or **Cancel** closes the bar.
+- **Synthesize now** makes no model call when nothing changed since the last version.
 - The numbers are averages of earlier calls in this library. Until a pass has three calls, the app uses typical values.
 - To see money next to the tokens, open a provider and enter its prices in US dollars per million input and output tokens. The app does not look prices up.
 
-When you change the model for images and sources, the analyses that another model wrote stay. The language shows a notice with their count, the names of the models, and the estimate for **Analyze them again**. Nothing starts until you click it.
+When you change the model for images and sources, the analyses that another model wrote stay. The language shows a notice with their count and the names of the models. **Analyze the N again…** opens the same bar with the estimate. The **×** hides the notice until the count or the model changes.
 
 ## Library location
 
@@ -288,7 +306,7 @@ To add a source:
 2. Paste a link in the field and push Return, or click Add documents….
 3. Alternatively, drag documents or browser links onto the tab. On the Board, a dropped document or page link also goes to Sources.
 4. Click a card to see the preview, the extracted text and the notes from the model.
-5. Write a note to tell the model what to take from the source. Set the weight from 1 to 5.
+5. Write a note to tell the model what to take from the source, and click **Save note** (the model reads the source again). The title saves when you leave the field. Set the weight from 1 to 5.
 
 Rules from a source have the basis *source* and cite the source ID. When a source and the images disagree about the look, the images win.
 
@@ -298,7 +316,7 @@ Rule sets hold hard rules, for example 3D-printing limits. They are in the sideb
 
 - A rule with a value is a limit (minimum wall 1.2 mm). A rule without a value is an instruction (orient load paths along the layers).
 - Hard rules win over every language principle, measure, exception and prompt. Agents get them first.
-- A project selects rule sets with checkboxes. A rule set marked **Apply to every project** also applies to agents that read a language without a project.
+- A project selects rule sets with checkboxes. Changes on a project page apply at once; the message has **Undo**. A rule set marked **Apply to every project** also applies to agents that read a language without a project.
 - When a language marks a measure process-dependent, the brief takes its value from the rule with the same name.
 
 The app starts with "FDM · PETG · Bambu P1S" (12 limits and 5 instructions). Its values are common starting points: check them against your slicer profiles and test prints. A 0.2 process profile becomes a rule set when you open the library in 0.3.
@@ -370,6 +388,7 @@ Click the status line at the bottom of the sidebar to open **Activity**:
 - **Up next** lists the waiting jobs, with earlier errors. Each has a **Cancel** link.
 - **Recent activity** explains each attempt, cut-off, repair, review and failure in plain words.
 - **Pause queue** lets the running job finish and starts no new job. The setting stays after a restart.
+- **Queue: Auto / Manual** at the bottom of the sidebar. In Manual mode, jobs wait until you click **Run queue** there.
 
 Calls stream from the provider. A call with no data for 2 minutes stops, and the queue tries it again later. Only network, rate-limit and server errors go back into the queue; an error that would repeat stops the job and appears in the log.
 
@@ -423,7 +442,8 @@ An agent that made a design from a language sends a render with `submit_output` 
 
 - **Accept** turns the output into a reference of weight 2, tagged `agent-output`. It supports the language but weighs less than your own references.
 - **Reject** turns it into an anti-reference (weight 3) with your note, so the next version avoids it.
-- **Undo** removes the verdict and the reference it made. You can change your mind at any time; the next synthesis follows.
+- After a verdict the card shows your note and **Undo verdict**, which removes the verdict and the reference it made. You can change your mind at any time; the next synthesis follows.
+- Outputs without a verdict come first. A click on the render opens the full image. The trash button asks in the card before it deletes the output and the reference it made.
 - Without a verdict, an output changes nothing. A language holds at most 50 outputs without a verdict.
 - `check_against_language` can save its report with an output (`output` argument); the tab shows the result per measure.
 - **Check a model…** measures a model file of the design and keeps the geometry report with the output. **Log a print…** records how the print of the design came out.
@@ -435,6 +455,7 @@ An agent can call `propose_amendment` with a JSON Patch (`add`, `remove`, `repla
 - The server applies the patch to the latest version and runs the same validation as your own edit. An invalid patch, or a `base_version` that is not the latest version, is refused, and the agent gets the reason.
 - The Document tab shows open proposals with each change (old value → new value), the agent's reason and the client name. The tab shows how many proposals are open.
 - **Accept as new version** applies the patch to the latest version and saves it as an edited version. A proposal that no longer applies, for example after a new version, shows why and can only be rejected.
+- **Reject…** asks first; Escape keeps the proposal.
 - A language holds at most 20 open proposals.
 
 Without `--library`, the server reads the library that the app uses, also after a move. With `--library <path>`, it always reads that folder.

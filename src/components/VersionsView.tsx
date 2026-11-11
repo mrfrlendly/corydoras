@@ -14,6 +14,9 @@ interface Props {
 
 type Part = 'changes' | 'markdown' | 'tokens';
 
+/** The pins of a project as text that does not depend on their order, to compare two states. */
+const pinsKey = (p: Project) => p.pins.map((x) => `${x.language_id} ${x.version} ${x.role} ${x.scope}`).sort().join('\n');
+
 /** The changes of a semantic diff, one group for each section of the document. */
 function ChangeList({ diff }: { diff: VersionDiff }) {
   const groups = useMemo(() => {
@@ -143,29 +146,42 @@ export default function VersionsView({ language, projects, tick, onOpen, onChang
     }
   };
 
-  // Pins a version in a project: changes the pin of this language, or adds one.
-  const pin = async (projectId: string, v: number) => {
-    const project = projects.find((p) => p.id === projectId);
-    if (!project) return;
-    const before: PinInput[] = project.pins.map((x) => ({ language_id: x.language_id, version: x.version, role: x.role, scope: x.scope }));
-    const pins: PinInput[] = before.map((x) => ({ ...x }));
-    const mine = pins.find((x) => x.language_id === language.id);
-    if (mine) mine.version = v;
-    else pins.push({ language_id: language.id, version: v, role: pins.some((x) => x.role === 'primary') ? 'secondary' : 'primary', scope: 'all' });
+  /** Undo of "Pin in…": puts the earlier pins back, but only while the project still has the pins that the change saved. */
+  const undoPin = async (projectId: string, before: PinInput[], saved: Project) => {
     try {
-      await api.setPins(projectId, pins);
+      const now = (await api.listProjects()).find((p) => p.id === projectId);
+      if (!now) {
+        toast.error('The project no longer exists. Undo is not possible.');
+        return;
+      }
+      if (pinsKey(now) !== pinsKey(saved)) {
+        toast.error('The pins changed after this. Undo is not possible.');
+        return;
+      }
+      await api.setPins(projectId, before);
+      onChanged();
+    } catch (e) {
+      toast.error(errText(e));
+    }
+  };
+
+  // Pins a version in a project: changes the pin of this language, or adds one.
+  // It starts from the project as it is now, not as it was at the last reload, so it keeps a change made since.
+  const pin = async (projectId: string, v: number) => {
+    try {
+      const project = (await api.listProjects()).find((p) => p.id === projectId);
+      if (!project) return;
+      const before: PinInput[] = project.pins.map((x) => ({ language_id: x.language_id, version: x.version, role: x.role, scope: x.scope }));
+      const pins: PinInput[] = before.map((x) => ({ ...x }));
+      const mine = pins.find((x) => x.language_id === language.id);
+      if (mine) mine.version = v;
+      else pins.push({ language_id: language.id, version: v, role: pins.some((x) => x.role === 'primary') ? 'secondary' : 'primary', scope: 'all' });
+      const saved = await api.setPins(projectId, pins);
       toast.info(
         mine
           ? `“${project.name}” now uses v${v} of ${language.name}.`
           : `v${v} of ${language.name} is pinned in “${project.name}” as a ${pins[pins.length - 1].role} language.`,
-        {
-          label: 'Undo',
-          run: () =>
-            api
-              .setPins(projectId, before)
-              .then(onChanged)
-              .catch((e) => toast.error(errText(e))),
-        },
+        { label: 'Undo', run: () => undoPin(projectId, before, saved) },
       );
       onChanged();
     } catch (e) {

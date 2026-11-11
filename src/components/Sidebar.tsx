@@ -38,7 +38,13 @@ function NewForm({ placeholder, onSubmit, onCancel }: { placeholder: string; onS
         placeholder={placeholder}
         aria-label={placeholder.replace(', then Return', '')}
         onChange={(e) => setName(e.target.value)}
-        onKeyDown={(e) => e.key === 'Escape' && onCancel()}
+        onKeyDown={(e) => {
+          // An Escape that another handler used already (for example a confirm bar) does not also close the field.
+          if (e.key === 'Escape' && !e.defaultPrevented) {
+            e.preventDefault();
+            onCancel();
+          }
+        }}
         // An empty field closes when you click elsewhere.
         onBlur={() => !name.trim() && !busy && onCancel()}
         disabled={busy}

@@ -285,7 +285,9 @@ export default function RuleSetView({ ruleSet, projects, onChanged, onDeleted, o
   const save = async () => {
     setSaving(true);
     try {
-      await api.updateRuleSet(ruleSet.id, draft);
+      // The library trims the text and drops empty rules. Show what it saved, so the draft is not dirty after a save.
+      const saved = await api.updateRuleSet(ruleSet.id, draft);
+      setDraft(toInput(saved));
       toast.info('Rule set saved.');
       onChanged();
     } catch (e) {

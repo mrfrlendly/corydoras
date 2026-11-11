@@ -119,9 +119,16 @@ function nodeText(node: unknown): string {
 const MARKDOWN: Components = {
   h2: ({ node, ...p }) => <h2 id={headingId(nodeText(node))} {...p} />,
   h3: ({ node, ...p }) => <h3 id={headingId(nodeText(node))} {...p} />,
-  // A link opens in the browser. In the app window it would replace the app with no way back.
+  // A link with a scheme opens in the browser; a #link jumps in the document. Any other link (a relative path)
+  // would replace the app window with no way back, so it shows as plain text.
   a: ({ node, href, ...p }) =>
-    href && /^[a-z][a-z0-9+.-]*:/i.test(href) ? <a href={href} target="_blank" rel="noreferrer" {...p} /> : <a href={href} {...p} />,
+    href && /^[a-z][a-z0-9+.-]*:/i.test(href) ? (
+      <a href={href} target="_blank" rel="noreferrer" {...p} />
+    ) : href?.startsWith('#') ? (
+      <a href={href} {...p} />
+    ) : (
+      <span>{p.children}</span>
+    ),
 };
 
 function showValue(v: unknown): string {

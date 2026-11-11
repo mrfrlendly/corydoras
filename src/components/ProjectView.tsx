@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { api, errText, Language, PinInput, PinScope, Project, RuleSet, VersionInfo } from '../api';
 import { Eye, Trash2, X } from 'lucide-react';
 import { useToast } from './Toast';
@@ -25,6 +25,12 @@ function toInputs(p: Project): PinInput[] {
   return p.pins.map((x) => ({ language_id: x.language_id, version: x.version, role: x.role, scope: x.scope }));
 }
 
+/** The pins of a project as text that does not depend on their order, to compare two states. */
+const pinsKey = (p: Project) => p.pins.map((x) => `${x.language_id} ${x.version} ${x.role} ${x.scope}`).sort().join('\n');
+
+/** The rule set IDs with one rule set added or removed. */
+const withRuleSet = (ids: string[], id: string, on: boolean) => (on ? (ids.includes(id) ? ids : [...ids, id]) : ids.filter((x) => x !== id));
+
 export default function ProjectView({ project, languages, ruleSets, onOpenRuleSet, tick, onChanged, onDeleted }: Props) {
   const toast = useToast();
   const [pins, setPins] = useState<PinInput[]>(toInputs(project));
@@ -33,12 +39,25 @@ export default function ProjectView({ project, languages, ruleSets, onOpenRuleSe
   const [name, setName] = useState(project.name);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const deleteTrigger = useConfirmRow(confirmDelete, () => setConfirmDelete(false));
+  // The selected rule sets, with the changes not yet in the reloaded project. The ref has the latest value for the async handlers.
+  const [ruleIds, setRuleIdsState] = useState<string[]>(project.rule_set_ids);
+  const ruleIdsRef = useRef(ruleIds);
+  const setRuleIds = (ids: string[]) => {
+    ruleIdsRef.current = ids;
+    setRuleIdsState(ids);
+  };
 
   // The library reloads after every queue job and gives a new object each time.
   // Follow the saved pins only when they change, so an edit in progress stays.
   const server = JSON.stringify(toInputs(project));
   useEffect(() => setPins(JSON.parse(server) as PinInput[]), [server]);
   useEffect(() => setName(project.name), [project.name]);
+  const serverRuleIds = JSON.stringify(project.rule_set_ids);
+  useEffect(() => {
+    const ids = JSON.parse(serverRuleIds) as string[];
+    ruleIdsRef.current = ids;
+    setRuleIdsState(ids);
+  }, [serverRuleIds]);
 
   useEffect(() => {
     let alive = true;
@@ -52,22 +71,35 @@ export default function ProjectView({ project, languages, ruleSets, onOpenRuleSe
 
   const title = `“${project.name}”`;
 
+  // A toggle changes only its own rule set, from the latest IDs, so a second toggle before the reload keeps the first.
+  // Undo also changes only that rule set, in the project as it is now.
   const toggleRuleSet = async (r: RuleSet, on: boolean) => {
-    const before = project.rule_set_ids;
-    const ids = on ? [...before, r.id] : before.filter((x) => x !== r.id);
+    const ids = withRuleSet(ruleIdsRef.current, r.id, on);
+    setRuleIds(ids);
     try {
       await api.setProjectRuleSets(project.id, ids);
       setBrief(null);
       onChanged();
       toast.info(`${title} ${on ? 'now uses' : 'no longer uses'} ${r.name}.`, {
         label: 'Undo',
-        run: () =>
-          api
-            .setProjectRuleSets(project.id, before)
-            .then(onChanged)
-            .catch((e) => toast.error(errText(e))),
+        run: async () => {
+          try {
+            const now = (await api.listProjects()).find((p) => p.id === project.id);
+            if (!now) {
+              toast.error('The project no longer exists. Undo is not possible.');
+              return;
+            }
+            const saved = await api.setProjectRuleSets(project.id, withRuleSet(now.rule_set_ids, r.id, !on));
+            setRuleIds(saved.rule_set_ids);
+            setBrief(null);
+            onChanged();
+          } catch (e) {
+            toast.error(errText(e));
+          }
+        },
       });
     } catch (e) {
+      setRuleIds(withRuleSet(ruleIdsRef.current, r.id, !on));
       toast.error(errText(e));
     }
   };
@@ -78,25 +110,35 @@ export default function ProjectView({ project, languages, ruleSets, onOpenRuleSe
   const langName = (id: string) => languages.find((l) => l.id === id)?.name ?? id;
   const latestOf = (id: string) => versions[id]?.[0]?.version ?? null;
 
+  /** Undo of a pin change: puts the earlier pins back, but only while the project still has the pins that the change saved. */
+  const undoPins = async (before: PinInput[], saved: Project) => {
+    try {
+      const now = (await api.listProjects()).find((p) => p.id === project.id);
+      if (!now) {
+        toast.error('The project no longer exists. Undo is not possible.');
+        return;
+      }
+      if (pinsKey(now) !== pinsKey(saved)) {
+        toast.error('The pins changed after this. Undo is not possible.');
+        return;
+      }
+      await api.setPins(project.id, before);
+      setBrief(null);
+      onChanged();
+    } catch (e) {
+      toast.error(errText(e));
+    }
+  };
+
   /** Pins apply at once, like "Pin in…" on the Versions tab. The toast can undo the change. */
   const commit = async (next: PinInput[], text: string) => {
     const before = pins;
     setPins(next);
     try {
-      await api.setPins(project.id, next);
+      const saved = await api.setPins(project.id, next);
       setBrief(null);
       onChanged();
-      toast.info(text, {
-        label: 'Undo',
-        run: () =>
-          api
-            .setPins(project.id, before)
-            .then(() => {
-              setBrief(null);
-              onChanged();
-            })
-            .catch((e) => toast.error(errText(e))),
-      });
+      toast.info(text, { label: 'Undo', run: () => undoPins(before, saved) });
     } catch (e) {
       setPins(before);
       toast.error(errText(e));
@@ -199,7 +241,7 @@ export default function ProjectView({ project, languages, ruleSets, onOpenRuleSe
           ) : (
             <div className="rs-list">
               {ruleSets.map((r) => {
-                const on = r.always || project.rule_set_ids.includes(r.id);
+                const on = r.always || ruleIds.includes(r.id);
                 return (
                   <div key={r.id} className={`rs-row ${on ? 'on' : ''}`}>
                     <label className="check" style={{ margin: 0 }}>

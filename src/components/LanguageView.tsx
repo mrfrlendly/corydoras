@@ -161,6 +161,7 @@ export default function LanguageView({
   // An Insight link asks the Board to show one reference.
   const [focusItem, setFocusItem] = useState<string | null>(null);
   const confirmFrom = useRef<HTMLElement | null>(null);
+  const langRef = useRef<HTMLDivElement>(null);
   const askSeq = useRef(0);
   const editBtnRef = useRef<HTMLButtonElement>(null);
   const refocusEdit = useRef(false);
@@ -230,11 +231,14 @@ export default function LanguageView({
     if (confirm === 'other-model' && !other) setConfirm(null);
   }, [confirm, other]);
 
-  // Escape cancels the confirm bar, before any other Escape (the inspector, a form).
+  // Escape cancels the confirm bar, before any other Escape (the inspector, a form) in this view.
+  // An Escape in the sidebar or a toast is for that control, not for the bar.
   useEffect(() => {
     if (!confirm) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape' || e.defaultPrevented) return;
+      const t = e.target;
+      if (t instanceof Node && t !== document.body && !langRef.current?.contains(t)) return;
       e.preventDefault();
       closeConfirm();
     };
@@ -374,7 +378,7 @@ export default function LanguageView({
   };
 
   return (
-    <div className="lang">
+    <div className="lang" ref={langRef}>
       <header className="lang-head" data-tauri-drag-region>
         <div className="lang-title" data-tauri-drag-region>
           {editing ? (

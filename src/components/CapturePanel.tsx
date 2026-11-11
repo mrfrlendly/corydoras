@@ -62,7 +62,7 @@ export default function CapturePanel() {
   if (!view) return null;
 
   return (
-    <section className="panel">
+    <section className="panel" id="settings-capture" tabIndex={-1}>
       <h3>
         <Camera size={15} /> Screen capture
       </h3>

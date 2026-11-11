@@ -3402,7 +3402,7 @@ textarea:focus-visible,
 }
 
 .cmp-delta {
-  color: var(--accent);
+  color: var(--ink);
   font-variant-numeric: tabular-nums;
   font-weight: 600;
 }
@@ -3527,4 +3527,22 @@ textarea:focus-visible,
 
 .gap-ids .id-link {
   margin-right: 5px;
+
+/* ---- WP-D: configuring ---- */
+
+/* Settings: links to the sections under the title. */
+.page-jump {
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+}
+
+.settings-body > section[id] {
+  scroll-margin-top: 16px;
+}
+
+/* A section that a link moved focus to: no ring after a click, the ring after a key. */
+.settings-body > section[id]:focus:not(:focus-visible) {
+  outline: none;
 }

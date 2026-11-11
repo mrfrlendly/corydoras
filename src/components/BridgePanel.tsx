@@ -2,12 +2,15 @@ import { useEffect, useState } from 'react';
 import { Puzzle } from 'lucide-react';
 import { api, BridgeView, errText } from '../api';
 import { useToast } from './Toast';
+import { useConfirmRow } from './useConfirmRow';
 
 /** The local bridge that the browser extension sends images and pages to. */
 export default function BridgePanel() {
   const toast = useToast();
   const [view, setView] = useState<BridgeView | null>(null);
   const [port, setPort] = useState(47821);
+  const [confirmToken, setConfirmToken] = useState(false);
+  const tokenTrigger = useConfirmRow(confirmToken, () => setConfirmToken(false));
 
   useEffect(() => {
     api
@@ -24,6 +27,7 @@ export default function BridgePanel() {
       const v = await api.setBridge(enabled, port, newToken);
       setView(v);
       setPort(v.port);
+      setConfirmToken(false);
       if (newToken) toast.info('New token made. Paste it in the options of the extension.');
     } catch (e) {
       toast.error(errText(e));
@@ -38,7 +42,7 @@ export default function BridgePanel() {
 
   if (!view) return null;
   return (
-    <section className="panel">
+    <section className="panel" id="settings-extension" tabIndex={-1}>
       <h3>
         <Puzzle size={15} /> Browser extension
       </h3>
@@ -74,12 +78,25 @@ export default function BridgePanel() {
                 <button className="btn small" onClick={() => copy(view.token, 'token')}>
                   Copy
                 </button>
-                <button className="btn small" onClick={() => apply(true, true)} title="The old token stops working">
-                  New token
-                </button>
+                {!confirmToken && (
+                  <button ref={tokenTrigger} className="btn small" onClick={() => setConfirmToken(true)} title="The old token stops working">
+                    New token…
+                  </button>
+                )}
               </div>
             </div>
           </div>
+          {confirmToken && (
+            <div className="row confirm-row">
+              <button className="btn small danger" onClick={() => apply(true, true)}>
+                Make a new token
+              </button>
+              <button className="btn small" autoFocus onClick={() => setConfirmToken(false)}>
+                Keep
+              </button>
+              <span className="muted small">The extension stops working until you paste the new token.</span>
+            </div>
+          )}
           <ol className="small how-to">
             <li>
               In the browser, open <span className="mono">chrome://extensions</span>, turn on Developer mode, click <b>Load unpacked</b>, and choose the{' '}

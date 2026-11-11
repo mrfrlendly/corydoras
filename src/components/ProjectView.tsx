@@ -32,7 +32,10 @@ export default function ProjectView({ project, languages, ruleSets, onOpenRuleSe
   const [name, setName] = useState(project.name);
   const [confirmDelete, setConfirmDelete] = useState(false);
 
-  useEffect(() => setPins(toInputs(project)), [project]);
+  // The library reloads after every queue job and gives a new object each time.
+  // Follow the saved pins only when they change, so an edit in progress stays.
+  const server = JSON.stringify(toInputs(project));
+  useEffect(() => setPins(JSON.parse(server) as PinInput[]), [server]);
   useEffect(() => setName(project.name), [project.name]);
 
   useEffect(() => {
@@ -59,7 +62,7 @@ export default function ProjectView({ project, languages, ruleSets, onOpenRuleSe
   const versioned = languages.filter((l) => (versions[l.id]?.length ?? 0) > 0);
   const primary = pins.find((p) => p.role === 'primary') ?? null;
   const secondaries = pins.filter((p) => p.role === 'secondary');
-  const dirty = JSON.stringify(pins) !== JSON.stringify(toInputs(project));
+  const dirty = JSON.stringify(pins) !== server;
   const langName = (id: string) => languages.find((l) => l.id === id)?.name ?? id;
   const latestOf = (id: string) => versions[id]?.[0]?.version ?? null;
 

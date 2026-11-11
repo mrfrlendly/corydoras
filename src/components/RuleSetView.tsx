@@ -242,12 +242,15 @@ export default function RuleSetView({ ruleSet, projects, onChanged, onDeleted, o
   const [preview, setPreview] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
+  // The library reloads after every queue job and gives a new object each time.
+  // Follow the saved rule set only when it changes, so a rule being typed stays.
+  const server = JSON.stringify(toInput(ruleSet));
   useEffect(() => {
-    setDraft(toInput(ruleSet));
+    setDraft(JSON.parse(server) as RuleSetInput);
     setPreview(null);
-  }, [ruleSet]);
+  }, [server]);
 
-  const dirty = JSON.stringify(draft) !== JSON.stringify(toInput(ruleSet));
+  const dirty = JSON.stringify(draft) !== server;
   const users = projects.filter((p) => p.rule_set_ids.includes(ruleSet.id));
 
   const setRule = (i: number, patch: Partial<Rule>) =>

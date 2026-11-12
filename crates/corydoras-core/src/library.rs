@@ -1975,10 +1975,31 @@ impl Library {
             "INSERT INTO settings (key, value) VALUES ('queue_paused', ?1) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
             [if paused { "1" } else { "0" }],
         )?;
+        // A pause or a resume by hand ends the reason of an earlier pause by the app.
+        self.c().execute("DELETE FROM settings WHERE key = 'queue_pause_reason'", [])?;
         Ok(())
     }
 
     /// Manual mode: jobs collect in the queue until you start it.
+    /// Pauses the queue because no job can run: "plan_limit" (the ChatGPT plan has no
+    /// usage left) or "sign_in" (the ChatGPT sign-in ended). The app shows the reason.
+    pub fn pause_queue_for(&self, reason: &str) -> Result<()> {
+        self.set_queue_paused(true)?;
+        self.c().execute(
+            "INSERT INTO settings (key, value) VALUES ('queue_pause_reason', ?1) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            [reason],
+        )?;
+        Ok(())
+    }
+
+    /// Why the app paused the queue. None when the person paused it, or when it runs.
+    pub fn queue_pause_reason(&self) -> Result<Option<String>> {
+        Ok(self
+            .c()
+            .query_row("SELECT value FROM settings WHERE key = 'queue_pause_reason'", [], |r| r.get(0))
+            .optional()?)
+    }
+
     pub fn queue_manual(&self) -> Result<bool> {
         let v: Option<String> = self
             .c()

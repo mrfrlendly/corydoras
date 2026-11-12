@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
-import { ActivityReport, api, CurrentJob, errText, fmtDuration, fmtTokens, JobView, Language, LogEntry, streamLabel } from '../api';
+import { openUrl } from '@tauri-apps/plugin-opener';
+import { ActivityReport, api, CHATGPT_USAGE_URL, CurrentJob, errText, fmtDuration, fmtTokens, JobView, Language, LogEntry, streamLabel } from '../api';
 import { CircleStop, Pause, Play, X } from 'lucide-react';
 import { useToast } from './Toast';
 import { useConfirmRow } from './useConfirmRow';
@@ -257,7 +258,23 @@ export default function ActivityView({ languages, onChanged, onOpenLanguage }: P
       </header>
 
       <div className="settings-body">
-        {report?.paused && (
+        {report?.paused && report.pause_reason === 'plan_limit' && (
+          <div className="notice warn confirm-bar" role="alert">
+            <span className="confirm-text">
+              <b>Usage limit reached.</b> Review your plan or this app's limit in ChatGPT settings. The jobs stay in the queue; resume it when your plan has usage
+              again.
+            </span>
+            <button className="btn small primary" onClick={() => openUrl(CHATGPT_USAGE_URL).catch(() => {})}>
+              Manage usage
+            </button>
+          </div>
+        )}
+        {report?.paused && report.pause_reason === 'sign_in' && (
+          <div className="notice warn" role="alert">
+            <b>The ChatGPT sign-in ended.</b> Sign in again in Settings, under Model providers, then resume the queue. The jobs stay in the queue.
+          </div>
+        )}
+        {report?.paused && !report.pause_reason && (
           <div className="notice warn">
             The queue is paused. A running job finishes, but no new job starts. Your choice stays after a restart.
           </div>

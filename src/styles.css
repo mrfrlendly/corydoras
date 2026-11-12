@@ -2618,6 +2618,75 @@ svg.lucide {
   margin-top: 4px;
 }
 
+/* Account sign-in (OpenRouter, ChatGPT plan). */
+.signin-row {
+  margin-bottom: 2px;
+}
+
+.plan-line {
+  margin: -6px 0 14px;
+}
+
+.plan-box {
+  padding: 10px 12px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-ctl);
+  gap: 8px;
+}
+
+.plan-box p {
+  margin: 0;
+}
+
+/* "Continue with ChatGPT": dark on a light page, light on a dark page. */
+.btn.chatgpt-btn {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: var(--bg);
+  font-weight: 600;
+  padding: 0 14px;
+}
+
+.btn.chatgpt-btn:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--ink) 86%, var(--bg));
+  border-color: transparent;
+}
+
+/* A notice that waits for its one answer (the first sign-in with a ChatGPT plan). */
+.modal-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: color-mix(in srgb, #000 38%, transparent);
+}
+
+.modal {
+  width: min(420px, 100%);
+  padding: 20px 22px 18px;
+  border-radius: var(--radius-lg);
+  background: var(--panel);
+  border: 1px solid var(--rule);
+  box-shadow: var(--shadow);
+}
+
+.modal h3 {
+  margin: 0 0 8px;
+  font-size: 16px;
+}
+
+.modal p {
+  margin: 0 0 16px;
+  color: var(--ink-2);
+  line-height: 1.5;
+}
+
+.modal-actions {
+  justify-content: flex-end;
+}
+
 .lib-path {
   display: flex;
   align-items: center;

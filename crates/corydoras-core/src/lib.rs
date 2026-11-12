@@ -26,11 +26,14 @@ pub mod proposals;
 pub mod provider;
 pub mod render;
 pub mod secrets;
+pub mod signin;
 pub mod slicer;
 pub mod snapshot;
 pub mod sources;
 pub mod spec;
 pub mod storage;
+#[cfg(test)]
+pub(crate) mod testserver;
 pub mod util;
 pub mod video;
 pub mod worker;

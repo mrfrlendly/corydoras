@@ -1,5 +1,6 @@
 import { KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent, useEffect, useRef, useState } from 'react';
-import { api, CurrentJob, errText, Estimate, fmtEstimate, Language, LanguageStatus, OtherModelView, Project, shortStatus, StatusReport, VersionInfo } from '../api';
+import { openUrl } from '@tauri-apps/plugin-opener';
+import { api, CHATGPT_USAGE_URL, CurrentJob, errText, Estimate, fmtEstimate, Language, LanguageStatus, OtherModelView, Project, shortStatus, StatusReport, VersionInfo } from '../api';
 import { BookOpen, ClipboardCheck, FileText, History, LayoutGrid, Pencil, RefreshCw, ScanSearch, Sparkles, X } from 'lucide-react';
 import Board from './Board';
 import SourcesView from './SourcesView';
@@ -511,7 +512,7 @@ export default function LanguageView({
           {queueEstimate && (
             <span
               className="chip"
-              title={`The passes that wait will use ${fmtEstimate(queueEstimate)}: ${queueEstimate.images.calls} image and ${queueEstimate.sources.calls} source analyses${queueEstimate.document.calls ? ', then the document' : ''}. ${queueEstimate.from_history ? 'From earlier calls in this library.' : 'From typical values; the first runs make it exact.'}`}
+              title={`The passes that wait will use ${fmtEstimate(queueEstimate)}: ${queueEstimate.images.calls} image and ${queueEstimate.sources.calls} source analyses${queueEstimate.document.calls ? ', then the document' : ''}. ${queueEstimate.from_history ? 'From earlier calls in this library.' : 'From typical values; the first runs make it exact.'}${queueEstimate.plan ? ' Using ChatGPT plan.' : ''}`}
             >
               ≈ {fmtEstimate(queueEstimate).replace('about ', '')}
             </span>
@@ -557,6 +558,14 @@ export default function LanguageView({
                     }.`}{' '}
                 {est ? `It uses ${fmtEstimate(est)}.` : estFailed ? 'The cost is not known.' : 'Counting the cost…'}
               </span>
+              {est?.plan && (
+                <>
+                  <span className="chip">Using ChatGPT plan</span>
+                  <button className="link-btn small" onClick={() => openUrl(CHATGPT_USAGE_URL).catch(() => {})}>
+                    Manage usage
+                  </button>
+                </>
+              )}
               <button
                 className="btn small primary"
                 onClick={confirm === 'all' ? analyzeAll : analyzeOther}

@@ -1,4 +1,6 @@
 //! OpenAI-compatible chat provider. The default is DeepSeek (deepseek-flash).
+//! It also speaks the Anthropic Messages API and, for a signed-in ChatGPT account, the
+//! OpenAI Responses API (see signin::chatgpt).
 //!
 //! Calls stream (server-sent events), so the app can show live progress, stop
 //! a call at once when you cancel it, and detect a dead connection after
@@ -11,6 +13,7 @@
 
 use crate::activity::{Activity, CancelToken, StreamEvent};
 use crate::ai::{Api, ProviderProfile};
+use crate::signin::chatgpt;
 use crate::util::truncate;
 use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
@@ -79,6 +82,8 @@ pub enum CallError {
     Stalled(String),
     /// The server sent an error inside the stream.
     Server(String),
+    /// ChatGPT refused to pay for the call with the plan. `code` is the word of the server.
+    Plan { code: String, message: String },
 }
 
 impl fmt::Display for CallError {
@@ -98,6 +103,27 @@ impl fmt::Display for CallError {
             CallError::Network(m) => write!(f, "Connection problem: {m}"),
             CallError::Stalled(m) => write!(f, "{m}"),
             CallError::Server(m) => write!(f, "The provider reported an error: {m}"),
+            CallError::Plan { code, message } => {
+                let said = if message.is_empty() { String::new() } else { format!(" ChatGPT said: {message}") };
+                match code.as_str() {
+                    "subscription_sharing_usage_limit_exceeded" => write!(
+                        f,
+                        "Usage limit reached. Review your plan or this app's limit in ChatGPT settings (chatgpt.com/settings/usage).{said}"
+                    ),
+                    "subscription_sharing_usage_unavailable" | "subscription_sharing_user_unavailable" | "unavailable" => {
+                        write!(f, "ChatGPT plan usage is not available at the moment.{said}")
+                    }
+                    "subscription_sharing_user_not_eligible" => write!(
+                        f,
+                        "ChatGPT plan usage is not available for this account or workspace. Use a provider with an API key instead.{said}"
+                    ),
+                    "subscription_sharing_invalid_user" | "not_accepted" => {
+                        write!(f, "ChatGPT did not accept this sign-in. If this stays, sign out and sign in again in Settings.{said}")
+                    }
+                    "blocked" => write!(f, "ChatGPT does not allow plan usage for this request.{said}"),
+                    _ => write!(f, "ChatGPT refused the use of the plan ({code}).{said}"),
+                }
+            }
         }
     }
 }
@@ -111,6 +137,10 @@ impl CallError {
             CallError::Network(_) | CallError::Stalled(_) | CallError::Server(_) => true,
             CallError::Http { status, .. } => *status == 408 || *status == 429 || *status >= 500,
             CallError::Cancelled => false,
+            // Only "cannot check now" passes by itself. A used-up limit does not.
+            CallError::Plan { code, .. } => {
+                matches!(code.as_str(), "subscription_sharing_usage_unavailable" | "subscription_sharing_user_unavailable" | "unavailable")
+            }
         }
     }
 }
@@ -119,10 +149,48 @@ pub fn is_cancelled(e: &anyhow::Error) -> bool {
     matches!(e.downcast_ref::<CallError>(), Some(CallError::Cancelled))
 }
 
+/// True when the ChatGPT plan (or the limit for this app) has no usage left.
+pub fn is_plan_limit(e: &anyhow::Error) -> bool {
+    matches!(e.downcast_ref::<CallError>(), Some(CallError::Plan { code, .. }) if code == "subscription_sharing_usage_limit_exceeded")
+}
+
+fn plan_code(code: &str) -> bool {
+    code.starts_with("subscription_sharing_") || code.starts_with("chatpass_")
+}
+
+/// A failure that the Responses API reports inside the stream.
+fn responses_failure(code: &str, message: &str) -> anyhow::Error {
+    if plan_code(code) {
+        return CallError::Plan { code: code.to_string(), message: truncate(message, 300) }.into();
+    }
+    let text = if message.is_empty() { code.to_string() } else { format!("{} ({code})", truncate(message, 300)) };
+    // A prompt or an image that the server refuses fails the same way again; the rest can pass.
+    if code.starts_with("invalid_") || code.contains("image") || code.contains("unsupported") || code.contains("content") {
+        return anyhow!("The provider refused the request: {text}");
+    }
+    CallError::Server(text).into()
+}
+
+/// An HTTP error of the ChatGPT plan route, before a stream opens.
+fn plan_refusal(status: u16, code: &str, param: &str, message: String) -> anyhow::Error {
+    match status {
+        // A refused part of the request: the next try leaves it out (see Tweaks).
+        400 | 422 => CallError::Http { status, message: if param.is_empty() { message } else { format!("{message} (parameter: {param})") } },
+        _ if plan_code(code) => CallError::Plan { code: code.to_string(), message },
+        // Without a code the answer is a text for a person.
+        401 => CallError::Plan { code: "not_accepted".into(), message },
+        403 => CallError::Plan { code: "blocked".into(), message },
+        503 => CallError::Plan { code: "unavailable".into(), message },
+        _ => CallError::Http { status, message },
+    }
+    .into()
+}
+
 pub fn is_transient(e: &anyhow::Error) -> bool {
     e.downcast_ref::<CallError>().map(|c| c.is_transient()).unwrap_or(false)
 }
 
+#[derive(Debug)]
 pub struct ChatResult {
     pub text: String,
     pub input_tokens: i64,
@@ -154,6 +222,8 @@ pub enum Dialect {
     Generic,
     /// Anthropic Messages API.
     Anthropic,
+    /// OpenAI Responses API, paid by a ChatGPT plan ("Sign in with ChatGPT").
+    ChatGpt,
 }
 
 impl Dialect {
@@ -184,6 +254,7 @@ impl Dialect {
             "openai" => Dialect::OpenAi,
             "openrouter" => Dialect::OpenRouter,
             "gemini" => Dialect::Gemini,
+            "chatgpt" => Dialect::ChatGpt,
             "custom" => match Dialect::detect(&p.base_url) {
                 Dialect::Anthropic => Dialect::Generic, // the profile says OpenAI format
                 d => d,
@@ -230,7 +301,9 @@ impl Tweaks {
             self.no_stream_options = true;
             return Some("asks for no usage in the stream".into());
         }
-        if (m.contains("response_format") || m.contains("json_object") || m.contains("json mode")) && has("response_format") {
+        // JSON mode is "response_format" in chat completions and "text.format" in the Responses API.
+        let json_sent = has("response_format") || sent["text"]["format"]["type"] == "json_object";
+        if (m.contains("response_format") || m.contains("json_object") || m.contains("json mode") || m.contains("text.format")) && json_sent {
             self.no_json = true;
             return Some("asks for no JSON mode".into());
         }
@@ -256,7 +329,7 @@ impl Tweaks {
             self.max_cap = Some(cap);
             return Some(format!("asks for at most {cap} output tokens"));
         }
-        if has("response_format") && !self.no_json {
+        if json_sent && !self.no_json {
             // The old fallback: some servers refuse JSON mode with an unclear message.
             self.no_json = true;
             return Some("asks for no JSON mode".into());
@@ -273,11 +346,19 @@ fn learned_key(base_url: &str, model: &str) -> String {
     format!("{base_url}|{model}")
 }
 
+/// What a call carries to show who pays.
+enum Auth {
+    /// An API key. Empty for a server that needs none.
+    Key(String),
+    /// A signed-in ChatGPT account: its access token, renewed when it is old.
+    Account(chatgpt::Session),
+}
+
 pub struct Provider {
     client: reqwest::Client,
     base_url: String,
     pub model: String,
-    api_key: String,
+    auth: Auth,
     idle: Duration,
     pub dialect: Dialect,
     max_output: u32,
@@ -309,6 +390,32 @@ pub fn build_body(
     let cap = tw.max_cap.unwrap_or(u32::MAX).min(max_output.max(256));
     let total = (max_tokens + if think { thinking.token_allowance() } else { 0 }).min(cap);
     let effort = if thinking == Thinking::Low { "low" } else { "high" };
+
+    if dialect == Dialect::ChatGpt {
+        // The Responses API on the plan route: the system text is "instructions", nothing
+        // is stored, and the route takes no output limit and no temperature.
+        let content: Vec<Value> = parts
+            .iter()
+            .map(|p| match p {
+                Part::Text(t) => json!({"type": "input_text", "text": t}),
+                Part::Image(u) => json!({"type": "input_image", "image_url": u}),
+            })
+            .collect();
+        let mut body = json!({
+            "model": model,
+            "instructions": system,
+            "input": [{"role": "user", "content": content}],
+            "store": false,
+            "stream": true
+        });
+        if think {
+            body["reasoning"] = json!({"effort": effort});
+        }
+        if json_mode && !tw.no_json {
+            body["text"] = json!({"format": {"type": "json_object"}});
+        }
+        return body;
+    }
 
     if dialect == Dialect::Anthropic {
         let content: Vec<Value> = parts
@@ -420,6 +527,8 @@ struct StreamState {
     /// Anthropic sends the input tokens in message_start.
     input: i64,
     done: bool,
+    /// The Responses API sent its last event (the answer is whole, or cut off).
+    completed: bool,
 }
 
 impl StreamState {
@@ -489,6 +598,49 @@ impl StreamState {
                 }
                 "ping" => return Ok(Some(StreamEvent::KeepAlive)),
                 "content_block_start" | "content_block_stop" => return Ok(None),
+                // The Responses API (ChatGPT plan).
+                "response.created" | "response.in_progress" => return Ok(Some(StreamEvent::Data)),
+                "response.queued" => return Ok(Some(StreamEvent::KeepAlive)),
+                "response.output_text.delta" => {
+                    if let Some(c) = v["delta"].as_str().filter(|c| !c.is_empty()) {
+                        self.content.push_str(c);
+                        return Ok(Some(StreamEvent::Content(c.chars().count())));
+                    }
+                    return Ok(None);
+                }
+                "response.reasoning_summary_text.delta" | "response.reasoning_text.delta" => {
+                    if let Some(r) = v["delta"].as_str().filter(|r| !r.is_empty()) {
+                        self.reasoning_chars += r.chars().count();
+                        return Ok(Some(StreamEvent::Reasoning(r.chars().count())));
+                    }
+                    return Ok(None);
+                }
+                "response.completed" | "response.incomplete" => {
+                    let r = &v["response"];
+                    if let (Some(i), Some(o)) = (r["usage"]["input_tokens"].as_i64(), r["usage"]["output_tokens"].as_i64()) {
+                        self.usage = Some((i, o));
+                    }
+                    self.finish = Some(if t == "response.completed" {
+                        "stop".to_string()
+                    } else {
+                        match r["incomplete_details"]["reason"].as_str() {
+                            Some("max_output_tokens") => "length".to_string(),
+                            Some(other) => other.to_string(),
+                            None => "incomplete".to_string(),
+                        }
+                    });
+                    self.done = true;
+                    self.completed = true;
+                    return Ok(None);
+                }
+                "response.failed" => {
+                    let err = &v["response"]["error"];
+                    return Err(responses_failure(err["code"].as_str().unwrap_or("unknown_error"), err["message"].as_str().unwrap_or("")));
+                }
+                // Its error event has the fields at the top (Anthropic's has an "error" object, handled above).
+                "error" => {
+                    return Err(responses_failure(v["code"].as_str().unwrap_or("unknown_error"), v["message"].as_str().unwrap_or("")));
+                }
                 _ => {}
             }
         }
@@ -523,7 +675,7 @@ impl StreamState {
 impl Provider {
     /// A provider with the dialect from the address (tests and the 0.4 settings).
     pub fn new(base_url: &str, model: &str, api_key: &str) -> Result<Self> {
-        Self::build(base_url, model, api_key, Dialect::detect(base_url), 64_000, Duration::from_secs(IDLE_SECS))
+        Self::build(base_url, model, Auth::Key(api_key.trim().to_string()), Dialect::detect(base_url), 64_000, Duration::from_secs(IDLE_SECS))
     }
 
     /// A provider for a profile. `api_key` is empty for providers without a key.
@@ -533,10 +685,21 @@ impl Provider {
         }
         // A local model can work on a long prompt for minutes before the first token.
         let idle = Duration::from_secs(if p.local() { 900 } else { IDLE_SECS });
-        Self::build(&p.base_url, &p.model, api_key, Dialect::of_profile(p), p.max_output, idle)
+        if p.uses_account() {
+            // The tokens of the plan go to OpenAI only, whatever address the profile holds.
+            return Self::build(chatgpt::API_BASE, &p.model, Auth::Account(chatgpt::Session::app()), Dialect::ChatGpt, p.max_output, idle);
+        }
+        Self::build(&p.base_url, &p.model, Auth::Key(api_key.trim().to_string()), Dialect::of_profile(p), p.max_output, idle)
     }
 
-    fn build(base_url: &str, model: &str, api_key: &str, dialect: Dialect, max_output: u32, idle: Duration) -> Result<Self> {
+    /// A provider that pays with the ChatGPT account of `session`. The app uses
+    /// `from_profile`, which calls OpenAI; this one calls the address that it is given
+    /// (the tests give it a stand-in server).
+    pub fn for_account(base_url: &str, model: &str, session: chatgpt::Session) -> Result<Self> {
+        Self::build(base_url, model, Auth::Account(session), Dialect::ChatGpt, 64_000, Duration::from_secs(IDLE_SECS))
+    }
+
+    fn build(base_url: &str, model: &str, auth: Auth, dialect: Dialect, max_output: u32, idle: Duration) -> Result<Self> {
         let client = reqwest::Client::builder()
             .connect_timeout(Duration::from_secs(30))
             .user_agent(concat!("Corydoras/", env!("CARGO_PKG_VERSION")))
@@ -545,7 +708,7 @@ impl Provider {
             client,
             base_url: base_url.trim().trim_end_matches('/').to_string(),
             model: model.trim().to_string(),
-            api_key: api_key.trim().to_string(),
+            auth,
             idle,
             dialect,
             max_output,
@@ -564,15 +727,41 @@ impl Provider {
         self.tweaks.lock().unwrap_or_else(|e| e.into_inner()).clone()
     }
 
-    /// Adds the headers of the dialect: a bearer token, or the Anthropic key headers.
-    fn auth(&self, rb: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
-        if self.dialect == Dialect::Anthropic {
-            rb.header("x-api-key", &self.api_key).header("anthropic-version", "2023-06-01")
-        } else if self.api_key.is_empty() {
-            rb
-        } else {
-            rb.bearer_auth(&self.api_key)
+    /// Adds the headers that show who pays: the access token of the account (`bearer`),
+    /// or the API key as a bearer token or in the Anthropic key headers.
+    fn auth(&self, rb: reqwest::RequestBuilder, bearer: Option<&str>) -> reqwest::RequestBuilder {
+        match (&self.auth, bearer) {
+            (_, Some(token)) => rb.bearer_auth(token),
+            (Auth::Key(key), None) if self.dialect == Dialect::Anthropic => rb.header("x-api-key", key).header("anthropic-version", "2023-06-01"),
+            (Auth::Key(key), None) if !key.is_empty() => rb.bearer_auth(key),
+            _ => rb,
         }
+    }
+
+    /// The access token of the account for the next request. None for a key provider.
+    async fn bearer(&self) -> Result<Option<String>> {
+        match &self.auth {
+            Auth::Account(session) => Ok(Some(chatgpt::access_token(session).await?)),
+            Auth::Key(_) => Ok(None),
+        }
+    }
+
+    /// Sends the request and returns the answer when its headers arrive.
+    async fn open(&self, body: &Value, bearer: Option<&str>, token: Option<&CancelToken>) -> Result<reqwest::Response> {
+        let path = match self.dialect {
+            Dialect::Anthropic => "messages",
+            Dialect::ChatGpt => "responses",
+            _ => "chat/completions",
+        };
+        let request = self
+            .auth(self.client.post(format!("{}/{path}", self.base_url)), bearer)
+            .header("Accept", "text/event-stream")
+            .json(body)
+            .send();
+        Ok(guard(token, tokio::time::timeout(self.idle, request))
+            .await?
+            .map_err(|_| CallError::Stalled(format!("No answer from the server for {} s. The request was stopped.", self.idle.as_secs())))?
+            .map_err(|e| CallError::Network(format!("cannot reach {}: {e}", self.base_url)))?)
     }
 
     /// Shorter idle limit (tests).
@@ -627,31 +816,36 @@ impl Provider {
         if let Some(a) = act {
             a.stream(StreamEvent::Connecting);
         }
-        let path = if self.dialect == Dialect::Anthropic { "messages" } else { "chat/completions" };
-        let request = self
-            .auth(self.client.post(format!("{}/{path}", self.base_url)))
-            .header("Accept", "text/event-stream")
-            .json(body)
-            .send();
-        let mut resp = guard(token, tokio::time::timeout(self.idle, request))
-            .await?
-            .map_err(|_| CallError::Stalled(format!("No answer from the server for {} s. The request was stopped.", self.idle.as_secs())))?
-            .map_err(|e| CallError::Network(format!("cannot reach {}: {e}", self.base_url)))?;
+        let bearer = guard(token, self.bearer()).await??;
+        let mut resp = self.open(body, bearer.as_deref(), token).await?;
+        if resp.status().as_u16() == 401 {
+            if let (Auth::Account(session), Some(refused)) = (&self.auth, &bearer) {
+                // The server refused a token that looked good: renew it and ask one more time.
+                let renewed = guard(token, chatgpt::force_refresh(session, refused)).await??;
+                resp = self.open(body, Some(&renewed), token).await?;
+            }
+        }
 
         let status = resp.status();
         if !status.is_success() {
             let text = guard(token, resp.text()).await?.unwrap_or_default();
-            let detail = serde_json::from_str::<Value>(text.trim())
-                .ok()
+            let parsed = serde_json::from_str::<Value>(text.trim()).ok();
+            let detail = parsed
+                .as_ref()
                 .and_then(|v| {
                     v["error"]["message"]
                         .as_str()
                         .or_else(|| v["error"].as_str())
                         .or_else(|| v["message"].as_str())
+                        .or_else(|| v["detail"].as_str())
                         .or_else(|| v[0]["error"]["message"].as_str())
                         .map(|s| s.to_string())
                 })
                 .unwrap_or_else(|| truncate(text.trim(), 300));
+            if self.dialect == Dialect::ChatGpt {
+                let field = |name: &str| parsed.as_ref().and_then(|v| v["error"][name].as_str()).unwrap_or("");
+                return Err(plan_refusal(status.as_u16(), field("code"), field("param"), detail));
+            }
             return Err(CallError::Http { status: status.as_u16(), message: detail }.into());
         }
         let is_sse = resp
@@ -727,7 +921,14 @@ impl Provider {
         }
 
         if !is_sse {
+            if self.dialect == Dialect::ChatGpt {
+                return Err(CallError::Server("the answer was not a stream".into()).into());
+            }
             return self.parse_plain(&raw, body_len);
+        }
+        // The Responses API names its last event. A stream that ends without it is not an answer.
+        if self.dialect == Dialect::ChatGpt && !st.completed {
+            return Err(CallError::Network("the answer stopped before it was complete".into()).into());
         }
         let (input_tokens, output_tokens, usage_estimated) = match st.usage {
             Some((i, o)) => (i, o, false),
@@ -809,9 +1010,10 @@ impl Provider {
     }
 
     /// The models that the provider offers (GET {base}/models).
-    pub async fn list_models(&self) -> Result<Vec<String>> {
+    pub async fn models(&self) -> Result<Vec<ModelInfo>> {
+        let bearer = self.bearer().await?;
         let resp = self
-            .auth(self.client.get(format!("{}/models", self.base_url)))
+            .auth(self.client.get(format!("{}/models", self.base_url)), bearer.as_deref())
             .timeout(Duration::from_secs(20))
             .send()
             .await
@@ -819,10 +1021,23 @@ impl Provider {
         let status = resp.status();
         let text = resp.text().await.unwrap_or_default();
         if !status.is_success() {
-            let hint = if status.as_u16() == 401 || status.as_u16() == 403 { " Check the API key." } else { "" };
+            let hint = match (status.as_u16(), &self.auth) {
+                (401 | 403, Auth::Account(_)) => " Check the ChatGPT sign-in.",
+                (401 | 403, Auth::Key(_)) => " Check the API key.",
+                _ => "",
+            };
             anyhow::bail!("The provider did not list its models (HTTP {}).{hint} {}", status.as_u16(), truncate(text.trim(), 200));
         }
         let v: Value = serde_json::from_str(&text).map_err(|e| anyhow!("The model list is not JSON: {e}"))?;
+        if self.dialect == Dialect::ChatGpt {
+            // The models that ChatGPT lists for this account, in its order, with their names.
+            let listed = v["models"].as_array().cloned().unwrap_or_default();
+            return Ok(listed
+                .iter()
+                .filter(|m| m["visibility"] == "list")
+                .filter_map(|m| Some(ModelInfo { id: m["slug"].as_str()?.to_string(), name: m["display_name"].as_str().unwrap_or("").to_string() }))
+                .collect());
+        }
         let list = v["data"].as_array().or_else(|| v["models"].as_array()).cloned().unwrap_or_default();
         let mut ids: Vec<String> = list
             .iter()
@@ -832,7 +1047,7 @@ impl Provider {
             .collect();
         ids.sort();
         ids.dedup();
-        Ok(ids)
+        Ok(ids.into_iter().map(|id| ModelInfo { id, name: String::new() }).collect())
     }
 
     /// Proves that the key, the address and the model work, and checks whether the
@@ -882,6 +1097,13 @@ impl Provider {
             .await?;
         Ok(format!("{} answered: {}", self.model, truncate(r.text.trim(), 40)))
     }
+}
+
+/// A model of a provider. `name` is empty when the provider gives only IDs.
+#[derive(Clone, Debug, PartialEq, serde::Serialize)]
+pub struct ModelInfo {
+    pub id: String,
+    pub name: String,
 }
 
 /// The result of a connection check.
@@ -1076,5 +1298,299 @@ mod tests {
         assert!(is_cancelled(&e) && !is_transient(&e));
         assert!(!is_transient(&anyhow!("plain")));
         assert_eq!(split_data_url("data:image/png;base64,AAA"), Some(("image/png".into(), "AAA".into())));
+    }
+
+    // ------------------------------------------------------------------ ChatGPT plan
+
+    use crate::signin::chatgpt::{self, Account, Endpoints, Session, Store};
+    use crate::testserver::{serve, Resp, Server};
+
+    fn plan_body(json_mode: bool, t: Thinking, tw: &Tweaks) -> Value {
+        let parts = [Part::Image("data:image/jpeg;base64,QUJD".into()), Part::Text("hi".into())];
+        build_body(Dialect::ChatGpt, "gpt-x", "sys", &parts, json_mode, 4000, t, 64_000, tw)
+    }
+
+    #[test]
+    fn chatgpt_plan_body_holds_only_what_the_plan_route_accepts() {
+        let b = plan_body(true, Thinking::Low, &Tweaks::default());
+        assert_eq!(b["model"], "gpt-x");
+        assert_eq!(b["instructions"], "sys");
+        assert_eq!((b["store"].clone(), b["stream"].clone()), (json!(false), json!(true)));
+        assert_eq!(b["input"][0]["role"], "user");
+        let content = &b["input"][0]["content"];
+        assert_eq!(content[0], json!({"type": "input_image", "image_url": "data:image/jpeg;base64,QUJD"}));
+        assert_eq!(content[1], json!({"type": "input_text", "text": "hi"}));
+        assert_eq!(b["text"]["format"]["type"], "json_object");
+        assert_eq!(b["reasoning"]["effort"], "low");
+        for refused in [
+            "max_output_tokens", "max_tokens", "max_completion_tokens", "temperature", "top_p", "stream_options", "messages",
+            "response_format", "metadata", "user", "truncation", "previous_response_id", "system",
+        ] {
+            assert!(b.get(refused).is_none(), "{refused} must not be sent");
+        }
+        let plain = plan_body(false, Thinking::Off, &Tweaks::default());
+        assert!(plain.get("text").is_none() && plain.get("reasoning").is_none());
+        assert_eq!(plan_body(false, Thinking::High, &Tweaks::default())["reasoning"]["effort"], "high");
+    }
+
+    #[test]
+    fn chatgpt_plan_refusals_take_the_named_part_away() {
+        let mut tw = Tweaks::default();
+        let b = plan_body(true, Thinking::Low, &tw);
+        assert!(tw.adjust(Dialect::ChatGpt, "This capability is not supported (parameter: text.format)", &b).is_some());
+        assert!(tw.no_json && !tw.no_reasoning);
+        let b = plan_body(true, Thinking::Low, &tw);
+        assert!(b.get("text").is_none());
+        assert!(tw.adjust(Dialect::ChatGpt, "This capability is not supported (parameter: reasoning.effort)", &b).is_some());
+        assert!(tw.no_reasoning);
+        let b = plan_body(true, Thinking::Low, &tw);
+        assert!(b.get("reasoning").is_none());
+        // Nothing is left to change: the error goes to the person.
+        assert!(tw.adjust(Dialect::ChatGpt, "This capability is not supported (parameter: model)", &b).is_none());
+        // An unclear refusal with JSON mode on: JSON mode goes first, as for other servers.
+        let mut tw = Tweaks::default();
+        assert!(tw.adjust(Dialect::ChatGpt, "bad request", &plan_body(true, Thinking::Off, &tw)).is_some());
+        assert!(tw.no_json);
+    }
+
+    #[test]
+    fn chatgpt_plan_stream() {
+        let mut st = StreamState::default();
+        assert!(matches!(
+            st.line(r#"data: {"type":"response.created","response":{"status":"in_progress","usage":null},"sequence_number":1}"#).unwrap(),
+            Some(StreamEvent::Data)
+        ));
+        st.line("event: response.output_text.delta").unwrap();
+        let r = st.line(r#"data: {"type":"response.reasoning_summary_text.delta","delta":"hmm","sequence_number":2}"#).unwrap();
+        assert!(matches!(r, Some(StreamEvent::Reasoning(3))));
+        let r = st.line(r#"data: {"type":"response.output_text.delta","delta":"{\"a\":","logprobs":[],"sequence_number":3}"#).unwrap();
+        assert!(matches!(r, Some(StreamEvent::Content(5))));
+        st.line(r#"data: {"type":"response.output_text.delta","delta":"1}"}"#).unwrap();
+        st.line(r#"data: {"type":"response.output_text.done","text":"{\"a\":1}"}"#).unwrap();
+        assert!(!st.done && !st.completed);
+        st.line(r#"data: {"type":"response.completed","response":{"status":"completed","usage":{"input_tokens":120,"output_tokens":42,"total_tokens":162}}}"#).unwrap();
+        assert_eq!(st.content, "{\"a\":1}");
+        assert_eq!(st.reasoning_chars, 3);
+        assert_eq!(st.usage, Some((120, 42)));
+        assert_eq!(st.finish.as_deref(), Some("stop"));
+        assert!(st.done && st.completed);
+    }
+
+    #[test]
+    fn chatgpt_plan_answer_that_hits_the_limit_is_cut_off() {
+        let mut st = StreamState::default();
+        st.line(r#"data: {"type":"response.output_text.delta","delta":"{\"a\""}"#).unwrap();
+        st.line(r#"data: {"type":"response.incomplete","response":{"status":"incomplete","incomplete_details":{"reason":"max_output_tokens"},"usage":{"input_tokens":10,"output_tokens":5}}}"#).unwrap();
+        assert_eq!(st.finish.as_deref(), Some("length"));
+        assert_eq!(st.usage, Some((10, 5)));
+        assert!(st.done && st.completed);
+    }
+
+    #[test]
+    fn chatgpt_plan_failures_in_the_stream() {
+        let fail = |code: &str| {
+            let line = format!(r#"data: {{"type":"response.failed","response":{{"status":"failed","error":{{"code":"{code}","message":"The server said so."}}}}}}"#);
+            StreamState::default().line(&line).unwrap_err()
+        };
+        let limit = fail("subscription_sharing_usage_limit_exceeded");
+        assert!(is_plan_limit(&limit) && !is_transient(&limit), "{limit}");
+        assert!(limit.to_string().starts_with("Usage limit reached."), "{limit}");
+        assert!(limit.to_string().contains("chatgpt.com/settings/usage"), "{limit}");
+        for busy in ["subscription_sharing_usage_unavailable", "subscription_sharing_user_unavailable", "server_error", "rate_limit_exceeded"] {
+            let e = fail(busy);
+            assert!(is_transient(&e) && !is_plan_limit(&e), "{busy}: {e}");
+        }
+        for stays in ["subscription_sharing_user_not_eligible", "invalid_prompt", "invalid_base64_image", "image_too_large"] {
+            let e = fail(stays);
+            assert!(!is_transient(&e) && !is_plan_limit(&e), "{stays}: {e}");
+            assert!(e.to_string().contains("The server said so."), "{e}");
+        }
+        // No error object at all.
+        let none = StreamState::default().line(r#"data: {"type":"response.failed","response":{"status":"failed","error":null}}"#).unwrap_err();
+        assert!(none.to_string().contains("unknown_error"), "{none}");
+        // The error event of the Responses API has its fields at the top.
+        let top = StreamState::default()
+            .line(r#"data: {"type":"error","code":"rate_limit_exceeded","message":"Slow down","param":null,"sequence_number":1}"#)
+            .unwrap_err();
+        assert!(is_transient(&top) && top.to_string().contains("Slow down"), "{top}");
+    }
+
+    /// A signed-in account in a new folder, with an access token that is `age` seconds old.
+    fn plan_session(server: &Server, age: i64) -> Session {
+        let dir = std::env::temp_dir().join(format!("cory-plan-{}", uuid::Uuid::new_v4()));
+        let sess = Session {
+            store: Store { dir },
+            name: "chatgpt-plan".into(),
+            endpoints: Endpoints {
+                authorize_url: format!("{}/authorize", server.base),
+                token_url: format!("{}/token", server.base),
+                revoke_url: format!("{}/revoke", server.base),
+                jwks_url: format!("{}/jwks", server.base),
+                issuer: "https://auth.test".into(),
+                resource: chatgpt::API_BASE.into(),
+            },
+        };
+        let account = Account {
+            email: "ada@example.com".into(),
+            subject: "user-1".into(),
+            client_id: "oaiapp_1".into(),
+            access_token: "at-old".into(),
+            refresh_token: "rt-1".into(),
+            expires_in: 3600,
+            scopes: chatgpt::SCOPE.split(' ').map(str::to_string).collect(),
+            saved_at: crate::util::now_ts() - age,
+            ..Account::default()
+        };
+        sess.store.save_account(&sess.name, &account).unwrap();
+        sess
+    }
+
+    fn plan_provider(server: &Server, sess: Session) -> Provider {
+        Provider::for_account(&format!("{}/v1", server.base), "gpt-x", sess).unwrap()
+    }
+
+    fn ok_stream() -> Resp {
+        Resp::sse(&[
+            json!({"type": "response.created", "response": {"status": "in_progress"}}),
+            json!({"type": "response.output_text.delta", "delta": "OK"}),
+            json!({"type": "response.completed", "response": {"status": "completed", "usage": {"input_tokens": 7, "output_tokens": 2}}}),
+        ])
+    }
+
+    fn renewed() -> Resp {
+        Resp::json(200, json!({"access_token": "at-2", "refresh_token": "rt-2", "token_type": "Bearer", "expires_in": 3600, "scope": chatgpt::SCOPE}))
+    }
+
+    async fn ask(p: &Provider) -> Result<ChatResult> {
+        p.chat("sys", &[Part::Text("hi".into())], false, 100, Thinking::Off, None).await
+    }
+
+    #[tokio::test]
+    async fn a_plan_call_sends_the_access_token_and_reads_the_stream() {
+        let server = serve(|req| if req.path == "/v1/responses" { ok_stream() } else { Resp::empty(404) }).await;
+        let p = plan_provider(&server, plan_session(&server, 10));
+        assert_eq!(p.dialect, Dialect::ChatGpt);
+        let r = ask(&p).await.unwrap();
+        assert_eq!((r.text.as_str(), r.input_tokens, r.output_tokens, r.usage_estimated), ("OK", 7, 2, false));
+        assert_eq!(r.finish_reason, "stop");
+        let sent = server.seen_at("/v1/responses");
+        assert_eq!(sent.len(), 1);
+        assert_eq!((sent[0].method.as_str(), sent[0].header("authorization")), ("POST", "Bearer at-old"));
+        assert_eq!(sent[0].json()["store"], false);
+        assert_eq!(server.seen().len(), 1, "a fresh token needs no renewal");
+    }
+
+    #[tokio::test]
+    async fn an_old_plan_token_is_renewed_before_the_call() {
+        let server = serve(|req| match req.path.as_str() {
+            "/v1/responses" => ok_stream(),
+            "/token" => renewed(),
+            _ => Resp::empty(404),
+        })
+        .await;
+        let p = plan_provider(&server, plan_session(&server, 3590));
+        ask(&p).await.unwrap();
+        assert_eq!(server.seen_at("/v1/responses")[0].header("authorization"), "Bearer at-2");
+    }
+
+    #[tokio::test]
+    async fn a_refused_plan_token_is_renewed_and_the_call_is_sent_again_one_time() {
+        // The API refuses the saved token, although it is not old, and takes the renewed one.
+        let server = serve(|req| match req.path.as_str() {
+            "/v1/responses" if req.header("authorization") == "Bearer at-2" => ok_stream(),
+            "/v1/responses" => Resp::json(401, json!({"detail": "The token is not accepted."})),
+            "/token" => renewed(),
+            _ => Resp::empty(404),
+        })
+        .await;
+        let p = plan_provider(&server, plan_session(&server, 10));
+        assert_eq!(ask(&p).await.unwrap().text, "OK");
+        assert_eq!((server.seen_at("/v1/responses").len(), server.seen_at("/token").len()), (2, 1));
+
+        // A server that refuses every token gets two requests, not a loop.
+        let server = serve(|req| match req.path.as_str() {
+            "/v1/responses" => Resp::json(401, json!({"error": {"code": "subscription_sharing_invalid_user", "message": "Not validated."}})),
+            "/token" => renewed(),
+            _ => Resp::empty(404),
+        })
+        .await;
+        let p = plan_provider(&server, plan_session(&server, 10));
+        let e = ask(&p).await.unwrap_err();
+        assert!(e.to_string().contains("did not accept this sign-in"), "{e}");
+        assert!(!is_transient(&e));
+        assert_eq!(server.seen_at("/v1/responses").len(), 2);
+    }
+
+    #[tokio::test]
+    async fn a_plan_stream_that_ends_early_is_a_failure_that_can_pass() {
+        let server = serve(|_| {
+            Resp::sse(&[json!({"type": "response.created", "response": {}}), json!({"type": "response.output_text.delta", "delta": "half an ans"})])
+        })
+        .await;
+        let e = ask(&plan_provider(&server, plan_session(&server, 10))).await.unwrap_err();
+        assert!(is_transient(&e), "{e}");
+        assert!(e.to_string().contains("before it was complete"), "{e}");
+    }
+
+    #[tokio::test]
+    async fn plan_refusals_before_the_stream_say_what_the_server_said() {
+        let server = serve(|_| Resp::json(429, json!({"error": {"code": "subscription_sharing_usage_limit_exceeded", "message": "No usage left.", "param": null}}))).await;
+        let e = ask(&plan_provider(&server, plan_session(&server, 10))).await.unwrap_err();
+        assert!(is_plan_limit(&e) && !is_transient(&e), "{e}");
+
+        // Before the stream opens, the answer can be a plain text for a person.
+        let server = serve(|_| Resp::json(403, json!({"detail": "This region is not served."}))).await;
+        let e = ask(&plan_provider(&server, plan_session(&server, 10))).await.unwrap_err();
+        assert!(e.to_string().contains("This region is not served."), "{e}");
+        assert!(!is_transient(&e) && !is_plan_limit(&e));
+
+        let server = serve(|_| Resp::json(503, json!({"detail": "Not available."}))).await;
+        let e = ask(&plan_provider(&server, plan_session(&server, 10))).await.unwrap_err();
+        assert!(is_transient(&e), "{e}");
+    }
+
+    #[tokio::test]
+    async fn a_plan_refusal_of_one_parameter_sends_the_call_again_without_it() {
+        let server = serve(|req| {
+            if req.json().get("text").is_some() {
+                return Resp::json(400, json!({"error": {"code": "subscription_sharing_unsupported_capability", "message": "Not supported here.", "param": "text.format"}}));
+            }
+            ok_stream()
+        })
+        .await;
+        let p = Provider::for_account(&format!("{}/v1", server.base), "gpt-json", plan_session(&server, 10)).unwrap();
+        let r = p.chat("sys", &[Part::Text("Answer in JSON.".into())], true, 100, Thinking::Off, None).await.unwrap();
+        assert_eq!(r.text, "OK");
+        assert_eq!(server.seen().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn plan_models_are_the_listed_ones_with_their_names() {
+        let server = serve(|req| match req.path.as_str() {
+            "/v1/models" => Resp::json(
+                200,
+                json!({"models": [
+                    {"slug": "gpt-b", "display_name": "GPT B", "visibility": "list"},
+                    {"slug": "gpt-hidden", "display_name": "Hidden", "visibility": "hide"},
+                    {"slug": "gpt-a", "display_name": "GPT A", "visibility": "list"}
+                ]}),
+            ),
+            _ => Resp::empty(404),
+        })
+        .await;
+        let p = plan_provider(&server, plan_session(&server, 10));
+        let models = p.models().await.unwrap();
+        // The order of the server stays.
+        assert_eq!(models, vec![ModelInfo { id: "gpt-b".into(), name: "GPT B".into() }, ModelInfo { id: "gpt-a".into(), name: "GPT A".into() }]);
+        assert_eq!(server.seen()[0].header("authorization"), "Bearer at-old");
+    }
+
+    #[tokio::test]
+    async fn models_of_a_key_provider_are_sorted_ids() {
+        let server = serve(|_| Resp::json(200, json!({"data": [{"id": "models/b"}, {"id": "a"}, {"id": "a"}]}))).await;
+        let p = Provider::new(&server.base, "m", "k").unwrap();
+        let models = p.models().await.unwrap();
+        assert_eq!(models, vec![ModelInfo { id: "a".into(), name: String::new() }, ModelInfo { id: "b".into(), name: String::new() }]);
+        assert_eq!(server.seen()[0].header("authorization"), "Bearer k");
     }
 }

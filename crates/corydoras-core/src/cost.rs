@@ -45,6 +45,8 @@ pub struct Estimate {
     pub from_history: bool,
     /// Tokens left in the monthly budget. None: no budget.
     pub budget_left: Option<i64>,
+    /// True when a pass of this estimate uses the ChatGPT plan of the person.
+    pub plan: bool,
 }
 
 /// What to estimate.
@@ -251,12 +253,19 @@ pub fn estimate(lib: &Library, ai: &AiConfig, language_id: &str, scope: Scope) -
         if p.local() {
             return Some(0.0);
         }
+        // The ChatGPT plan pays: tokens have no price here.
+        if p.uses_account() {
+            return None;
+        }
         if p.price_in <= 0.0 && p.price_out <= 0.0 {
             return None;
         }
         Some(tokens_in as f64 / 1e6 * p.price_in + tokens_out as f64 / 1e6 * p.price_out)
     };
     e.cost_usd = price(Role::Analysis, &[&e.images, &e.sources]).zip(price(Role::Synthesis, &[&e.document])).map(|(a, b)| ((a + b) * 10_000.0).round() / 10_000.0);
+
+    let on_plan = |role: Role, passes: &[&Pass]| ai.for_role(role).is_some_and(|p| p.uses_account()) && passes.iter().any(|x| x.calls > 0);
+    e.plan = on_plan(Role::Analysis, &[&e.images, &e.sources]) || on_plan(Role::Synthesis, &[&e.document]);
 
     let settings = lib.settings()?;
     if settings.monthly_token_budget > 0 {
@@ -332,5 +341,37 @@ mod tests {
         assert_eq!(lib.get_item(&a.id).unwrap().analysis_status, "pending");
         assert_eq!(lib.get_item(&b.id).unwrap().analysis_status, "done");
         assert_eq!(lib.other_model_analyses(&lang.id, "model-a").unwrap().images, 1);
+    }
+
+    #[test]
+    fn passes_on_the_chatgpt_plan_are_marked_and_have_no_price() {
+        let dir = tempfile::tempdir().unwrap();
+        let lib = Library::open(dir.path()).unwrap();
+        let lang = lib.create_language("Organic", "").unwrap();
+        lib.import_bytes(&lang.id, "a.png", &png(3), None).unwrap();
+
+        let mut plan = ProviderProfile::from_preset("chatgpt");
+        plan.model = "gpt-x".into();
+        // Prices from an earlier setting do not count: the plan pays.
+        plan.price_in = 1.0;
+        plan.price_out = 4.0;
+        let both = AiConfig { analysis_profile: plan.id.clone(), synthesis_profile: plan.id.clone(), profiles: vec![plan.clone()] };
+        let e = estimate(&lib, &both, &lang.id, Scope::Queue).unwrap();
+        assert!(e.plan);
+        assert_eq!(e.cost_usd, None);
+
+        // The plan analyzes the images only. An estimate of the document alone does not use it.
+        let mut keyed = ai(1.0, 4.0);
+        keyed.analysis_profile = plan.id.clone();
+        keyed.profiles.push(plan);
+        let e = estimate(&lib, &keyed, &lang.id, Scope::Document).unwrap();
+        assert_eq!((e.images.calls, e.document.calls), (0, 1));
+        assert!(!e.plan, "no pass of this estimate uses the plan");
+        assert!(e.cost_usd.is_some());
+        // With the image pass in it, the plan is in use and the money is not known.
+        let e = estimate(&lib, &keyed, &lang.id, Scope::Queue).unwrap();
+        assert!(e.plan);
+        assert_eq!(e.cost_usd, None);
+        assert!(!estimate(&lib, &ai(0.0, 0.0), &lang.id, Scope::All).unwrap().plan);
     }
 }

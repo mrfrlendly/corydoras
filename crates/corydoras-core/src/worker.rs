@@ -6,7 +6,8 @@ use crate::analysis;
 use crate::library::{Library, JOB_ANALYZE, JOB_SOURCE, JOB_SYNTH};
 use crate::models::Job;
 use crate::provider::{self, CallError, Part, Provider, Thinking};
-use crate::ai::{AiConfig, Role};
+use crate::ai::{AiConfig, ProviderProfile, Role};
+use crate::signin::chatgpt;
 use crate::spec;
 use crate::util::{now_ms, truncate};
 use anyhow::{anyhow, Result};
@@ -46,7 +47,16 @@ fn k(n: i64) -> String {
 
 pub async fn step(lib: &Library, act: &Activity) -> Outcome {
     match lib.queue_paused() {
-        Ok(true) => return Outcome::Paused("The queue is paused.".into()),
+        Ok(true) => {
+            return Outcome::Paused(
+                match lib.queue_pause_reason().ok().flatten().as_deref() {
+                    Some("plan_limit") => "The ChatGPT usage limit is reached. Resume the queue when your plan has usage again.",
+                    Some("sign_in") => "The ChatGPT sign-in ended. Sign in again in Settings, then resume the queue.",
+                    _ => "The queue is paused.",
+                }
+                .into(),
+            )
+        }
         Err(e) => return Outcome::Paused(format!("Job queue error: {e}")),
         _ => {}
     }
@@ -96,6 +106,10 @@ pub async fn step(lib: &Library, act: &Activity) -> Outcome {
             return Outcome::Paused(e.to_string());
         }
     };
+    if let Err(e) = account_ready(profile, &chatgpt::Session::app()).await {
+        let _ = lib.defer_job(&job, 20);
+        return Outcome::Paused(e.to_string());
+    }
     let provider = match Provider::from_profile(profile, &key) {
         Ok(p) => p,
         Err(e) => {
@@ -115,10 +129,26 @@ pub async fn step(lib: &Library, act: &Activity) -> Outcome {
     }
 }
 
+/// For a provider that a ChatGPT account pays: renews an old sign-in before the job
+/// starts. So a sign-in that ended stops the queue here and fails no job.
+async fn account_ready(profile: &ProviderProfile, session: &chatgpt::Session) -> Result<()> {
+    if profile.uses_account() {
+        chatgpt::access_token(session).await?;
+    }
+    Ok(())
+}
+
 /// Records a failure. Transient errors go back in the queue with a delay;
 /// other errors stop the job, because the same call would fail the same way.
 /// Returns a sentence about what happens next.
 fn fail(lib: &Library, job: &Job, e: &anyhow::Error) -> (bool, String) {
+    // The ChatGPT plan has no usage left, or its sign-in ended: every job would fail
+    // the same way. The job stays and the queue stops until the person acts.
+    if provider::is_plan_limit(e) || chatgpt::needs_sign_in(e) {
+        let _ = lib.defer_job(job, 0);
+        let _ = lib.pause_queue_for(if provider::is_plan_limit(e) { "plan_limit" } else { "sign_in" });
+        return (false, "The queue is paused; the job stays in it. Resume the queue in Activity when this is solved.".into());
+    }
     let msg = e.to_string();
     if provider::is_transient(e) && job.attempts + 1 < MAX_ATTEMPTS {
         let delay = 30 * (1 << job.attempts.clamp(0, 4));
@@ -544,4 +574,95 @@ pub async fn synthesize(
         return Ok(Some(v));
     }
     Err(last_err)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ai::ProviderProfile;
+    use crate::signin::chatgpt::{Endpoints, Session, SignInNeeded, Store};
+
+    fn library_with_a_job() -> (tempfile::TempDir, Library, Job) {
+        let dir = tempfile::tempdir().unwrap();
+        let lib = Library::open(dir.path()).unwrap();
+        let lang = lib.create_language("Organic", "").unwrap();
+        lib.enqueue_synth(&lang.id).unwrap();
+        let job = lib.next_job(true).unwrap().expect("a job");
+        (dir, lib, job)
+    }
+
+    #[test]
+    fn a_used_up_plan_pauses_the_queue_and_keeps_the_job() {
+        let (_dir, lib, job) = library_with_a_job();
+        let e: anyhow::Error = CallError::Plan { code: "subscription_sharing_usage_limit_exceeded".into(), message: String::new() }.into();
+        let (gave_up, next) = fail(&lib, &job, &e);
+        assert!(!gave_up, "the job is not at fault");
+        assert!(lib.queue_paused().unwrap(), "every other job would fail the same way");
+        assert_eq!(lib.queue_pause_reason().unwrap().as_deref(), Some("plan_limit"));
+        assert!(next.contains("paused"), "{next}");
+        let kept = lib.next_job(true).unwrap().expect("the job stays");
+        assert_eq!((kept.id, kept.attempts), (job.id, job.attempts));
+    }
+
+    #[test]
+    fn a_sign_in_that_ended_pauses_the_queue_and_keeps_the_job() {
+        let (_dir, lib, job) = library_with_a_job();
+        let e: anyhow::Error = SignInNeeded("The ChatGPT sign-in ended. Sign in again in Settings.".into()).into();
+        let (gave_up, _) = fail(&lib, &job, &e);
+        assert!(!gave_up);
+        assert!(lib.queue_paused().unwrap());
+        assert_eq!(lib.queue_pause_reason().unwrap().as_deref(), Some("sign_in"));
+        assert_eq!(lib.job_count().unwrap(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_queue_that_the_app_paused_says_why_until_it_runs_again() {
+        let (_dir, lib, _job) = library_with_a_job();
+        let act = Activity::default();
+        let said = |o: Outcome| match o {
+            Outcome::Paused(m) => m,
+            other => panic!("not paused: {other:?}"),
+        };
+        lib.pause_queue_for("plan_limit").unwrap();
+        assert!(said(step(&lib, &act).await).contains("usage limit"));
+        lib.pause_queue_for("sign_in").unwrap();
+        assert!(said(step(&lib, &act).await).contains("Sign in"));
+        // A pause by hand has no reason, and it takes an old reason away.
+        lib.set_queue_paused(true).unwrap();
+        assert_eq!(lib.queue_pause_reason().unwrap(), None);
+        assert_eq!(said(step(&lib, &act).await), "The queue is paused.");
+        // So does the resume.
+        lib.pause_queue_for("plan_limit").unwrap();
+        lib.set_queue_paused(false).unwrap();
+        assert!(!lib.queue_paused().unwrap());
+        assert_eq!(lib.queue_pause_reason().unwrap(), None);
+    }
+
+    #[test]
+    fn other_failures_keep_their_course() {
+        // A failure that can pass: the job waits and counts a try. The queue runs on.
+        let (_dir, lib, job) = library_with_a_job();
+        let e: anyhow::Error = CallError::Http { status: 429, message: "slow down".into() }.into();
+        assert!(!fail(&lib, &job, &e).0);
+        assert!(!lib.queue_paused().unwrap());
+        assert_eq!(lib.next_job(true).unwrap().unwrap().attempts, job.attempts + 1);
+        // A failure that would repeat: the job stops. The queue runs on.
+        let (_dir, lib, job) = library_with_a_job();
+        let e: anyhow::Error = CallError::Http { status: 401, message: "no".into() }.into();
+        assert!(fail(&lib, &job, &e).0);
+        assert!(!lib.queue_paused().unwrap());
+        assert_eq!(lib.job_count().unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn a_plan_provider_must_be_signed_in_before_a_job_starts() {
+        let dir = tempfile::tempdir().unwrap();
+        // No account is saved in this folder.
+        let session = Session { store: Store { dir: dir.path().to_path_buf() }, name: "chatgpt-plan".into(), endpoints: Endpoints::default() };
+        let plan = ProviderProfile::from_preset("chatgpt");
+        let e = account_ready(&plan, &session).await.unwrap_err();
+        assert!(crate::signin::chatgpt::needs_sign_in(&e), "{e}");
+        // A key provider has nothing to do with the account.
+        assert!(account_ready(&ProviderProfile::from_preset("openai"), &session).await.is_ok());
+    }
 }

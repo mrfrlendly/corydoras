@@ -150,6 +150,12 @@ fn app_with(lib: Arc<Library>) -> tauri::App<MockRuntime> {
             features::restore_snapshot,
             features::db_copies,
             features::usage_insight,
+            crate::get_ai,
+            crate::save_ai,
+            crate::new_profile,
+            crate::accounts::provider_sign_in,
+            crate::accounts::cancel_sign_in,
+            crate::accounts::provider_sign_out,
         ])
         .build(mock_context(noop_assets()))
         .expect("the test app")
@@ -296,6 +302,66 @@ fn commands_take_what_the_frontend_sends() {
     let again = Library::open(&restored).unwrap();
     assert!(again.list_languages().unwrap().iter().any(|l| l.name == "Soft shell"));
     assert!(call(&w, "create_snapshot", json!({"dest": lib.root().join("inside")})).is_err(), "a snapshot inside the library is refused");
+
+    // --- Providers: the account sign-in. The browser part has its tests in the core.
+    use corydoras_core::signin::chatgpt;
+    let ai = ok(&w, "get_ai", json!({}));
+    let sign_in_of = |kind: &str| ai["presets"].as_array().unwrap().iter().find(|p| p["kind"] == kind).map(|p| text(p, "sign_in")).unwrap();
+    assert_eq!((sign_in_of("chatgpt").as_str(), sign_in_of("openrouter").as_str(), sign_in_of("anthropic").as_str()), ("chatgpt", "openrouter", ""));
+    assert_eq!(ai["account"], json!({"signed_in": false, "plan": false, "email": "", "known": false}));
+    let first_id = text(&ai["config"]["profiles"][0], "id");
+
+    // A ChatGPT plan provider has no key, and cannot pay before the sign-in.
+    let plan = ok(&w, "new_profile", json!({"kind": "chatgpt"}));
+    let plan_id = text(&plan, "id");
+    let mut with_plan = ai["config"].clone();
+    with_plan["profiles"].as_array_mut().unwrap().push(plan);
+    let ai = ok(&w, "save_ai", json!({"config": with_plan}));
+    assert_eq!(ai["keys"][&plan_id], json!(false));
+
+    // An account that signed in: the provider can pay, and the page shows the address.
+    let session = chatgpt::Session::app();
+    assert!(session.store.dir.starts_with(dir.join("config")), "the test must not touch real sign-ins: {}", session.store.dir.display());
+    let signed_in = chatgpt::Account {
+        email: "ada@example.com".into(),
+        subject: "user-1".into(),
+        client_id: "oaiapp_1".into(),
+        // No refresh token: the sign-out has nothing to send to the network.
+        access_token: "at-1".into(),
+        expires_in: 3600,
+        saved_at: corydoras_core::util::now_ts(),
+        scopes: chatgpt::SCOPE.split(' ').map(str::to_string).collect(),
+        ..Default::default()
+    };
+    session.store.save_account(&session.name, &signed_in).unwrap();
+    let ai = ok(&w, "get_ai", json!({}));
+    assert_eq!(ai["account"], json!({"signed_in": true, "plan": true, "email": "ada@example.com", "known": true}));
+    assert_eq!(ai["keys"][&plan_id], json!(true));
+
+    // Sign-out: the tokens go, the address stays for the next sign-in.
+    let out = ok(&w, "provider_sign_out", json!({}));
+    assert_eq!(out["confirmed"], json!(true));
+    assert_eq!(out["view"]["account"], json!({"signed_in": false, "plan": false, "email": "ada@example.com", "known": true}));
+    assert_eq!(out["view"]["keys"][&plan_id], json!(false));
+    assert!(session.account().unwrap().access_token.is_empty());
+
+    // Only providers with a sign-in start one, and only saved providers.
+    let e = call(&w, "provider_sign_in", json!({"profileId": first_id, "fresh": false})).unwrap_err();
+    assert!(e.contains("no account sign-in"), "{e}");
+    let e = call(&w, "provider_sign_in", json!({"profileId": "p-not-saved", "fresh": false})).unwrap_err();
+    assert!(e.contains("Save the provider first"), "{e}");
+    ok(&w, "cancel_sign_in", json!({}));
+
+    // Removing the last ChatGPT plan provider signs the app out of ChatGPT.
+    session.store.save_account(&session.name, &signed_in).unwrap();
+    let mut without_plan = ok(&w, "get_ai", json!({}))["config"].clone();
+    without_plan["profiles"].as_array_mut().unwrap().retain(|p| p["id"] != json!(plan_id));
+    ok(&w, "save_ai", json!({"config": without_plan}));
+    let gone = (0..100).any(|_| {
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        session.account().is_some_and(|a| !a.signed_in())
+    });
+    assert!(gone, "the sign-out runs in the background");
 
     drop(app);
     let _ = std::fs::remove_dir_all(&dir);

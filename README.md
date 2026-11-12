@@ -37,12 +37,12 @@ To also add the MCP server to Claude Desktop, run `bash scripts/setup-mac.sh --r
 ## First launch
 
 1. Select the library folder (default `~/Corydoras`).
-2. Open **Settings**. Under **Model providers**, open a provider, paste its API key, and click **Test**. The key is saved in a file that only your user account can read.
+2. Open **Settings**. Under **Model providers**, open a provider, paste its API key, and click **Test**. The key is saved in a file that only your user account can read. With OpenRouter or a ChatGPT plan you can sign in instead of pasting a key: see [Account sign-in](#account-sign-in).
 3. Choose the provider for **Images and sources** and the provider for the **Language document**.
 4. Click **+** next to **Languages**, type a name, and press Return.
 5. Drag images into the board, or paste a screenshot with ⌘V. A video (MP4, MOV, M4V) adds its key frames. A 3D model (STL, 3MF, OBJ, STEP) adds a render of four views.
 
-API keys are files in `~/Library/Application Support/Corydoras/keys/` (folder mode 0700, files mode 0600), so a rebuild never asks for your password. Keys that earlier versions saved in the Keychain move into these files the first time the app uses them; macOS can ask for Keychain access that one last time.
+API keys are files in `~/Library/Application Support/Corydoras/keys/` (folder mode 0700, files mode 0600), so a rebuild never asks for your password. Keys that earlier versions saved in the Keychain move into these files the first time the app uses them; macOS can ask for Keychain access that one last time. The sign-in of a ChatGPT plan is a file in the same folder.
 
 ## How it works
 
@@ -234,15 +234,16 @@ A measure with a range gives a minimum and a maximum. A process-dependent measur
 
 ## Model providers
 
-Corydoras works with your own API key from any of these providers, or with a model on your Mac:
+Corydoras works with your own API key from any of these providers, with an account sign-in for two of them, or with a model on your Mac:
 
 | Provider | Format | Note |
 | --- | --- | --- |
 | DeepSeek | OpenAI-compatible | Thinking mode for the language document |
 | OpenAI | OpenAI-compatible | Thinking sets `reasoning_effort` |
+| ChatGPT plan (OpenAI) | Responses API | No key: sign in with ChatGPT. The calls use the usage of your plan |
 | Anthropic (Claude) | Messages API | Adaptive thinking; budget thinking for models before 4.6 |
 | Google Gemini | OpenAI-compatible endpoint | Thinking sets `reasoning_effort` |
-| OpenRouter | OpenAI-compatible | One key for many providers |
+| OpenRouter | OpenAI-compatible | One key for many providers. Sign in, or paste a key |
 | Mistral, xAI | OpenAI-compatible | |
 | Ollama, LM Studio | OpenAI-compatible, on this Mac | No key. Set a context length of 32 k or more. |
 | Other | OpenAI-compatible or Messages API | Any address |
@@ -253,6 +254,24 @@ Corydoras works with your own API key from any of these providers, or with a mod
 - **Output limit** caps the answer size. A model with a small limit needs a small value.
 - When a server refuses a parameter (for example `temperature` or a thinking option), Corydoras removes or changes that parameter and sends the call again. It remembers the change for that model until the app quits.
 - The 0.4 DeepSeek setting becomes the first provider, with the same key.
+
+### Account sign-in
+
+Two providers let you sign in with your account instead of pasting an API key. The sign-in opens in your browser, so Corydoras never sees your password. The app waits five minutes for the browser; **Cancel** stops the wait.
+
+**OpenRouter.** Open the OpenRouter provider and click **Sign in with OpenRouter**. OpenRouter asks you to allow the app (its page names the app by its address on your Mac, `localhost`), makes an API key in your account and gives it to Corydoras. From then on the provider works as with a pasted key, and the calls use your OpenRouter credits. To take the access away, delete the key at openrouter.ai/settings/keys. **Remove key…** deletes only the copy on your Mac.
+
+**ChatGPT plan.** Add the provider **ChatGPT plan (OpenAI)** and click **Continue with ChatGPT**. This is OpenAI's "Sign in with ChatGPT" for open-source apps, which OpenAI calls a preview. The calls use the usage that is included in your ChatGPT plan or credits balance, not an API account.
+
+- After the sign-in, **Load models** lists the models of your plan. Choose one and save the provider.
+- One ChatGPT account serves every ChatGPT plan provider in the app. **Use another account** registers Corydoras for another account.
+- Corydoras gets no access to your ChatGPT conversations. It keeps the tokens in `~/Library/Application Support/Corydoras/keys/chatgpt-plan-account` (mode 0600) and the registration of the app for your account in `chatgpt-sign-in` beside it. It renews the access token when it is old (it lives one hour) and sends it to `api.openai.com` only.
+- **Manage usage** opens chatgpt.com/settings/usage, where you see and limit the usage. On a Plus plan, all apps that use your plan share the five-hour limit, so a large analysis pass takes from the same allowance as ChatGPT itself.
+- When the limit is reached, the queue pauses itself and the jobs stay in it. **Activity** says "Usage limit reached". Resume the queue when your plan has usage again. The same happens when the sign-in ends, for example after you disconnect Corydoras in ChatGPT: sign in again, then resume the queue.
+- The plan route takes no output limit and no temperature, and tokens have no price there. So the provider has no such fields, and its cost estimates show tokens only.
+- **Sign out…** ends the sign-in at OpenAI and deletes the tokens on your Mac. When you remove the last ChatGPT plan provider, the app signs out too.
+
+Anthropic and Google do not allow other apps to use the sign-in of a Claude or Gemini subscription, so these providers work with an API key only.
 
 ### Cost estimates
 
@@ -390,7 +409,7 @@ Click the status line at the bottom of the sidebar to open **Activity**:
 - **Pause queue** lets the running job finish and starts no new job. The setting stays after a restart.
 - **Queue: Auto / Manual** at the bottom of the sidebar. In Manual mode, jobs wait until you click **Run queue** there.
 
-Calls stream from the provider. A call with no data for 2 minutes stops, and the queue tries it again later. Only network, rate-limit and server errors go back into the queue; an error that would repeat stops the job and appears in the log.
+Calls stream from the provider. A call with no data for 2 minutes stops, and the queue tries it again later. Only network, rate-limit and server errors go back into the queue; an error that would repeat stops the job and appears in the log. A ChatGPT plan that has no usage left pauses the queue and keeps the jobs (see [Account sign-in](#account-sign-in)).
 
 ## Library layout
 

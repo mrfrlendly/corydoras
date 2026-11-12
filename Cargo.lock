@@ -766,6 +766,7 @@ dependencies = [
  "objc2-foundation",
  "pdf-extract",
  "reqwest 0.12.28",
+ "ring",
  "rusqlite",
  "scraper",
  "serde",

@@ -8,6 +8,7 @@
 
 use crate::models::Settings;
 use crate::secrets;
+use crate::signin::chatgpt;
 use anyhow::{anyhow, bail, Result};
 use serde::{Deserialize, Serialize};
 
@@ -38,6 +39,8 @@ pub struct Preset {
     /// Where to make a key.
     pub key_url: &'static str,
     pub note: &'static str,
+    /// The account sign-in that the provider offers: "openrouter", "chatgpt", or "" for none.
+    pub sign_in: &'static str,
 }
 
 pub fn presets() -> Vec<Preset> {
@@ -52,6 +55,7 @@ pub fn presets() -> Vec<Preset> {
             local: false,
             max_output: 64_000,
             key_url: "https://platform.deepseek.com/api_keys",
+            sign_in: "",
             note: "Low cost. Thinking mode is available for the language document.",
         },
         Preset {
@@ -64,7 +68,22 @@ pub fn presets() -> Vec<Preset> {
             local: false,
             max_output: 64_000,
             key_url: "https://platform.openai.com/api-keys",
+            sign_in: "",
             note: "Reasoning models use the Thinking setting as their reasoning effort.",
+        },
+        Preset {
+            kind: "chatgpt",
+            name: "ChatGPT plan (OpenAI)",
+            api: Api::Openai,
+            base_url: chatgpt::API_BASE,
+            model: "",
+            needs_key: false,
+            local: false,
+            max_output: 64_000,
+            key_url: "",
+            sign_in: "chatgpt",
+            note: "Sign in with ChatGPT: the calls use the usage that is included in your ChatGPT plan or credits balance, not an API key. \
+                   The plan route takes no output limit, and tokens have no price here.",
         },
         Preset {
             kind: "anthropic",
@@ -76,6 +95,7 @@ pub fn presets() -> Vec<Preset> {
             local: false,
             max_output: 64_000,
             key_url: "https://platform.claude.com/settings/keys",
+            sign_in: "",
             note: "Uses the Messages API. Thinking uses adaptive thinking, with a fallback for older models.",
         },
         Preset {
@@ -88,6 +108,7 @@ pub fn presets() -> Vec<Preset> {
             local: false,
             max_output: 64_000,
             key_url: "https://aistudio.google.com/apikey",
+            sign_in: "",
             note: "Uses the OpenAI-compatible endpoint of the Gemini API.",
         },
         Preset {
@@ -100,7 +121,8 @@ pub fn presets() -> Vec<Preset> {
             local: false,
             max_output: 32_000,
             key_url: "https://openrouter.ai/settings/keys",
-            note: "One key for many providers. Choose a model that accepts images for the image analysis.",
+            sign_in: "openrouter",
+            note: "One account for many providers: sign in with OpenRouter, or paste a key. Choose a model that accepts images for the image analysis.",
         },
         Preset {
             kind: "mistral",
@@ -112,6 +134,7 @@ pub fn presets() -> Vec<Preset> {
             local: false,
             max_output: 32_000,
             key_url: "https://console.mistral.ai/api-keys",
+            sign_in: "",
             note: "",
         },
         Preset {
@@ -124,6 +147,7 @@ pub fn presets() -> Vec<Preset> {
             local: false,
             max_output: 32_000,
             key_url: "https://console.x.ai",
+            sign_in: "",
             note: "",
         },
         Preset {
@@ -136,6 +160,7 @@ pub fn presets() -> Vec<Preset> {
             local: true,
             max_output: 16_000,
             key_url: "https://ollama.com/download",
+            sign_in: "",
             note: "Free and private. Use a vision model (for example a Gemma, Qwen-VL or LLaVA model) for images. \
                    Set the context length in Ollama to 32 k or more: the language document needs a long prompt.",
         },
@@ -149,6 +174,7 @@ pub fn presets() -> Vec<Preset> {
             local: true,
             max_output: 16_000,
             key_url: "https://lmstudio.ai",
+            sign_in: "",
             note: "Free and private. Start the local server in LM Studio and load a model with a long context.",
         },
         Preset {
@@ -161,6 +187,7 @@ pub fn presets() -> Vec<Preset> {
             local: false,
             max_output: 16_000,
             key_url: "",
+            sign_in: "",
             note: "Any server with an OpenAI-compatible /chat/completions endpoint.",
         },
     ]
@@ -177,7 +204,7 @@ pub fn preset(kind: &str) -> Preset {
 pub struct ProviderProfile {
     pub id: String,
     pub name: String,
-    /// Preset kind: deepseek, openai, anthropic, gemini, openrouter, mistral, xai, ollama, lmstudio, custom.
+    /// Preset kind: deepseek, openai, chatgpt, anthropic, gemini, openrouter, mistral, xai, ollama, lmstudio, custom.
     pub kind: String,
     pub api: Api,
     pub base_url: String,
@@ -222,17 +249,30 @@ impl ProviderProfile {
         }
     }
 
+    /// True when a signed-in account pays for the calls, not an API key.
+    pub fn uses_account(&self) -> bool {
+        self.kind == "chatgpt"
+    }
+
     pub fn local(&self) -> bool {
         preset(&self.kind).local
             || ["localhost", "127.0.0.1", "[::1]"].iter().any(|h| self.base_url.contains(h))
     }
 
+    /// True when the provider can pay for a call: it has its key, needs none, or (for the
+    /// ChatGPT plan) the app is signed in and the plan is allowed.
     pub fn has_key(&self) -> bool {
+        if self.uses_account() {
+            return chatgpt::Session::app().account().is_some_and(|a| a.signed_in() && a.plan_enabled());
+        }
         !self.needs_key || secrets::has_key(&self.key_account)
     }
 
     /// The key, or an empty string for a provider without a key.
     pub fn key(&self) -> Result<String> {
+        if self.uses_account() {
+            return if self.has_key() { Ok(String::new()) } else { Err(anyhow!("Sign in to ChatGPT for \"{}\" in Settings.", self.name)) };
+        }
         match secrets::get_key(&self.key_account) {
             Some(k) => Ok(k),
             None if !self.needs_key => Ok(String::new()),
@@ -262,6 +302,12 @@ impl ProviderProfile {
         self.price_out = price(self.price_out);
         if self.name.is_empty() {
             self.name = preset(&self.kind).name.to_string();
+        }
+        if self.uses_account() {
+            // The tokens of the plan go to OpenAI only.
+            self.base_url = chatgpt::API_BASE.to_string();
+            self.api = Api::Openai;
+            self.needs_key = false;
         }
         if !(self.base_url.starts_with("http://") || self.base_url.starts_with("https://")) {
             bail!("The address of \"{}\" must start with http:// or https://.", self.name);
@@ -410,5 +456,38 @@ mod tests {
         let mut x = ProviderProfile::from_preset("custom");
         x.base_url = "api.example.com".into();
         assert!(x.normalized().is_err());
+    }
+
+    #[test]
+    fn the_chatgpt_plan_provider_needs_a_sign_in_and_no_key() {
+        use crate::provider::Dialect;
+        use crate::signin::chatgpt;
+        let p = ProviderProfile::from_preset("chatgpt");
+        assert!(p.uses_account() && !p.needs_key);
+        assert_eq!(p.base_url, chatgpt::API_BASE);
+        assert_eq!(Dialect::of_profile(&p), Dialect::ChatGpt);
+        // The tokens of the plan go to OpenAI only: another address does not stay.
+        let mut moved = p.clone();
+        moved.base_url = "https://elsewhere.example/v1".into();
+        moved.needs_key = true;
+        let n = moved.normalized().unwrap();
+        assert_eq!(n.base_url, chatgpt::API_BASE);
+        assert!(!n.needs_key);
+        // A custom provider with the same address is a key provider.
+        let mut custom = ProviderProfile::from_preset("custom");
+        custom.base_url = chatgpt::API_BASE.into();
+        assert!(!custom.uses_account());
+        assert_eq!(Dialect::of_profile(&custom), Dialect::OpenAi);
+    }
+
+    #[test]
+    fn two_providers_offer_a_sign_in() {
+        assert_eq!(preset("chatgpt").sign_in, "chatgpt");
+        assert_eq!(preset("openrouter").sign_in, "openrouter");
+        let with: Vec<&str> = presets().iter().filter(|p| !p.sign_in.is_empty()).map(|p| p.kind).collect();
+        assert_eq!(with, vec!["chatgpt", "openrouter"]);
+        // OpenRouter's sign-in gives a key, so the provider stays a key provider.
+        let o = ProviderProfile::from_preset("openrouter");
+        assert!(o.needs_key && !o.uses_account());
     }
 }

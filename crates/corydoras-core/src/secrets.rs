@@ -89,6 +89,50 @@ pub fn keys_dir() -> PathBuf {
     }
 }
 
+/// A name that is safe as a file name in the keys folder.
+pub(crate) fn safe_name(name: &str) -> String {
+    name.chars()
+        .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
+        .collect()
+}
+
+/// Writes a file that only the user can read, in a folder that only the user can open
+/// (folder mode 0700, file mode 0600). The text goes through a temporary file that has
+/// mode 0600 from the start, so it is never readable by others, not even for a moment,
+/// and a crash leaves the old file whole.
+pub(crate) fn write_private_file(path: &std::path::Path, contents: &str) -> Result<()> {
+    use std::fs;
+    use std::io::Write;
+    if let Some(dir) = path.parent() {
+        fs::create_dir_all(dir)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(dir, fs::Permissions::from_mode(0o700))?;
+        }
+    }
+    let tmp = path.with_extension("tmp");
+    let mut opts = fs::OpenOptions::new();
+    opts.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        opts.mode(0o600);
+    }
+    let mut f = opts.open(&tmp)?;
+    #[cfg(unix)]
+    {
+        // The mode of open() applies only to new files; make sure of it.
+        use std::os::unix::fs::PermissionsExt;
+        f.set_permissions(fs::Permissions::from_mode(0o600))?;
+    }
+    f.write_all(contents.as_bytes())?;
+    f.sync_all()?;
+    drop(f);
+    fs::rename(&tmp, path)?;
+    Ok(())
+}
+
 // The single-key functions of 0.4, for the legacy account.
 pub fn get_api_key() -> Option<String> {
     get_key(LEGACY_ACCOUNT)
@@ -108,55 +152,17 @@ mod store {
     use super::keys_dir;
     use anyhow::Result;
     use std::fs;
-    use std::io::Write;
     use std::path::PathBuf;
 
     /// File of the names of the accounts whose Keychain item was already handled.
     const MOVED_LIST: &str = ".from-keychain";
 
     fn path(account: &str) -> PathBuf {
-        let name: String = account
-            .chars()
-            .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
-            .collect();
-        keys_dir().join(name)
+        keys_dir().join(super::safe_name(account))
     }
 
-    fn ensure_dir() -> Result<()> {
-        let dir = keys_dir();
-        fs::create_dir_all(&dir)?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            fs::set_permissions(&dir, fs::Permissions::from_mode(0o700))?;
-        }
-        Ok(())
-    }
-
-    /// Writes the file through a temporary file that has mode 0600 from the start,
-    /// so the key is never readable by others, not even for a moment.
     fn write_private(path: &PathBuf, contents: &str) -> Result<()> {
-        ensure_dir()?;
-        let tmp = path.with_extension("tmp");
-        let mut opts = fs::OpenOptions::new();
-        opts.write(true).create(true).truncate(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            opts.mode(0o600);
-        }
-        let mut f = opts.open(&tmp)?;
-        #[cfg(unix)]
-        {
-            // The mode of open() applies only to new files; make sure of it.
-            use std::os::unix::fs::PermissionsExt;
-            f.set_permissions(fs::Permissions::from_mode(0o600))?;
-        }
-        f.write_all(contents.as_bytes())?;
-        f.sync_all()?;
-        drop(f);
-        fs::rename(&tmp, path)?;
-        Ok(())
+        super::write_private_file(path, contents)
     }
 
     fn read_file(account: &str) -> Option<String> {

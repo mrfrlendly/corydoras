@@ -47,6 +47,8 @@ export interface Preset {
   max_output: number;
   key_url: string;
   note: string;
+  /** The account sign-in that the provider offers; '' for none. */
+  sign_in: '' | 'openrouter' | 'chatgpt';
 }
 
 /** One provider plus one model, with its own key file. */
@@ -74,11 +76,44 @@ export interface AiConfig {
   synthesis_profile: string;
 }
 
+/** The ChatGPT account of the app. Every ChatGPT plan provider uses it. */
+export interface AccountView {
+  signed_in: boolean;
+  /** Signed in, and the person allowed the use of the plan. */
+  plan: boolean;
+  email: string;
+  /** An account signed in before on this Mac: the next sign-in is for that account. */
+  known: boolean;
+}
+
 export interface AiView {
   config: AiConfig;
   presets: Preset[];
+  /** Profile ID -> the provider can pay for calls (a key, no key needed, or the ChatGPT plan). */
   keys: Record<string, boolean>;
+  account: AccountView;
 }
+
+export interface SignInResult {
+  view: AiView;
+  /** The first sign-in with the ChatGPT plan: show the notice about plan usage one time. */
+  welcome: boolean;
+}
+
+export interface SignOutResult {
+  view: AiView;
+  /** False when ChatGPT did not confirm; the tokens are gone from this Mac all the same. */
+  confirmed: boolean;
+}
+
+/** A model of a provider. The name is empty when the provider gives only IDs. */
+export interface ModelInfo {
+  id: string;
+  name: string;
+}
+
+/** Where a person sees and limits the usage of the ChatGPT plan. */
+export const CHATGPT_USAGE_URL = 'https://chatgpt.com/settings/usage';
 
 export interface CheckReport {
   message: string;
@@ -439,6 +474,8 @@ export interface ActivityReport {
   jobs: JobView[];
   log: LogEntry[];
   paused: boolean;
+  /** Why the app paused the queue itself; null when you paused it. */
+  pause_reason: 'plan_limit' | 'sign_in' | null;
   manual: boolean;
   running: boolean;
   now_ms: number;
@@ -452,6 +489,8 @@ export interface StatusReport {
   has_key: boolean;
   current: CurrentJob | null;
   paused: boolean;
+  /** Why the app paused the queue itself; null when you paused it. */
+  pause_reason: 'plan_limit' | 'sign_in' | null;
   manual: boolean;
   running: boolean;
   queued: number;
@@ -743,6 +782,8 @@ export interface Estimate {
   cost_usd: number | null;
   from_history: boolean;
   budget_left: number | null;
+  /** A pass of this estimate uses the ChatGPT plan. */
+  plan: boolean;
 }
 
 export type EstimateScope = 'queue' | 'all' | 'document' | 'other-model';
@@ -949,7 +990,11 @@ export const api = {
   setProviderKey: (profileId: string, key: string) => invoke<void>('set_provider_key', { profileId, key }),
   clearProviderKey: (profileId: string) => invoke<void>('clear_provider_key', { profileId }),
   checkProvider: (profile: ProviderProfile) => invoke<CheckReport>('check_provider', { profile }),
-  listModels: (profile: ProviderProfile) => invoke<string[]>('list_models', { profile }),
+  listModels: (profile: ProviderProfile) => invoke<ModelInfo[]>('list_models', { profile }),
+  /** Opens the browser and waits for the sign-in. `fresh`: another ChatGPT account than the saved one. */
+  providerSignIn: (profileId: string, fresh: boolean) => invoke<SignInResult>('provider_sign_in', { profileId, fresh }),
+  cancelSignIn: () => invoke<void>('cancel_sign_in'),
+  providerSignOut: () => invoke<SignOutResult>('provider_sign_out'),
   folderInfo: (path: string) => invoke<FolderInfo>('folder_info', { path }),
   revealPath: (path: string) => invoke<void>('reveal_path', { path }),
   moveLibrary: (path: string, trashOld: boolean) => invoke<MoveResult>('move_library', { path, trashOld }),

@@ -8,8 +8,10 @@ use corydoras_core::{
     config::{self, AppConfig},
     library::{JOB_ANALYZE, JOB_SOURCE, JOB_SYNTH},
     models::*,
-    provider::{self, CheckReport, Provider},
-    secrets, snapshot,
+    provider::{self, CheckReport, ModelInfo, Provider},
+    secrets,
+    signin::chatgpt,
+    snapshot,
     storage::{self, FolderInfo, MoveReport},
     video, worker, Library,
 };
@@ -21,6 +23,7 @@ use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 use tauri::{Emitter, Listener, Manager, RunEvent, State, WindowEvent};
 
+mod accounts;
 mod bridge;
 mod capture;
 mod features;
@@ -50,6 +53,8 @@ struct AppState {
     busy: AtomicBool,
     /// The local bridge for the browser extension.
     bridge: bridge::BridgeState,
+    /// The account sign-in that waits for the browser.
+    sign_in: accounts::Pending,
 }
 
 type CmdResult<T> = Result<T, String>;
@@ -776,13 +781,16 @@ fn ai_config(state: &State<'_, AppState>) -> AiConfig {
 struct AiView {
     config: AiConfig,
     presets: Vec<ai::Preset>,
-    /// Profile ID -> a key is saved (or none is necessary).
+    /// Profile ID -> the provider can pay for calls: a key is saved, none is necessary,
+    /// or (ChatGPT plan) the app is signed in.
     keys: HashMap<String, bool>,
+    /// The ChatGPT account of the app.
+    account: accounts::AccountView,
 }
 
 fn ai_view(cfg: AiConfig) -> AiView {
     let keys = cfg.profiles.iter().map(|p| (p.id.clone(), p.has_key())).collect();
-    AiView { config: cfg, presets: ai::presets(), keys }
+    AiView { config: cfg, presets: ai::presets(), keys, account: accounts::account_view() }
 }
 
 #[tauri::command]
@@ -802,6 +810,13 @@ fn save_ai(state: State<'_, AppState>, config: AiConfig) -> CmdResult<AiView> {
         if !cfg.profiles.iter().any(|p| p.key_account == old.key_account) {
             let _ = secrets::clear_key(&old.key_account);
         }
+    }
+    // The last ChatGPT plan provider is gone: sign the app out of ChatGPT too.
+    let plan = |c: &AiConfig| c.profiles.iter().any(|p| p.uses_account());
+    if plan(&before) && !plan(&cfg) {
+        tauri::async_runtime::spawn(async {
+            let _ = chatgpt::sign_out(&chatgpt::Session::app()).await;
+        });
     }
     Ok(ai_view(cfg))
 }
@@ -851,13 +866,13 @@ async fn check_provider(state: State<'_, AppState>, profile: ProviderProfile) ->
 }
 
 #[tauri::command]
-async fn list_models(profile: ProviderProfile) -> CmdResult<Vec<String>> {
+async fn list_models(profile: ProviderProfile) -> CmdResult<Vec<ModelInfo>> {
     let mut profile = profile.normalized().map_err(e2s)?;
     let key = profile.key().unwrap_or_default();
     if profile.model.is_empty() {
         profile.model = "list".into();
     }
-    Provider::from_profile(&profile, &key).map_err(e2s)?.list_models().await.map_err(e2s)
+    Provider::from_profile(&profile, &key).map_err(e2s)?.models().await.map_err(e2s)
 }
 
 // 0.4 commands, kept for older windows of the UI: they act on the analysis provider.
@@ -876,6 +891,8 @@ struct StatusReport {
     /// The job that runs now, with its phase and live token counts.
     current: Option<Current>,
     paused: bool,
+    /// Why the app paused the queue itself: "plan_limit" or "sign_in".
+    pause_reason: Option<String>,
     /// Manual mode: jobs wait until you run the queue.
     manual: bool,
     /// Manual mode: the queue runs now, until it is empty.
@@ -902,6 +919,7 @@ fn status(state: State<'_, AppState>) -> CmdResult<StatusReport> {
         },
         current: state.activity.current(),
         paused: lib.queue_paused().map_err(e2s)?,
+        pause_reason: lib.queue_pause_reason().map_err(e2s)?,
         manual: lib.queue_manual().map_err(e2s)?,
         running: state.activity.run_requested(),
         queued: lib.job_count().map_err(e2s)?,
@@ -915,6 +933,8 @@ struct ActivityReport {
     jobs: Vec<JobView>,
     log: Vec<LogEntry>,
     paused: bool,
+    /// Why the app paused the queue itself: "plan_limit" or "sign_in".
+    pause_reason: Option<String>,
     /// Manual mode, and whether the user started the queue.
     manual: bool,
     running: bool,
@@ -940,6 +960,7 @@ fn activity(state: State<'_, AppState>) -> CmdResult<ActivityReport> {
         jobs,
         log: snap.log,
         paused: lib.queue_paused().map_err(e2s)?,
+        pause_reason: lib.queue_pause_reason().map_err(e2s)?,
         manual: lib.queue_manual().map_err(e2s)?,
         running: state.activity.run_requested(),
         now_ms: snap.now_ms,
@@ -1267,6 +1288,9 @@ fn main() {
             clear_provider_key,
             check_provider,
             list_models,
+            accounts::provider_sign_in,
+            accounts::cancel_sign_in,
+            accounts::provider_sign_out,
             folder_info,
             reveal_path,
             move_library,

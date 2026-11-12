@@ -562,7 +562,7 @@ async fn a_declined_or_foreign_answer_exchanges_no_code() {
 }
 
 #[tokio::test]
-async fn a_refused_sign_in_code_says_what_the_service_answered() {
+async fn a_refused_sign_in_code_says_what_the_service_answered_and_which_plan_it_takes() {
     // The service names its reason in more than one shape; the person must get to read it.
     for (answer, want) in [
         (json!({"error": "invalid_grant", "error_description": "The code was issued for another redirect address."}), "answered: invalid_grant: The code was issued for another redirect address."),
@@ -580,9 +580,80 @@ async fn a_refused_sign_in_code_says_what_the_service_answered() {
         let e = r.err().unwrap().to_string();
         assert!(e.starts_with("ChatGPT did not accept the sign-in code."), "{e}");
         assert!(e.contains(want), "{e}");
-        assert!(e.ends_with("Start the sign-in again."), "{e}");
-        assert!(sess.store.account(&sess.name).is_none(), "nothing is saved");
+        // OpenAI refuses an account without a plan for other apps in exactly this way, with no word about it.
+        assert!(e.contains("Go, Plus, Pro or Business plan") && e.contains("Free account"), "{e}");
+        assert!(e.contains("Use another account"), "{e}");
     }
+    // Another refusal is not about the plan.
+    let dir = tmp();
+    let server = serve(|_| Resp::json(400, json!({"error": "token_expired"}))).await;
+    let sess = session(&dir, &server.base);
+    let (r, _) = sign_in_as(&sess, Arc::default(), false, "&code=c1&client_id=oaiapp_1").await;
+    let e = r.err().unwrap().to_string();
+    assert!(e.contains("answered: token_expired.") && !e.contains("Free account"), "{e}");
+}
+
+/// A stand-in for OpenAI that refuses the first code and takes the later ones.
+async fn openai_refusing_the_first_code(nonce: Arc<Mutex<String>>) -> crate::testserver::Server {
+    let asked = std::sync::atomic::AtomicUsize::new(0);
+    serve(move |req| match req.path.as_str() {
+        "/token" if asked.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 => Resp::json(400, json!({"error": "invalid_grant"})),
+        "/token" => {
+            let n = nonce.lock().unwrap().clone();
+            token_answer("at-1", "rt-1", id_token(claims("user-1", "user-1@example.com", "oaiapp_1", &n)), ALL_SCOPES)
+        }
+        "/jwks" => Resp::json(200, jwks()),
+        _ => Resp::empty(404),
+    })
+    .await
+}
+
+#[tokio::test]
+async fn after_a_refused_code_the_next_try_keeps_the_client_that_was_issued() {
+    let dir = tmp();
+    let nonce = Arc::new(Mutex::new(String::new()));
+    let server = openai_refusing_the_first_code(nonce.clone()).await;
+    let sess = session(&dir, &server.base);
+
+    let (first, url1) = sign_in_as(&sess, nonce.clone(), false, "&code=c1&client_id=oaiapp_1").await;
+    assert!(first.is_err());
+    assert_eq!(query_of(&url1)["client_id"], chatgpt::NEW_CLIENT);
+    // The registration is kept, without tokens and without a name: nobody is signed in.
+    let kept = sess.store.account(&sess.name).expect("the issued client is kept");
+    assert_eq!(kept.client_id, "oaiapp_1");
+    assert!(!kept.signed_in() && kept.subject.is_empty() && kept.email.is_empty() && kept.scopes.is_empty());
+    assert!(!sess.store.registry().welcomed);
+
+    // The next try is a fresh authorization with that client: the app is not registered again.
+    let (second, url2) = sign_in_as(&sess, nonce.clone(), false, "&code=c2").await;
+    let q2 = query_of(&url2);
+    assert_eq!(q2["client_id"], "oaiapp_1");
+    for absent in ["agent_name_hint", "login_hint", "id_token_hint", "prompt"] {
+        assert!(!q2.contains_key(absent), "{absent} in {url2}");
+    }
+    let done = second.unwrap();
+    assert!(done.account.signed_in() && done.account.plan_enabled());
+    assert_eq!((done.account.subject.as_str(), done.account.client_id.as_str()), ("user-1", "oaiapp_1"));
+    assert!(done.welcome);
+    assert_eq!(server.seen_at("/token")[1].form()["client_id"], "oaiapp_1");
+}
+
+#[tokio::test]
+async fn a_refused_code_never_replaces_an_account_that_is_saved() {
+    let dir = tmp();
+    let server = serve(|_| Resp::json(400, json!({"error": "invalid_grant"}))).await;
+    let sess = session(&dir, &server.base);
+    let mine = account(10);
+    sess.store.save_account(&sess.name, &mine).unwrap();
+    // "Use another account" with an account that OpenAI refuses: the working sign-in stays.
+    let (r, url) = sign_in_as(&sess, Arc::default(), true, "&code=c1&client_id=oaiapp_2").await;
+    assert!(r.is_err());
+    assert_eq!(query_of(&url)["client_id"], chatgpt::NEW_CLIENT);
+    assert_eq!(sess.store.account(&sess.name), Some(mine.clone()));
+    // A reauthorization that is refused: the same.
+    let (r, _) = sign_in_as(&sess, Arc::default(), false, "&code=c1").await;
+    assert!(r.is_err());
+    assert_eq!(sess.store.account(&sess.name), Some(mine));
 }
 
 #[tokio::test]

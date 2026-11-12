@@ -263,7 +263,8 @@ Two providers let you sign in with your account instead of pasting an API key. T
 
 **ChatGPT plan.** Add the provider **ChatGPT plan (OpenAI)** and click **Continue with ChatGPT**. This is OpenAI's "Sign in with ChatGPT" for open-source apps, which OpenAI calls a preview. The calls use the usage that is included in your ChatGPT plan or credits balance, not an API account.
 
-- After the sign-in, **Load models** lists the models of your plan. Choose one and save the provider.
+- The account needs a Go, Plus, Pro or Business plan. A Free account passes the browser part, and then the app says that ChatGPT did not accept the sign-in code: OpenAI refuses the account at that step and gives no reason.
+- After the sign-in, the app loads the models of your plan and takes the first one. **Load models** lists them again; choose another and save the provider.
 - One ChatGPT account serves every ChatGPT plan provider in the app. **Use another account** registers Corydoras for another account.
 - Corydoras gets no access to your ChatGPT conversations. It keeps the tokens in `~/Library/Application Support/Corydoras/keys/chatgpt-plan-account` (mode 0600) and the registration of the app for your account in `chatgpt-sign-in` beside it. It renews the access token when it is old (it lives one hour) and sends it to `api.openai.com` only.
 - **Manage usage** opens chatgpt.com/settings/usage, where you see and limit the usage. On a Plus plan, all apps that use your plan share the five-hour limit, so a large analysis pass takes from the same allowance as ChatGPT itself.

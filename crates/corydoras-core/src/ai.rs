@@ -83,6 +83,7 @@ pub fn presets() -> Vec<Preset> {
             key_url: "",
             sign_in: "chatgpt",
             note: "Sign in with ChatGPT: the calls use the usage that is included in your ChatGPT plan or credits balance, not an API key. \
+                   The account needs a Go, Plus, Pro or Business plan; a Free account cannot be used. \
                    The plan route takes no output limit, and tokens have no price here.",
         },
         Preset {
@@ -484,6 +485,8 @@ mod tests {
     fn two_providers_offer_a_sign_in() {
         assert_eq!(preset("chatgpt").sign_in, "chatgpt");
         assert_eq!(preset("openrouter").sign_in, "openrouter");
+        // The plan that the sign-in takes is on the page before the person tries it.
+        assert!(preset("chatgpt").note.contains("Go, Plus, Pro or Business plan"));
         let with: Vec<&str> = presets().iter().filter(|p| !p.sign_in.is_empty()).map(|p| p.kind).collect();
         assert_eq!(with, vec!["chatgpt", "openrouter"]);
         // OpenRouter's sign-in gives a key, so the provider stays a key provider.

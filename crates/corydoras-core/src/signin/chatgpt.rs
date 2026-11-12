@@ -541,14 +541,31 @@ pub async fn sign_in<F: FnOnce(&str) -> Result<()>>(sess: &Session, fresh: bool,
         ("redirect_uri", attempt.redirect_uri.as_str()),
         ("resource", ep.resource.as_str()),
     ];
-    let tokens = token_request(ep, &form).await.map_err(|e| match e {
-        // The service is the only one that knows why: pass its words on.
-        TokenError::Dead(code, said) => anyhow!(
-            "ChatGPT did not accept the sign-in code. The sign-in service answered: {code}{}. Start the sign-in again.",
-            if said.is_empty() { String::new() } else { format!(": {said}") }
-        ),
-        TokenError::Other(m) => anyhow!("The sign-in did not finish: {m}"),
-    })?;
+    let tokens = match token_request(ep, &form).await {
+        Ok(tokens) => tokens,
+        Err(TokenError::Dead(code, said)) => {
+            // OpenAI: after a refused code, the next authorization keeps the issued client
+            // and does not register the app again. Only where no account is saved: a
+            // refused try must never take the place of a sign-in that works.
+            if saved.is_none() {
+                let kept = Account { issuer: ep.issuer.clone(), client_id, ext_agent_host_id: host_id, ..Account::default() };
+                let _ = sess.store.save_account(&sess.name, &kept);
+            }
+            // The service gives no reason, and this is how it refuses an account without a
+            // plan that other apps may use. Say so: the answer alone reads like a fault.
+            let plan = if code == "invalid_grant" {
+                " To use a ChatGPT plan in Corydoras, the account needs a Go, Plus, Pro or Business plan; OpenAI refuses a Free account at this step. \
+                 With such a plan, start the sign-in again. For another account, choose Use another account."
+            } else {
+                " Start the sign-in again."
+            };
+            bail!(
+                "ChatGPT did not accept the sign-in code. The sign-in service answered: {code}{}.{plan}",
+                if said.is_empty() { String::new() } else { format!(": {said}") }
+            );
+        }
+        Err(TokenError::Other(m)) => bail!("The sign-in did not finish: {m}"),
+    };
 
     let jwks_url = discovered(ep, &ep.jwks_url, "jwks_uri", JWKS_FALLBACK).await;
     let jwks: Value = http()?

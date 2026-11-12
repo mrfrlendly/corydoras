@@ -106,6 +106,7 @@ pre,
 .output-note,
 .finding-body,
 .geo-list,
+.selectable,
 .notice {
   user-select: text;
   -webkit-user-select: text;

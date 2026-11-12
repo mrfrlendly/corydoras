@@ -35,6 +35,7 @@ impl Req {
 
 pub struct Resp {
     pub status: u16,
+    /// Empty: the answer has no Content-Type header.
     pub content_type: &'static str,
     pub body: String,
 }
@@ -44,10 +45,23 @@ impl Resp {
         Resp { status, content_type: "application/json", body: v.to_string() }
     }
 
-    /// A server-sent event stream: one `data:` line for each value.
+    /// A server-sent event stream: an `event:` line (when the value has a "type") and a
+    /// `data:` line for each value.
     pub fn sse(events: &[Value]) -> Self {
-        let body = events.iter().map(|e| format!("data: {e}\n\n")).collect();
+        let body = events
+            .iter()
+            .map(|e| match e["type"].as_str() {
+                Some(t) => format!("event: {t}\ndata: {e}\n\n"),
+                None => format!("data: {e}\n\n"),
+            })
+            .collect();
         Resp { status: 200, content_type: "text/event-stream", body }
+    }
+
+    /// The same answer with another Content-Type header, or (empty) with none.
+    pub fn labelled(mut self, content_type: &'static str) -> Self {
+        self.content_type = content_type;
+        self
     }
 
     pub fn empty(status: u16) -> Self {
@@ -154,11 +168,11 @@ pub async fn serve(handler: impl Fn(&Req) -> Resp + Send + Sync + 'static) -> Se
                 let Some(req) = read(&mut stream).await else { return };
                 let resp = handler(&req);
                 log.lock().unwrap().push(req);
+                let label = if resp.content_type.is_empty() { String::new() } else { format!("Content-Type: {}\r\n", resp.content_type) };
                 let head = format!(
-                    "HTTP/1.1 {} {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    "HTTP/1.1 {} {}\r\n{label}Content-Length: {}\r\nConnection: close\r\n\r\n",
                     resp.status,
                     reason(resp.status),
-                    resp.content_type,
                     resp.body.len()
                 );
                 let _ = stream.write_all(head.as_bytes()).await;

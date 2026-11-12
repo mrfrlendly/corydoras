@@ -517,6 +517,28 @@ async fn guard<F: Future>(token: Option<&CancelToken>, fut: F) -> Result<F::Outp
     }
 }
 
+/// What the body of an answer is, judged by its first bytes: Some(true) for a server-sent
+/// event stream, Some(false) for one document (JSON, or anything else), None while the
+/// bytes so far cannot tell. The Content-Type header alone is not enough: OpenAI's plan
+/// route sends its event stream without that header.
+fn body_kind(start: &[u8]) -> Option<bool> {
+    let from = start.iter().position(|b| !b.is_ascii_whitespace())?;
+    let s = &start[from..];
+    // A comment line of an event stream (": keep-alive").
+    if s[0] == b':' {
+        return Some(true);
+    }
+    for field in [&b"event:"[..], b"data:", b"id:", b"retry:"] {
+        if s.starts_with(field) {
+            return Some(true);
+        }
+        if field.starts_with(s) {
+            return None;
+        }
+    }
+    Some(false)
+}
+
 /// State of one streamed answer.
 #[derive(Default)]
 struct StreamState {
@@ -848,12 +870,9 @@ impl Provider {
             }
             return Err(CallError::Http { status: status.as_u16(), message: detail }.into());
         }
-        let is_sse = resp
-            .headers()
-            .get(reqwest::header::CONTENT_TYPE)
-            .and_then(|v| v.to_str().ok())
-            .map(|v| v.contains("event-stream"))
-            .unwrap_or(false);
+        let content_type = resp.headers().get(reqwest::header::CONTENT_TYPE).and_then(|v| v.to_str().ok()).unwrap_or("").to_string();
+        // Is the body an event stream? The header says so, or the first bytes will.
+        let mut sse: Option<bool> = if content_type.contains("event-stream") { Some(true) } else { None };
 
         let started = Instant::now();
         let mut st = StreamState::default();
@@ -877,20 +896,24 @@ impl Provider {
                 })?
                 .map_err(|e| CallError::Network(format!("the stream broke: {e}")))?;
             let Some(bytes) = chunk else { break };
-            if !is_sse {
+            if sse == Some(true) {
+                buf.extend_from_slice(&bytes);
+            } else {
                 raw.extend_from_slice(&bytes);
-                if let Some(a) = act {
-                    // Non-streaming DeepSeek answers send blank lines while queued.
-                    let only_ws = bytes.iter().all(|b| b.is_ascii_whitespace());
-                    a.stream(if only_ws && raw.iter().all(|b| b.is_ascii_whitespace()) {
-                        StreamEvent::KeepAlive
-                    } else {
-                        StreamEvent::Data
-                    });
+                if sse.is_none() {
+                    sse = body_kind(&raw);
                 }
-                continue;
+                if sse == Some(true) {
+                    // The bytes so far are the start of the stream.
+                    buf.append(&mut raw);
+                } else {
+                    if let Some(a) = act {
+                        // Non-streaming DeepSeek answers send blank lines while queued.
+                        a.stream(if raw.iter().all(|b| b.is_ascii_whitespace()) { StreamEvent::KeepAlive } else { StreamEvent::Data });
+                    }
+                    continue;
+                }
             }
-            buf.extend_from_slice(&bytes);
             let mut events: Vec<StreamEvent> = Vec::new();
             let mut saw_keepalive = false;
             while let Some(pos) = buf.iter().position(|b| *b == b'\n') {
@@ -914,6 +937,7 @@ impl Provider {
                 break;
             }
         }
+        let is_sse = sse == Some(true);
         // A last line without a newline.
         if is_sse && !buf.is_empty() {
             let line = String::from_utf8_lossy(&buf).into_owned();
@@ -922,7 +946,11 @@ impl Provider {
 
         if !is_sse {
             if self.dialect == Dialect::ChatGpt {
-                return Err(CallError::Server("the answer was not a stream".into()).into());
+                // Say what came, so the cause is in the log and not only on the wire.
+                let label = if content_type.is_empty() { "no content type".to_string() } else { format!("content type {content_type}") };
+                let text = String::from_utf8_lossy(&raw);
+                let start = if text.trim().is_empty() { "it is empty".to_string() } else { format!("it starts with: {}", truncate(text.trim(), 160)) };
+                return Err(CallError::Server(format!("the answer was not a stream ({label}; {start})")).into());
             }
             return self.parse_plain(&raw, body_len);
         }
@@ -1592,5 +1620,72 @@ mod tests {
         let models = p.models().await.unwrap();
         assert_eq!(models, vec![ModelInfo { id: "a".into(), name: String::new() }, ModelInfo { id: "b".into(), name: String::new() }]);
         assert_eq!(server.seen()[0].header("authorization"), "Bearer k");
+    }
+
+    // ------------------------------------------------------------------ what an answer is
+
+    #[test]
+    fn an_event_stream_is_known_by_its_first_bytes() {
+        // Some(true): an event stream. Some(false): one document. None: not enough bytes yet.
+        assert_eq!(body_kind(b"event: response.created\ndata: {}"), Some(true));
+        assert_eq!(body_kind(b"data: {\"choices\":[]}"), Some(true));
+        assert_eq!(body_kind(b": keep-alive\n\n"), Some(true));
+        assert_eq!(body_kind(b"\n\n  id: 7\n"), Some(true));
+        assert_eq!(body_kind(b"\n \n{\"choices\":[]}"), Some(false), "blank lines, then one JSON document");
+        assert_eq!(body_kind(b"[1]"), Some(false));
+        assert_eq!(body_kind(b"<html>"), Some(false));
+        // The start of a field name can still become one.
+        assert_eq!(body_kind(b"ev"), None);
+        assert_eq!(body_kind(b"dat"), None);
+        assert_eq!(body_kind(b"evil"), Some(false));
+        assert_eq!(body_kind(b""), None);
+        assert_eq!(body_kind(b"\n \r\n"), None);
+    }
+
+    #[tokio::test]
+    async fn a_plan_answer_without_a_content_type_is_read_as_the_stream_it_is() {
+        // OpenAI's plan route sends its event stream with no Content-Type header at all.
+        let server = serve(|_| ok_stream().labelled("")).await;
+        let r = ask(&plan_provider(&server, plan_session(&server, 10))).await.unwrap();
+        assert_eq!((r.text.as_str(), r.input_tokens, r.output_tokens, r.usage_estimated), ("OK", 7, 2, false));
+        // A wrong label does not hide a stream either.
+        let server = serve(|_| ok_stream().labelled("application/json")).await;
+        assert_eq!(ask(&plan_provider(&server, plan_session(&server, 10))).await.unwrap().text, "OK");
+    }
+
+    #[tokio::test]
+    async fn a_plan_answer_that_is_no_stream_says_what_came_instead() {
+        let server = serve(|_| Resp::json(200, json!({"status": "queued", "note": "come back later"}))).await;
+        let e = ask(&plan_provider(&server, plan_session(&server, 10))).await.unwrap_err().to_string();
+        assert!(e.contains("not a stream"), "{e}");
+        assert!(e.contains("application/json") && e.contains("come back later"), "the error shows the label and the start of the answer: {e}");
+        // An answer with nothing in it.
+        let server = serve(|_| Resp::empty(200).labelled("")).await;
+        let e = ask(&plan_provider(&server, plan_session(&server, 10))).await.unwrap_err().to_string();
+        assert!(e.contains("not a stream") && e.contains("no content type") && e.contains("empty"), "{e}");
+    }
+
+    #[tokio::test]
+    async fn a_key_provider_reads_streams_and_documents_whatever_the_label_says() {
+        let stream = || {
+            Resp::sse(&[
+                json!({"choices": [{"delta": {"content": "O"}}]}),
+                json!({"choices": [{"delta": {"content": "K"}, "finish_reason": "stop"}], "usage": {"prompt_tokens": 5, "completion_tokens": 1}}),
+            ])
+        };
+        let document = || Resp::json(200, json!({"choices": [{"message": {"content": "OK"}, "finish_reason": "stop"}], "usage": {"prompt_tokens": 5, "completion_tokens": 1}}));
+        for (name, answer) in [
+            ("a stream without a label", stream().labelled("")),
+            ("a stream with a wrong label", stream().labelled("application/json")),
+            ("a labelled stream", stream()),
+            ("a document", document()),
+            ("a document without a label", document().labelled("")),
+        ] {
+            let answer = std::sync::Mutex::new(Some(answer));
+            let server = serve(move |_| answer.lock().unwrap().take().expect("one request")).await;
+            let p = Provider::new(&server.base, "m", "k").unwrap();
+            let r = p.chat("s", &[Part::Text("hi".into())], false, 100, Thinking::Off, None).await.unwrap_or_else(|e| panic!("{name}: {e}"));
+            assert_eq!((r.text.as_str(), r.input_tokens, r.output_tokens), ("OK", 5, 1), "{name}");
+        }
     }
 }

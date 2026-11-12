@@ -111,6 +111,8 @@ function Editor({
   const [confirmKey, setConfirmKey] = useState(false);
   const [confirmOut, setConfirmOut] = useState(false);
   const [signing, setSigning] = useState(false);
+  // Why the last sign-in failed. It stays on the page, so it can be read and copied.
+  const [signInError, setSignInError] = useState('');
   const signInCancelled = useRef(false);
   const removeTrigger = useConfirmRow(confirmRemove, () => setConfirmRemove(false));
   const keyTrigger = useConfirmRow(confirmKey, () => setConfirmKey(false));
@@ -163,6 +165,7 @@ function Editor({
 
   const signIn = async (fresh: boolean) => {
     setSigning(true);
+    setSignInError('');
     signInCancelled.current = false;
     try {
       const saved = (await onSave(d, true)) ?? d; // The profile must exist before its sign-in.
@@ -183,7 +186,7 @@ function Editor({
         toast.info(`Signed in. The key of your account is saved for ${saved.name}.`);
       }
     } catch (e) {
-      if (!signInCancelled.current) toast.error(errText(e));
+      if (!signInCancelled.current) setSignInError(errText(e));
     } finally {
       setSigning(false);
     }
@@ -368,6 +371,11 @@ function Editor({
                 )}
               </div>
               {account.known && account.email && !signing && <span className="muted small">Continues as {account.email}.</span>}
+              {signInError && (
+                <p className="small error-text selectable" role="alert">
+                  {signInError}
+                </p>
+              )}
             </>
           )}
           {confirmOut && (
@@ -412,6 +420,11 @@ function Editor({
                 </>
               )}
             </div>
+          )}
+          {preset?.sign_in === 'openrouter' && signInError && (
+            <p className="small error-text selectable" role="alert">
+              {signInError}
+            </p>
           )}
           <div className="row nowrap">
             <input

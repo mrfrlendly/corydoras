@@ -562,6 +562,30 @@ async fn a_declined_or_foreign_answer_exchanges_no_code() {
 }
 
 #[tokio::test]
+async fn a_refused_sign_in_code_says_what_the_service_answered() {
+    // The service names its reason in more than one shape; the person must get to read it.
+    for (answer, want) in [
+        (json!({"error": "invalid_grant", "error_description": "The code was issued for another redirect address."}), "answered: invalid_grant: The code was issued for another redirect address."),
+        (json!({"error": "invalid_grant"}), "answered: invalid_grant."),
+        (json!({"error": {"code": "invalid_grant", "message": "The code is expired"}}), "answered: invalid_grant: The code is expired."),
+    ] {
+        let dir = tmp();
+        let server = serve(move |req| match req.path.as_str() {
+            "/token" => Resp::json(400, answer.clone()),
+            _ => Resp::empty(404),
+        })
+        .await;
+        let sess = session(&dir, &server.base);
+        let (r, _) = sign_in_as(&sess, Arc::default(), false, "&code=c1&client_id=oaiapp_1").await;
+        let e = r.err().unwrap().to_string();
+        assert!(e.starts_with("ChatGPT did not accept the sign-in code."), "{e}");
+        assert!(e.contains(want), "{e}");
+        assert!(e.ends_with("Start the sign-in again."), "{e}");
+        assert!(sess.store.account(&sess.name).is_none(), "nothing is saved");
+    }
+}
+
+#[tokio::test]
 async fn sign_in_without_the_plan_permission_is_kept_but_cannot_pay_for_calls() {
     let dir = tmp();
     let nonce = Arc::new(Mutex::new(String::new()));

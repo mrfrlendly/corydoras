@@ -431,8 +431,9 @@ struct Tokens {
 }
 
 enum TokenError {
-    /// The code or the refresh token is of no use any more (the server's word for it).
-    Dead(String),
+    /// The code or the refresh token is of no use any more: the server's word for it,
+    /// then the explanation that the server gave (often none).
+    Dead(String, String),
     /// The network, the server, or the setup of the client.
     Other(String),
 }
@@ -456,7 +457,8 @@ async fn token_request(ep: &Endpoints, form: &[(&str, &str)]) -> Result<Tokens, 
     let v: Value = serde_json::from_str(text.trim()).unwrap_or_default();
     let code = v["error"].as_str().or_else(|| v["error"]["code"].as_str()).or_else(|| v["code"].as_str()).unwrap_or("");
     if DEAD_REFRESH.contains(&code) {
-        return Err(TokenError::Dead(code.to_string()));
+        let said = v["error_description"].as_str().or_else(|| v["error"]["message"].as_str()).or_else(|| v["message"].as_str()).unwrap_or("");
+        return Err(TokenError::Dead(code.to_string(), said.trim().trim_end_matches('.').to_string()));
     }
     Err(TokenError::Other(format!("HTTP {}: {}", status.as_u16(), error_text(&text))))
 }
@@ -540,7 +542,11 @@ pub async fn sign_in<F: FnOnce(&str) -> Result<()>>(sess: &Session, fresh: bool,
         ("resource", ep.resource.as_str()),
     ];
     let tokens = token_request(ep, &form).await.map_err(|e| match e {
-        TokenError::Dead(_) => anyhow!("ChatGPT did not accept the sign-in code. Start the sign-in again."),
+        // The service is the only one that knows why: pass its words on.
+        TokenError::Dead(code, said) => anyhow!(
+            "ChatGPT did not accept the sign-in code. The sign-in service answered: {code}{}. Start the sign-in again.",
+            if said.is_empty() { String::new() } else { format!(": {said}") }
+        ),
         TokenError::Other(m) => anyhow!("The sign-in did not finish: {m}"),
     })?;
 
@@ -618,14 +624,14 @@ async fn token(sess: &Session, refused: Option<&str>) -> Result<String> {
         ("refresh_token", account.refresh_token.as_str()),
         ("resource", sess.endpoints.resource.as_str()),
     ];
-    let answer = if account.refresh_token.is_empty() { Err(TokenError::Dead("no refresh token".into())) } else { token_request(&sess.endpoints, &form).await };
+    let answer = if account.refresh_token.is_empty() { Err(TokenError::Dead("no refresh token".into(), String::new())) } else { token_request(&sess.endpoints, &form).await };
     match answer {
         Ok(tokens) => {
             account.take(tokens, now);
             sess.store.save_account(&sess.name, &account)?;
             Ok(account.access_token)
         }
-        Err(TokenError::Dead(code)) => {
+        Err(TokenError::Dead(code, _)) => {
             // Keep the ID token: the next sign-in page can skip the account list with it.
             account.clear_tokens(true);
             sess.store.save_account(&sess.name, &account)?;

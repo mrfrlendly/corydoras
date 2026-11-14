@@ -14,9 +14,23 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - run: npm ci --no-audit --no-fund
       - run: npx tauri build --bundles app
-      - name: Zip app
+      - run: cargo build --locked --release -p corydoras-mcp
+      - name: Verify and archive Mac binaries
         run: |
-          ditto -c -k --keepParent target/release/bundle/macos/Corydoras.app "Corydoras-${GITHUB_REF_NAME#v}-macOS-arm64.zip"
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          app=target/release/bundle/macos/Corydoras.app
+          server=target/release/corydoras-mcp
+          test "$(plutil -extract CFBundleShortVersionString raw "$app/Contents/Info.plist")" = "$version"
+          test "$("$server" --version)" = "corydoras-mcp $version"
+          lipo -verify_arch arm64 "$app/Contents/MacOS/corydoras"
+          lipo -verify_arch arm64 "$server"
+          mkdir -p release
+          ditto -c -k --keepParent "$app" "release/Corydoras-$version-macOS-arm64.zip"
+          ditto -c -k --norsrc "$server" "release/corydoras-mcp-$version-macOS-arm64.zip"
       - uses: softprops/action-gh-release@v2
         with:
-          files: Corydoras-*-macOS-arm64.zip
+          fail_on_unmatched_files: true
+          files: |
+            release/Corydoras-*-macOS-arm64.zip
+            release/corydoras-mcp-*-macOS-arm64.zip

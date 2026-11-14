@@ -18,6 +18,23 @@ This is separate from the app's own use of AI: Corydoras sends your reference im
 
 ## Install
 
+### Apple silicon downloads
+
+1. Download the `Corydoras-<version>-macOS-arm64.zip` archive from the [latest release](https://github.com/mrfrlendly/corydoras/releases/latest).
+2. Open the archive in Finder. Move `Corydoras.app` to your Applications folder and open it.
+3. For agent access, download `corydoras-mcp-<version>-macOS-arm64.zip` from the same release. Open it in your Downloads folder.
+4. Install the server in Terminal.
+
+   ```bash
+   mkdir -p ~/.local/bin
+   install -m 755 ~/Downloads/corydoras-mcp ~/.local/bin/corydoras-mcp.new
+   mv -f ~/.local/bin/corydoras-mcp.new ~/.local/bin/corydoras-mcp
+   ```
+
+5. Open **Settings → Agents (MCP server)** in Corydoras. Copy the configuration for your agent and restart its MCP connection.
+
+### Build from source
+
 Double-click **Install Corydoras.command** in Finder, or run:
 
 ```bash

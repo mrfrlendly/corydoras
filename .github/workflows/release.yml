@@ -2,13 +2,25 @@ name: Release
 on:
   push:
     tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag to build
+        required: true
+        type: string
 permissions:
   contents: write
 jobs:
   build:
     runs-on: macos-latest
+    env:
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
     steps:
+      - name: Check release tag
+        run: '[[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]'
       - uses: actions/checkout@v4
+        with:
+          ref: refs/tags/${{ env.RELEASE_TAG }}
       - uses: actions/setup-node@v4
         with: { node-version: 22 }
       - uses: dtolnay/rust-toolchain@stable
@@ -18,18 +30,19 @@ jobs:
       - name: Verify and archive Mac binaries
         run: |
           set -euo pipefail
-          version="${GITHUB_REF_NAME#v}"
+          version="${RELEASE_TAG#v}"
           app=target/release/bundle/macos/Corydoras.app
           server=target/release/corydoras-mcp
           test "$(plutil -extract CFBundleShortVersionString raw "$app/Contents/Info.plist")" = "$version"
           test "$("$server" --version)" = "corydoras-mcp $version"
-          lipo -verify_arch arm64 "$app/Contents/MacOS/corydoras"
-          lipo -verify_arch arm64 "$server"
+          lipo "$app/Contents/MacOS/corydoras" -verify_arch arm64
+          lipo "$server" -verify_arch arm64
           mkdir -p release
           ditto -c -k --keepParent "$app" "release/Corydoras-$version-macOS-arm64.zip"
           ditto -c -k --norsrc "$server" "release/corydoras-mcp-$version-macOS-arm64.zip"
       - uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ env.RELEASE_TAG }}
           fail_on_unmatched_files: true
           files: |
             release/Corydoras-*-macOS-arm64.zip

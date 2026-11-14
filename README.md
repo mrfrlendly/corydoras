@@ -98,6 +98,15 @@ Supplier search sends product identifiers to Canada Bolts, 3D Printing Canada, a
 
 Manual entry works without a provider or a supplier connection. The library database and its snapshots include the inventory records.
 
+Design agents use this inventory to confirm parts, materials, and tools. The MCP server reads the same records as the Workshop tab.
+
+1. Call `search_workshop_inventory` with a name, part number, size, or colour.
+2. Call `get_workshop_item` with the exact item ID and the quantity that the design requires.
+3. Check the dimensions and colour for the selected variant. Use `include_photo` to view its thumbnail when necessary.
+4. Cite the item ID, the required quantity, and the recorded quantity on hand in the design.
+
+The comparison uses the last recorded count of whole items. For filament, this means spools. It cannot confirm the remaining mass of filament, length of tape, or contents of a kit. A lower count indicates a shortage. An unknown count or a missing match leaves availability unconfirmed. Supplier listings and package counts do not confirm stock. When the module is off, the tools return `disabled` and withhold inventory records.
+
 ## Screen capture
 
 The fish in the menu bar captures part of the screen into a language. The keyboard shortcut does the same, from any app; the default is **⌃⌥⌘C** (Control-Option-Command-C).
@@ -465,6 +474,8 @@ The server is a separate binary that uses the stdio transport. It reads the libr
 | `get_sources` | Tutorials and documents of a language with the notes from each; with `ids`, only those sources |
 | `get_reference_images` | Images with the highest weight, or exact items by `item_ids` (the 8-character evidence IDs) |
 | `search_items` | Items whose tags, notes, region notes or analysis match the query words, best first, with the matching text and evidence IDs (no images) |
+| `search_workshop_inventory` | Matching workshop records with exact IDs, colour, dimensions, and quantity on hand. An empty query lists stock records in pages. |
+| `get_workshop_item` | One workshop record by exact ID. Use `required_quantity` to check availability and `include_photo` to request a thumbnail. |
 | `check_against_language` | Compares numbers that an agent measured on a design with the hard rules (first, and they win) and the measures of a family. Each number is PASS, FAIL, WARN or UNKNOWN; the check uses numbers only |
 | `check_geometry` | Measures a model file (STL, 3MF, OBJ, STEP) and judges the thinnest wall, the steepest overhang, the longest bridge, the size and the clearance between bodies against the hard rules; see [Geometry check](#geometry-check) |
 | `submit_output` | Stores a render of a design that the agent made, for your verdict in the **Outputs** tab (see below) |

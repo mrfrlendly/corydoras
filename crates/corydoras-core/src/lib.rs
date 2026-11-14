@@ -4,6 +4,7 @@
 pub mod activity;
 pub mod ai;
 pub mod agent;
+pub mod agent_inventory;
 pub mod analysis;
 pub mod config;
 pub mod conformance;

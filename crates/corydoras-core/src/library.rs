@@ -8,7 +8,7 @@ use crate::db;
 use crate::models::*;
 use crate::util::*;
 use anyhow::{anyhow, bail, Context, Result};
-use rusqlite::{params, Connection, OptionalExtension, Row};
+use rusqlite::{params, Connection, OpenFlags, OptionalExtension, Row};
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard};
@@ -116,6 +116,19 @@ impl Library {
         let lib = Self::open(root)?;
         lib.c().execute_batch("PRAGMA query_only=ON;")?;
         Ok(lib)
+    }
+
+    /// Reads an existing SQLite index without migrations or default records.
+    pub fn open_read_only(root: &Path) -> Result<Self> {
+        let conn = Connection::open_with_flags(
+            root.join("library.sqlite"),
+            OpenFlags::SQLITE_OPEN_READ_ONLY,
+        )?;
+        conn.execute_batch("PRAGMA query_only=ON;")?;
+        Ok(Self {
+            root: root.to_path_buf(),
+            conn: Mutex::new(conn),
+        })
     }
 
     pub fn root(&self) -> &Path {
@@ -2078,6 +2091,43 @@ impl Library {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn read_only_open_preserves_an_older_library() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("library.sqlite");
+        let db = Connection::open(&path).unwrap();
+        db.execute_batch("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)").unwrap();
+        drop(db);
+        let original = std::fs::read(&path).unwrap();
+
+        let lib = Library::open_read_only(dir.path()).unwrap();
+        assert!(!lib.inventory_enabled().unwrap());
+        assert!(lib.set_inventory_enabled(true).is_err());
+        drop(lib);
+
+        assert_eq!(std::fs::read(path).unwrap(), original);
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn read_only_open_does_not_create_a_missing_library() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(Library::open_read_only(dir.path()).is_err());
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn read_only_open_sees_committed_app_edits_in_wal() {
+        let dir = tempfile::tempdir().unwrap();
+        let writer = Library::open(dir.path()).unwrap();
+        let reader = Library::open_read_only(dir.path()).unwrap();
+        assert!(!reader.inventory_enabled().unwrap());
+        writer.set_inventory_enabled(true).unwrap();
+        assert!(reader.inventory_enabled().unwrap());
+        assert!(reader.set_inventory_enabled(false).is_err());
+        assert!(writer.inventory_enabled().unwrap());
+    }
 
     fn png_bytes(w: u32, h: u32) -> Vec<u8> {
         let img = image::RgbImage::from_fn(w, h, |x, y| image::Rgb([(x % 255) as u8, (y % 255) as u8, 120]));

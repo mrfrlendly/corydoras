@@ -8,6 +8,8 @@
 //!
 //! Without --library it uses CORYDORAS_LIBRARY, then the app configuration.
 
+mod workshop;
+
 use anyhow::{anyhow, Result};
 use corydoras_core::conformance::{self, Measurement};
 use corydoras_core::insight::Event;
@@ -47,6 +49,8 @@ Grasshopper parameters. A language can extend a base language; its document is c
 
 fn tools() -> Value {
     json!([
+        workshop::search_tool(),
+        workshop::item_tool(),
         {
             "name": "list_languages",
             "description": "List the design languages: ID, name, description, latest version and item count.",
@@ -320,23 +324,36 @@ fn measurements_arg(args: &Value) -> Result<Vec<Measurement>> {
 }
 
 struct Server {
-    library_path: Option<PathBuf>,
+    library_override: Option<PathBuf>,
     /// The client name from initialize, recorded as the author of proposals.
     client: RefCell<String>,
 }
 
 impl Server {
-    fn lib(&self) -> Result<Library> {
-        let path = self.library_path.clone().ok_or_else(|| {
+    fn library_path(&self) -> Result<PathBuf> {
+        let path = config::resolve_library_path(self.library_override.clone()).ok_or_else(|| {
             anyhow!("No Corydoras library is set. Open the Corydoras app and choose a library folder, or start the server with --library <path>.")
         })?;
         if !path.join("library.sqlite").exists() {
             return Err(anyhow!("No library database at {}.", path.display()));
         }
-        Library::open_query_only(&path)
+        Ok(path)
+    }
+
+    fn stock_lib(&self) -> Result<Library> {
+        Library::open_read_only(&self.library_path()?)
+    }
+
+    fn lib(&self) -> Result<Library> {
+        Library::open_query_only(&self.library_path()?)
     }
 
     fn call_tool(&self, name: &str, args: &Value) -> Result<Vec<Value>> {
+        match name {
+            "search_workshop_inventory" => return workshop::search(&self.stock_lib()?, args),
+            "get_workshop_item" => return workshop::item(&self.stock_lib()?, args),
+            _ => {}
+        }
         let text = |s: String| json!({"type": "text", "text": s});
         let arg_str = |k: &str| -> Result<String> {
             args.get(k)
@@ -573,7 +590,7 @@ impl Server {
                     "protocolVersion": version,
                     "capabilities": {"tools": {"listChanged": false}},
                     "serverInfo": {"name": SERVER_NAME, "version": env!("CARGO_PKG_VERSION")},
-                    "instructions": INSTRUCTIONS
+                    "instructions": format!("{}{INSTRUCTIONS}", agent::WORKSHOP_CHECK)
                 }))
             }
             "ping" => Ok(json!({})),
@@ -614,22 +631,21 @@ fn parse_args() -> Option<PathBuf> {
             _ => {}
         }
     }
-    config::resolve_library_path(cli)
+    cli
 }
 
 fn main() {
     let server = Server {
-        library_path: parse_args(),
+        library_override: parse_args(),
         client: RefCell::new(String::new()),
     };
     eprintln!(
         "corydoras-mcp {} ready (library: {})",
         env!("CARGO_PKG_VERSION"),
         server
-            .library_path
-            .as_ref()
+            .library_path()
             .map(|p| p.display().to_string())
-            .unwrap_or_else(|| "not set".into())
+            .unwrap_or_else(|_| "not set".into())
     );
     let stdin = std::io::stdin();
     let mut stdout = std::io::stdout();

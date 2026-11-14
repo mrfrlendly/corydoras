@@ -6,7 +6,7 @@ use crate::{
 };
 use anyhow::{anyhow, ensure, Result};
 use reqwest::Url;
-use rusqlite::{params, OptionalExtension, Row};
+use rusqlite::{params, Connection, OptionalExtension, Row};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -168,7 +168,7 @@ impl InventoryDraft {
     }
 }
 
-fn inventory_row(row: &Row<'_>) -> rusqlite::Result<InventoryItem> {
+pub(crate) fn inventory_row(row: &Row<'_>) -> rusqlite::Result<InventoryItem> {
     let supplier = match row.get::<_, Option<String>>(9)? {
         Some(url) => Some(SupplierListing {
             url,
@@ -195,13 +195,17 @@ fn inventory_row(row: &Row<'_>) -> rusqlite::Result<InventoryItem> {
     })
 }
 
+pub(crate) fn inventory_enabled(conn: &Connection) -> Result<bool> {
+    Ok(conn.query_row(
+        "SELECT EXISTS (SELECT 1 FROM settings WHERE key = 'workshop_inventory_enabled' AND value = '1')",
+        [],
+        |row| row.get(0),
+    )?)
+}
+
 impl Library {
     pub fn inventory_enabled(&self) -> Result<bool> {
-        Ok(self.c().query_row(
-            "SELECT EXISTS (SELECT 1 FROM settings WHERE key = 'workshop_inventory_enabled' AND value = '1')",
-            [],
-            |row| row.get(0),
-        )?)
+        inventory_enabled(&self.c())
     }
 
     pub fn set_inventory_enabled(&self, enabled: bool) -> Result<()> {

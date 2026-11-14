@@ -86,11 +86,13 @@ The workshop inventory has its own tab. It is off by default for each library. T
 1. Open **Settings → Modules**. Select **Workshop inventory**.
 2. Open **Workshop inventory** in the sidebar and select **Add item**.
 3. Enter the item details, or select **Choose label photo**. Use a JPEG, PNG, or WebP file of 12 MiB or less.
-4. Check the suggested name, category, brand, part number, and dimensions. Enter the quantity on hand.
+4. Check the suggested name, category, brand, colour, part number, and dimensions. Enter the quantity on hand.
 5. Check the supplier and product variant before you select **Use listing**.
 6. Select **Save item**. Select its name in the inventory to change its details or delete it.
 
-The photo goes to the provider that you selected for **Images and sources**. Label analysis uses the library's token budget. The app does not keep the photo. A printed package count goes in **Quantity per pack**. A blank stock count means unknown. Zero means none remain.
+The list shows an item photo and its recorded colour. Select a column heading to sort the list. Select it again to reverse the order. Sizes sort in numeric order, so M2 comes before M10. Unknown colours and counts come last in either direction.
+
+Select **Add item photo** to attach a photo without model analysis. The library stores a copy and a thumbnail. You can replace or remove the photo when you edit the item. **Choose label photo** sends the image to the provider that you selected for **Images and sources**. Label analysis uses the library's token budget. You can edit the suggested colour before you save. A printed package count goes in **Quantity per pack**. A blank stock count means unknown. Zero means none remain.
 
 Supplier search sends product identifiers to Canada Bolts, 3D Printing Canada, and The Pi Hut. To skip this search, clear **Search suppliers after label analysis** before you select a photo. A selected listing keeps its URL and product details with the item. **Search Amazon** opens a separate browser search. You can attach its product link by hand.
 

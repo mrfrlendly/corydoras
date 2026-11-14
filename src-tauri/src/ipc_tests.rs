@@ -128,6 +128,8 @@ fn app_with(lib: Arc<Library>) -> tauri::App<MockRuntime> {
             inventory::set_inventory_enabled,
             inventory::list_inventory,
             inventory::save_inventory,
+            inventory::save_inventory_photo,
+            inventory::get_inventory_photo,
             inventory::delete_inventory,
             inventory::read_inventory_label,
             inventory::search_inventory_listings,

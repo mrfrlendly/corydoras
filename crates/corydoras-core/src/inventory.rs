@@ -1,9 +1,12 @@
 //! Workshop inventory in the current library. Each record describes one stock item.
 
-use crate::Library;
-use anyhow::{bail, ensure, Result};
+use crate::{
+    inventory_media::{prepare_photo, store_photo, InventoryPhotoChange},
+    Library,
+};
+use anyhow::{anyhow, ensure, Result};
 use reqwest::Url;
-use rusqlite::{params, Row};
+use rusqlite::{params, OptionalExtension, Row};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -23,6 +26,7 @@ pub struct SupplierListing {
 pub struct InventoryDraft {
     pub name: String,
     pub category: String,
+    pub colour: String,
     pub brand: String,
     pub part_number: String,
     pub dimensions: String,
@@ -37,6 +41,7 @@ pub struct InventoryDraft {
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 pub struct InventoryItem {
     pub id: String,
+    pub photo_key: Option<String>,
     #[serde(flatten)]
     pub draft: InventoryDraft,
 }
@@ -114,6 +119,15 @@ impl SupplierListing {
     }
 }
 
+pub(crate) fn normalized_colour(value: &str) -> Result<String> {
+    let value = value.trim();
+    ensure!(
+        value.chars().count() <= 120 && !value.chars().any(char::is_control),
+        "Enter a colour on one line with at most 120 characters."
+    );
+    Ok(value.to_owned())
+}
+
 impl InventoryDraft {
     pub fn normalized(&self) -> Result<Self> {
         let draft = self.normalized_for_review()?;
@@ -138,6 +152,7 @@ impl InventoryDraft {
             } else {
                 category
             },
+            colour: normalized_colour(&self.colour)?,
             brand: field(&self.brand, "The brand", SHORT_FIELD_LIMIT)?,
             part_number: field(&self.part_number, "The part number", SHORT_FIELD_LIMIT)?,
             dimensions: field(&self.dimensions, "The dimensions", 2048)?,
@@ -164,8 +179,10 @@ fn inventory_row(row: &Row<'_>) -> rusqlite::Result<InventoryItem> {
     };
     Ok(InventoryItem {
         id: row.get(0)?,
+        photo_key: row.get(13)?,
         draft: InventoryDraft {
             name: row.get(1)?,
+            colour: row.get(12)?,
             category: row.get(2)?,
             brand: row.get(3)?,
             part_number: row.get(4)?,
@@ -200,7 +217,7 @@ impl Library {
         let conn = self.c();
         let mut stmt = conn.prepare(
             "SELECT id, name, category, brand, part_number, dimensions, quantity, pack_quantity,
-                    notes, supplier_url, supplier_title, supplier_details
+                    notes, supplier_url, supplier_title, supplier_details, colour, photo_key
              FROM workshop_inventory ORDER BY name COLLATE NOCASE, id",
         )?;
         let items = stmt
@@ -214,41 +231,72 @@ impl Library {
         id: Option<&str>,
         draft: &InventoryDraft,
     ) -> Result<InventoryItem> {
+        self.save_inventory_with_photo(id, draft, InventoryPhotoChange::Keep)
+    }
+
+    /// Commit the item and its optional photo together. Decode before taking the database lock.
+    pub fn save_inventory_with_photo(
+        &self,
+        id: Option<&str>,
+        draft: &InventoryDraft,
+        change: InventoryPhotoChange<'_>,
+    ) -> Result<InventoryItem> {
         let draft = draft.normalized()?;
+        let photo = match change {
+            InventoryPhotoChange::Replace(bytes) => Some(prepare_photo(bytes)?),
+            _ => None,
+        };
         let item_id = id
             .map(str::to_owned)
             .unwrap_or_else(|| Uuid::new_v4().to_string());
         let listing = draft.supplier.as_ref();
+        let key = photo.as_ref().map(|p| p.key.as_str());
+        let mut conn = self.c();
+        let tx = conn.transaction()?;
+        if let Some(photo) = &photo {
+            store_photo(&tx, photo)?;
+        }
         let sql = if id.is_some() {
             "UPDATE workshop_inventory SET name=?2, category=?3, brand=?4, part_number=?5,
-                dimensions=?6, quantity=?7, pack_quantity=?8, notes=?9, supplier_url=?10,
-                supplier_title=?11, supplier_details=?12 WHERE id=?1"
+                 dimensions=?6, quantity=?7, pack_quantity=?8, notes=?9, supplier_url=?10,
+                 supplier_title=?11, supplier_details=?12, colour=?13,
+                 photo_key=CASE WHEN ?15 THEN photo_key ELSE ?14 END WHERE id=?1 RETURNING photo_key"
         } else {
             "INSERT INTO workshop_inventory (id,name,category,brand,part_number,dimensions,
-                quantity,pack_quantity,notes,supplier_url,supplier_title,supplier_details)
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)"
+                 quantity,pack_quantity,notes,supplier_url,supplier_title,supplier_details,colour,photo_key)
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,CASE WHEN ?15 THEN NULL ELSE ?14 END)
+             RETURNING photo_key"
         };
-        let count = self.c().execute(
-            sql,
-            params![
-                item_id,
-                draft.name,
-                draft.category,
-                draft.brand,
-                draft.part_number,
-                draft.dimensions,
-                draft.quantity,
-                draft.pack_quantity,
-                draft.notes,
-                listing.map(|s| s.url.as_str()),
-                listing.map_or("", |s| &s.title),
-                listing.map_or("", |s| &s.details),
-            ],
-        )?;
-        if count == 0 {
-            bail!("This inventory item no longer exists.");
-        }
-        Ok(InventoryItem { id: item_id, draft })
+        let photo_key = tx
+            .query_row(
+                sql,
+                params![
+                    item_id,
+                    draft.name,
+                    draft.category,
+                    draft.brand,
+                    draft.part_number,
+                    draft.dimensions,
+                    draft.quantity,
+                    draft.pack_quantity,
+                    draft.notes,
+                    listing.map(|s| s.url.as_str()),
+                    listing.map_or("", |s| &s.title),
+                    listing.map_or("", |s| &s.details),
+                    draft.colour,
+                    key,
+                    matches!(change, InventoryPhotoChange::Keep),
+                ],
+                |row| row.get(0),
+            )
+            .optional()?
+            .ok_or_else(|| anyhow!("This inventory item no longer exists."))?;
+        tx.commit()?;
+        Ok(InventoryItem {
+            id: item_id,
+            draft,
+            photo_key,
+        })
     }
 
     pub fn delete_inventory(&self, id: &str) -> Result<()> {

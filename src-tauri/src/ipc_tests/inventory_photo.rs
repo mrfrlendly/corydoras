@@ -38,9 +38,9 @@ fn serve_label(listener: TcpListener) {
         .unwrap();
     assert!(image.starts_with("data:image/jpeg;base64,"));
     let label = json!({
-        "label_text":"Fixture Tools F-08 Hex key 8 mm 2 pcs",
+        "label_text":"Fixture Tools F-08 Blue Hex key 8 mm 2 pcs",
         "name":"Hex key", "category":"Tools", "brand":"Fixture Tools", "part_number":"F-08",
-        "dimensions":["8 mm"], "pack_quantity":2, "pack_evidence":"2 pcs", "notes":[]
+        "colour":"Blue","dimensions":["8 mm"], "pack_quantity":2, "pack_evidence":"2 pcs", "notes":[]
     });
     let reply = json!({
         "choices":[{"message":{"content":label.to_string()},"finish_reason":"stop"}],
@@ -79,7 +79,7 @@ pub(super) fn reviewed_record(w: &WebviewWindow<MockRuntime>, library: &Library)
     let result = send(
         w,
         "read_inventory_label",
-        InvokeBody::Raw(png),
+        InvokeBody::Raw(png.clone()),
         Default::default(),
     );
     previous.save().unwrap();
@@ -91,7 +91,7 @@ pub(super) fn reviewed_record(w: &WebviewWindow<MockRuntime>, library: &Library)
     assert_eq!(
         draft,
         json!({"name":"Hex key","category":"Tools","brand":"Fixture Tools","part_number":"F-08",
-        "dimensions":"8 mm","quantity":null,"pack_quantity":2,"notes":"","supplier":null})
+        "colour":"Blue","dimensions":"8 mm","quantity":null,"pack_quantity":2,"notes":"","supplier":null})
     );
     let after = library.usage().unwrap();
     assert_eq!(
@@ -105,10 +105,55 @@ pub(super) fn reviewed_record(w: &WebviewWindow<MockRuntime>, library: &Library)
 
     let mut reviewed = draft;
     reviewed["quantity"] = json!(1);
-    let saved = cmd("save_inventory", json!({"id":null,"draft":reviewed}));
+    let metadata = serde_json::to_vec(&json!({"id":null,"draft":reviewed})).unwrap();
+    let raw = [
+        (metadata.len() as u32).to_be_bytes().as_slice(),
+        &metadata,
+        &png,
+    ]
+    .concat();
+    let saved = send(
+        w,
+        "save_inventory_photo",
+        InvokeBody::Raw(raw),
+        Default::default(),
+    )
+    .unwrap();
+    let key = saved["photo_key"].as_str().expect("the saved photo key");
+    assert_eq!(key.len(), 64);
+    let thumbnail = cmd("get_inventory_photo", json!({"key":key,"thumbnail":true}));
+    assert!(thumbnail
+        .as_str()
+        .unwrap()
+        .starts_with("data:image/jpeg;base64,"));
+    for raw in [
+        vec![],
+        vec![255, 255, 255, 255],
+        vec![0, 0, 0, 2, b'[', b']', 0],
+    ] {
+        assert!(send(
+            w,
+            "save_inventory_photo",
+            InvokeBody::Raw(raw),
+            Default::default()
+        )
+        .is_err());
+    }
     let reopened = Library::open(library.root()).unwrap();
     let stored = serde_json::to_value(reopened.list_inventory().unwrap()).unwrap();
     assert_eq!(stored, json!([saved]));
     assert_eq!(stored[0]["quantity"], 1);
     assert_eq!(stored[0]["pack_quantity"], 2);
+    let removed = cmd(
+        "save_inventory",
+        json!({"id":saved["id"],"draft":reviewed,"removePhoto":true}),
+    );
+    assert!(removed["photo_key"].is_null());
+    assert!(send(
+        w,
+        "get_inventory_photo",
+        InvokeBody::Json(json!({"key":key,"thumbnail":false})),
+        Default::default()
+    )
+    .is_err());
 }

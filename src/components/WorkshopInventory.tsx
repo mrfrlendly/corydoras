@@ -1,11 +1,20 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { Boxes, ChevronRight, Plus, Search } from 'lucide-react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { Boxes, Plus, Search } from 'lucide-react';
 import { errText } from '../api';
 import { inventoryApi, type InventoryItem } from '../inventoryApi';
 import { useToast } from './Toast';
 import WorkshopItemEditor from './WorkshopItemEditor';
 import { matchingItems } from './workshopForm';
+import WorkshopInventoryTable from './WorkshopInventoryTable';
+import { defaultListSort, nextListSort, parseListSort, sortItems, type ListSort } from './workshopList';
 import './workshop.css';
+
+const preference = 'corydoras.workshop.inventory.sort';
+
+function readSort(): ListSort {
+  try { return parseListSort(localStorage.getItem(preference)); }
+  catch { return defaultListSort; }
+}
 
 export default function WorkshopInventory() {
   const toast = useToast();
@@ -16,9 +25,11 @@ export default function WorkshopInventory() {
   const [editor, setEditor] = useState<InventoryItem | 'new' | null>(null);
   const [query, setQuery] = useState('');
   const [category, setCategory] = useState('');
+  const [sort, setSort] = useState(readSort);
   const addButton = useRef<HTMLButtonElement>(null);
   const returnTo = useRef<string | null>(null);
   const list = useRef<HTMLTableElement>(null);
+  const focusAfterClose = useRef<string | null | undefined>(undefined);
 
   useEffect(() => {
     let active = true;
@@ -33,21 +44,31 @@ export default function WorkshopInventory() {
 
   const categories = useMemo(() => [...new Set(items.map(i => i.category))].sort((a, b) => a.localeCompare(b)), [items]);
   const effectiveCategory = categories.includes(category) ? category : '';
-  const visible = useMemo(() => matchingItems(items, query, effectiveCategory), [items, query, effectiveCategory]);
+  const visible = useMemo(() => sortItems(matchingItems(items, query, effectiveCategory), sort),
+    [items, query, effectiveCategory, sort]);
+  useEffect(() => {
+    try { localStorage.setItem(preference, `${sort.field}:${sort.direction}`); }
+    catch { /* The current view still retains the selection when storage is unavailable. */ }
+  }, [sort]);
+
+  useLayoutEffect(() => {
+    if (editor !== null || focusAfterClose.current === undefined) return;
+    const id = focusAfterClose.current;
+    focusAfterClose.current = undefined;
+    const button = Array.from(list.current?.querySelectorAll<HTMLButtonElement>('button[data-item-id]') ?? [])
+      .find(node => node.dataset.itemId === id);
+    (button ?? addButton.current)?.focus();
+  }, [editor]);
 
   function closeEditor(focusId: string | null) {
+    focusAfterClose.current = focusId;
     setEditor(null);
-    requestAnimationFrame(() => {
-      const button = Array.from(list.current?.querySelectorAll<HTMLButtonElement>('button[data-item-id]') ?? [])
-        .find(node => node.dataset.itemId === focusId);
-      (button ?? addButton.current)?.focus();
-    });
   }
 
   function saved(item: InventoryItem) {
     setItems(previous => [item, ...previous.filter(other => other.id !== item.id)]);
-    setQuery('');
-    setCategory('');
+    if (!matchingItems([item], query, '').length) setQuery('');
+    if (effectiveCategory && item.category !== effectiveCategory) setCategory('');
     closeEditor(item.id);
     toast.info('Item saved.');
   }
@@ -62,7 +83,6 @@ export default function WorkshopInventory() {
     <div className="settings workshop">
       <header className="lang-head" data-tauri-drag-region>
         <div className="lang-title">
-          <div className="eyebrow">Workshop</div>
           <h1>Workshop inventory</h1>
         </div>
         {!editor && <button className="btn primary" ref={addButton} disabled={loading || !!error}
@@ -75,7 +95,7 @@ export default function WorkshopInventory() {
           item={editor === 'new' ? null : editor} categories={categories}
           onCancel={() => closeEditor(returnTo.current)} onSaved={saved} onRemoved={removed} /> : (
           <>
-            {loading && <p role="status">Load inventory…</p>}
+            {loading && <p role="status">Loading inventory…</p>}
             {error && <div className="panel"><p className="error-text" role="alert">{error}</p>
               <button className="btn small" onClick={() => setRetry(n => n + 1)}>Retry</button></div>}
             {!loading && !error && (items.length === 0 ? (
@@ -88,7 +108,7 @@ export default function WorkshopInventory() {
               <div className="workshop-catalogue">
                 <div className="workshop-tools">
                   <label className="workshop-filter"><Search size={14} aria-hidden="true" />
-                    <input type="search" aria-label="Search inventory" placeholder="Search inventory"
+                    <input type="search" aria-label="Search inventory" placeholder="Search by name, colour or part number"
                       value={query} onChange={e => setQuery(e.target.value)} />
                   </label>
                   <select className="select" aria-label="Filter by category" value={effectiveCategory}
@@ -96,30 +116,17 @@ export default function WorkshopInventory() {
                     <option value="">All categories</option>
                     {categories.map(c => <option key={c}>{c}</option>)}
                   </select>
+                  <p className="workshop-count" role="status">
+                    {visible.length === items.length ? items.length : `${visible.length} of ${items.length}`} {items.length === 1 ? 'item' : 'items'}
+                  </p>
                 </div>
-                <p className="workshop-count" role="status">
-                  {visible.length === items.length ? items.length : `${visible.length} of ${items.length}`} {items.length === 1 ? 'item' : 'items'}
-                </p>
                 {visible.length === 0 ? <div className="panel">
                   <p>No items match this search.</p>
                   <button className="btn small" onClick={() => { setQuery(''); setCategory(''); }}>Clear filters</button>
                 </div> : (
-                  <div className="workshop-table">
-                    <table ref={list} aria-label="Workshop inventory items">
-                      <thead><tr><th scope="col">Item</th><th scope="col">Category</th><th scope="col">On hand</th></tr></thead>
-                      <tbody>{visible.map(item => (
-                        <tr key={item.id}>
-                          <th scope="row"><button className="workshop-item-name" data-item-id={item.id} onClick={() => {
-                            returnTo.current = item.id; setEditor(item);
-                          }}>{item.name}<ChevronRight size={12} aria-hidden="true" /></button>
-                            {(item.brand || item.part_number) && <span className="workshop-item-sub">{[item.brand, item.part_number].filter(Boolean).join(' · ')}</span>}
-                          </th>
-                          <td>{item.category}</td>
-                          <td className="workshop-stock">{item.quantity?.toLocaleString() ?? <span className="muted">Unknown</span>}</td>
-                        </tr>
-                      ))}</tbody>
-                    </table>
-                  </div>
+                  <WorkshopInventoryTable tableRef={list} items={visible} sort={sort}
+                    onSort={field => setSort(current => nextListSort(current, field))}
+                    onOpen={item => { returnTo.current = item.id; setEditor(item); }} />
                 )}
               </div>
             ))}

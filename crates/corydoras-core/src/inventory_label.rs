@@ -6,13 +6,12 @@ use crate::inventory::InventoryDraft;
 use crate::provider::{Part, Provider, Thinking};
 use crate::Library;
 use anyhow::{anyhow, ensure, Context, Result};
-use image::{DynamicImage, ImageDecoder, ImageFormat, ImageReader, Limits};
+use crate::inventory_media::{decode_photo, MAX_PHOTO_BYTES};
 use serde::Deserialize;
+#[cfg(test)]
 use std::io::Cursor;
 
-pub const MAX_LABEL_BYTES: usize = 12 * 1024 * 1024;
-const MAX_PIXELS: u64 = 50_000_000;
-const MAX_DECODED_BYTES: u64 = 200 * 1024 * 1024;
+pub const MAX_LABEL_BYTES: usize = MAX_PHOTO_BYTES;
 const CATEGORIES: &[&str] = &[
     "Fasteners",
     "Hardware",
@@ -31,6 +30,7 @@ label_text: a short transcript of the legible product markings, with their origi
 name: a short product name based on the label.
 category: the single best category from the supplied list.
 brand and part_number: the manufacturer's brand and product code exactly as printed.
+colour: the product colour exactly as written on the label. Use an empty string when absent. Ignore the colour of the label, ink, and packaging.
 dimensions: an array of exact label phrases that specify product sizes, including units or standard size designations. Omit package dimensions. Never estimate a size from the photo.
 pack_quantity: an integer only when the label gives the number of units in one pack. Otherwise return null.
 pack_evidence: the exact phrase that states this count, including the quantity word or abbreviation.
@@ -44,6 +44,7 @@ struct Label {
     name: String,
     category: String,
     brand: String,
+    colour: String,
     part_number: String,
     dimensions: Vec<String>,
     pack_quantity: Option<i64>,
@@ -113,6 +114,7 @@ fn parse_label(reply: &str) -> Result<InventoryDraft> {
             .unwrap_or(&"Other")
             .to_string(),
         brand: quoted(label.brand),
+        colour: quoted(label.colour),
         part_number,
         dimensions: phrases(label.dimensions),
         pack_quantity,
@@ -122,6 +124,7 @@ fn parse_label(reply: &str) -> Result<InventoryDraft> {
     ensure!(
         !draft.name.trim().is_empty()
             || !draft.brand.trim().is_empty()
+            || !draft.colour.is_empty()
             || !draft.dimensions.is_empty()
             || !draft.notes.is_empty()
             || draft.pack_quantity.is_some(),
@@ -198,41 +201,8 @@ fn printed_count(phrase: &str, count: i64) -> bool {
 }
 
 fn prepare_image(bytes: &[u8]) -> Result<String> {
-    ensure!(
-        !bytes.is_empty() && bytes.len() <= MAX_LABEL_BYTES,
-        "Choose a photo up to 12 MiB."
-    );
-    let format = image::guess_format(bytes).context("Choose a JPEG, PNG, or WebP photo.")?;
-    ensure!(
-        matches!(
-            format,
-            ImageFormat::Jpeg | ImageFormat::Png | ImageFormat::WebP
-        ),
-        "Choose a JPEG, PNG, or WebP photo."
-    );
-    let mut limits = Limits::default();
-    limits.max_image_width = Some(10_000);
-    limits.max_image_height = Some(10_000);
-    limits.max_alloc = Some(MAX_DECODED_BYTES);
-    let mut reader = ImageReader::with_format(Cursor::new(bytes), format);
-    reader.limits(limits);
-    let mut decoder = reader
-        .into_decoder()
-        .context("Cannot decode this photo. Choose a smaller JPEG, PNG, or WebP photo.")?;
-    let (w, h) = decoder.dimensions();
-    ensure!(
-        u64::from(w) * u64::from(h) <= MAX_PIXELS && decoder.total_bytes() <= MAX_DECODED_BYTES,
-        "The photo is too large to decode. Choose a photo up to 50 megapixels."
-    );
-    let orientation = decoder.orientation().ok();
-    let mut image =
-        DynamicImage::from_decoder(decoder).context("Cannot read the pixels in this photo.")?;
-    if let Some(o) = orientation {
-        image.apply_orientation(o);
-    }
-    Ok(analysis::data_url_jpeg(&analysis::encode_jpeg(
-        &image, 2048, 90,
-    )?))
+    let image = decode_photo(bytes)?;
+    Ok(analysis::data_url_jpeg(&analysis::encode_jpeg(&image, 2048, 90)?))
 }
 
 async fn request_label(

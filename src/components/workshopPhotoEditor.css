@@ -1,0 +1,19 @@
+.workshop-editor .workshop-editor-photo {
+  display: grid;
+  gap: 12px;
+}
+.workshop-editor-photo .workshop-editor-photo-row {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+}
+.workshop-editor .workshop-editor-photo img {
+  width: auto;
+  max-width: min(38%, 280px);
+  max-height: 180px;
+  object-fit: contain;
+}
+.workshop-editor-photo .workshop-file { margin-top: 0; }
+.workshop-editor-photo p { margin: 5px 0 0; }
+.workshop-editor-photo .workshop-label-options { border-top: 1px solid var(--rule); padding-top: 10px; }
+.workshop-label-options .workshop-file, .workshop-label-options .check { margin-top: 8px; }

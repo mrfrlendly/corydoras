@@ -18,6 +18,8 @@ pub mod inherit;
 pub mod insight;
 pub mod inventory;
 pub mod inventory_label;
+pub mod inventory_import_media;
+pub mod inventory_media;
 pub mod inventory_search;
 pub mod library;
 pub mod mesh;

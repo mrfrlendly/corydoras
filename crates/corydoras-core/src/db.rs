@@ -96,6 +96,12 @@ CREATE TABLE IF NOT EXISTS settings (
     value TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS workshop_photos (
+    key       TEXT PRIMARY KEY,
+    image     BLOB NOT NULL,
+    thumbnail BLOB NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS workshop_inventory (
     id               TEXT PRIMARY KEY,
     name             TEXT NOT NULL,
@@ -108,7 +114,9 @@ CREATE TABLE IF NOT EXISTS workshop_inventory (
     notes            TEXT NOT NULL,
     supplier_url     TEXT,
     supplier_title   TEXT NOT NULL,
-    supplier_details TEXT NOT NULL
+    supplier_details TEXT NOT NULL,
+    colour           TEXT NOT NULL DEFAULT '',
+    photo_key        TEXT REFERENCES workshop_photos(key)
 );
 
 CREATE TABLE IF NOT EXISTS usage (
@@ -258,6 +266,8 @@ fn has_column(conn: &Connection, table: &str, column: &str) -> Result<bool> {
 /// Each step checks first, so the migration can run on every open.
 pub fn migrate(conn: &Connection) -> Result<()> {
     let steps: &[(&str, &str, &str)] = &[
+        ("workshop_inventory", "colour", "ALTER TABLE workshop_inventory ADD COLUMN colour TEXT NOT NULL DEFAULT ''"),
+        ("workshop_inventory", "photo_key", "ALTER TABLE workshop_inventory ADD COLUMN photo_key TEXT REFERENCES workshop_photos(key)"),
         ("versions", "schema", "ALTER TABLE versions ADD COLUMN schema INTEGER NOT NULL DEFAULT 1"),
         ("versions", "warnings", "ALTER TABLE versions ADD COLUMN warnings TEXT NOT NULL DEFAULT '[]'"),
         ("projects", "process_id", "ALTER TABLE projects ADD COLUMN process_id TEXT"),
@@ -278,6 +288,18 @@ pub fn migrate(conn: &Connection) -> Result<()> {
             conn.execute_batch(sql)?;
         }
     }
+    // Existing databases receive photo_key above, before SQLite builds its index and triggers.
+    conn.execute_batch("CREATE INDEX IF NOT EXISTS idx_workshop_photo_key ON workshop_inventory(photo_key);
+        CREATE TRIGGER IF NOT EXISTS workshop_photo_replaced AFTER UPDATE OF photo_key ON workshop_inventory
+        WHEN OLD.photo_key IS NOT NULL AND OLD.photo_key IS NOT NEW.photo_key BEGIN
+            DELETE FROM workshop_photos WHERE key=OLD.photo_key
+                AND NOT EXISTS (SELECT 1 FROM workshop_inventory WHERE photo_key=OLD.photo_key);
+        END;
+        CREATE TRIGGER IF NOT EXISTS workshop_photo_deleted AFTER DELETE ON workshop_inventory
+        WHEN OLD.photo_key IS NOT NULL BEGIN
+            DELETE FROM workshop_photos WHERE key=OLD.photo_key
+                AND NOT EXISTS (SELECT 1 FROM workshop_inventory WHERE photo_key=OLD.photo_key);
+        END;")?;
     Ok(())
 }
 

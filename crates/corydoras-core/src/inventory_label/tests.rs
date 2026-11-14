@@ -202,3 +202,12 @@ fn a_partly_legible_label_keeps_its_fields_for_review() {
     );
     assert!(draft.normalized().is_err());
 }
+
+#[test]
+fn colour_requires_printed_label_text() {
+    let mut reply = label();
+    reply["colour"] = json!("Blue");
+    assert!(parse_label(&reply.to_string()).unwrap().colour.is_empty());
+    reply["label_text"] = json!("Acme Socket screws · Blue");
+    assert_eq!(parse_label(&reply.to_string()).unwrap().colour, "Blue");
+}

@@ -9,6 +9,7 @@ fn example() -> InventoryDraft {
     InventoryDraft {
         name: "Socket head screws".into(),
         category: "Fasteners".into(),
+        colour: "Zinc grey".into(),
         brand: "Fixture Supply".into(),
         part_number: "A2-816".into(),
         dimensions: "M8 × 16 mm".into(),

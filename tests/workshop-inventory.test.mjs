@@ -43,3 +43,30 @@ test('supplier links only open public HTTPS hostnames', async () => {
     'javascript:alert(0)', 'https://shop..example.org',
   ]) assert.equal(publicListingUrl(url), null, url);
 });
+
+test('the item colour survives edit, label review, save and search', () => {
+  const scan = { ...blankForm(), name: 'Filament', colour: 'Translucent orange', quantity: null, pack_quantity: null };
+  assert.equal(blankForm().colour, '');
+  const fromLabel = reviewLabel(blankForm(), scan);
+  assert.equal(fromLabel.colour, 'Translucent orange');
+  const manual = { ...fromLabel, colour: '  Burnt sienna  ' };
+  assert.equal(reviewLabel(manual, scan).colour, manual.colour);
+  const stored = saveDraft(manual);
+  assert.equal(stored.colour, 'Burnt sienna');
+  assert.equal(editForm(stored).colour, stored.colour);
+  assert.equal(editForm({ ...stored, colour: '' }).colour, '');
+  assert.deepEqual(matchingItems([{ ...stored, id: 'a' }], 'sienna filament', '').map(item => item.id), ['a']);
+});
+
+test('photo selection checks actual file format and size before reading or attaching the photo', async () => {
+  const { validateItemPhoto } = await import('../src/components/workshopForm.ts');
+  const file = bytes => new File([Uint8Array.from(bytes)], 'item.jpg', { type: 'image/jpeg' });
+  for (const header of [
+    [0xff, 0xd8, 0xff, 0xe0],
+    [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a],
+    [...Buffer.from('RIFF1234WEBP')],
+  ]) await validateItemPhoto(file(header));
+  await assert.rejects(validateItemPhoto(file([1, 2, 3])), /JPEG, PNG, or WebP/);
+  await assert.rejects(validateItemPhoto(file([])), /12 MiB/);
+  await assert.rejects(validateItemPhoto({ size: 12 * 1024 * 1024 + 1 }), /12 MiB/);
+});

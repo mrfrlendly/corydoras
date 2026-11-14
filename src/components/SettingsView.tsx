@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api, AppInfo, errText, fmtTokens, Settings, StatusReport } from '../api';
-import { Bot, SlidersHorizontal } from 'lucide-react';
+import { inventoryApi } from '../inventoryApi';
+import { Boxes, Bot, SlidersHorizontal } from 'lucide-react';
 import ProvidersPanel from './ProvidersPanel';
 import StoragePanel from './StoragePanel';
 import CapturePanel from './CapturePanel';
@@ -17,6 +18,7 @@ interface Props {
 /** The sections of the page, in order, for the links under the title. */
 const SECTIONS: [id: string, label: string][] = [
   ['settings-providers', 'Providers'],
+  ['settings-modules', 'Modules'],
   ['settings-agents', 'Agents'],
   ['settings-pipeline', 'Pipeline'],
   ['settings-capture', 'Screen capture'],
@@ -43,6 +45,17 @@ async function copy(text: string): Promise<boolean> {
 
 export default function SettingsView({ info, onInfo, status, onChanged }: Props) {
   const toast = useToast();
+  const [moduleBusy, setModuleBusy] = useState(false);
+  const setInventory = async (value: boolean) => {
+    setModuleBusy(true);
+    try {
+      onInfo(await inventoryApi.setEnabled(value));
+    } catch (error) {
+      toast.error(errText(error));
+    } finally {
+      setModuleBusy(false);
+    }
+  };
   const [settings, setSettings] = useState<Settings | null>(null);
   // The pipeline as saved; the section waits for its Save button.
   const [saved, setSaved] = useState<Settings | null>(null);
@@ -103,6 +116,18 @@ export default function SettingsView({ info, onInfo, status, onChanged }: Props)
 
       <div className="settings-body">
         <ProvidersPanel onChanged={onChanged} />
+
+        <section className="panel" id="settings-modules" tabIndex={-1}>
+          <h3><Boxes size={15} /> Modules</h3>
+          <label className="check">
+            <input type="checkbox" checked={info.inventory_enabled} disabled={moduleBusy}
+              aria-describedby="workshop-help" onChange={(e) => setInventory(e.target.checked)} />
+            Workshop inventory
+          </label>
+          <p id="workshop-help" className="muted small">
+            Show a separate inventory tab for this library. Turn it off to hide the tab and keep your items.
+          </p>
+        </section>
 
         <section className="panel" id="settings-agents" tabIndex={-1}>
           <h3>

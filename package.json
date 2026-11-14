@@ -6,6 +6,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "test:workshop": "node --experimental-strip-types --test tests/workshop-inventory.test.mjs",
     "build": "tsc -b && vite build",
     "tauri": "tauri"
   },

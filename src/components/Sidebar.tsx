@@ -2,12 +2,13 @@ import { FormEvent, MouseEvent, useState } from 'react';
 import { api, errText, fmtTokens, Language, Project, RuleSet, shortStatus, StatusReport } from '../api';
 import type { View } from '../App';
 import { Activity, Gauge, Layers, Pause, Plus, Settings, ShieldCheck, Swatch } from './icons';
-import { FileDown } from 'lucide-react';
+import { Boxes, FileDown } from 'lucide-react';
 import Logo from './Logo';
 import QueueToggle from './QueueToggle';
 import { useToast } from './Toast';
 
 interface Props {
+  inventoryEnabled: boolean;
   languages: Language[];
   projects: Project[];
   ruleSets: RuleSet[];
@@ -56,7 +57,7 @@ function NewForm({ placeholder, onSubmit, onCancel }: { placeholder: string; onS
 /** Keeps the focus in an open "new name" field, so its blur does not close it before the + button toggles it. */
 const keepFocus = (e: MouseEvent) => e.preventDefault();
 
-export default function Sidebar({ languages, projects, ruleSets, status, view, onView, onChanged }: Props) {
+export default function Sidebar({ inventoryEnabled, languages, projects, ruleSets, status, view, onView, onChanged }: Props) {
   const toast = useToast();
   const [newLang, setNewLang] = useState(false);
   const [newProject, setNewProject] = useState(false);
@@ -268,6 +269,16 @@ export default function Sidebar({ languages, projects, ruleSets, status, view, o
             {fmtTokens(used)}
             {status.budget > 0 ? ` / ${fmtTokens(status.budget)}` : ''} tokens
           </div>
+        )}
+        {inventoryEnabled && (
+          <button
+            className={`side-item settings-btn ${view.kind === 'inventory' ? 'active' : ''}`}
+            aria-current={view.kind === 'inventory' ? 'page' : undefined}
+            onClick={() => onView({ kind: 'inventory' })}
+          >
+            <Boxes size={15} strokeWidth={1.8} />
+            <span className="side-name">Workshop inventory</span>
+          </button>
         )}
         <button
           className={`side-item settings-btn ${view.kind === 'settings' ? 'active' : ''}`}

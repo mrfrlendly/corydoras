@@ -96,6 +96,21 @@ CREATE TABLE IF NOT EXISTS settings (
     value TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS workshop_inventory (
+    id               TEXT PRIMARY KEY,
+    name             TEXT NOT NULL,
+    category         TEXT NOT NULL,
+    brand            TEXT NOT NULL,
+    part_number      TEXT NOT NULL,
+    dimensions       TEXT NOT NULL,
+    quantity         INTEGER CHECK (quantity >= 0),
+    pack_quantity    INTEGER CHECK (pack_quantity >= 0),
+    notes            TEXT NOT NULL,
+    supplier_url     TEXT,
+    supplier_title   TEXT NOT NULL,
+    supplier_details TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS usage (
     month         TEXT PRIMARY KEY,
     input_tokens  INTEGER NOT NULL DEFAULT 0,

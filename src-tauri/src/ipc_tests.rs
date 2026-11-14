@@ -6,7 +6,7 @@
 //! calls with a wrong name, or with a value that the command cannot read,
 //! fails here and not in front of the user.
 
-use crate::{features, AppState};
+use crate::{features, inventory, AppState};
 use base64::Engine;
 use corydoras_core::library::Library;
 use serde_json::{json, Value};
@@ -15,6 +15,8 @@ use std::sync::{Arc, RwLock};
 use tauri::ipc::InvokeBody;
 use tauri::test::{mock_builder, mock_context, noop_assets, MockRuntime, INVOKE_KEY};
 use tauri::WebviewWindow;
+
+mod inventory_photo;
 
 const API_TS: &str = include_str!("../../src/api.ts");
 
@@ -123,6 +125,12 @@ fn app_with(lib: Arc<Library>) -> tauri::App<MockRuntime> {
     mock_builder()
         .manage(AppState { lib: RwLock::new(Some(lib)), ..Default::default() })
         .invoke_handler(tauri::generate_handler![
+            inventory::set_inventory_enabled,
+            inventory::list_inventory,
+            inventory::save_inventory,
+            inventory::delete_inventory,
+            inventory::read_inventory_label,
+            inventory::search_inventory_listings,
             features::import_model_bytes,
             features::backfill_palettes,
             features::language_palette,
@@ -174,6 +182,30 @@ fn commands_take_what_the_frontend_sends() {
     let lib = Arc::new(Library::open(&dir.join("library")).unwrap());
     let app = app_with(lib.clone());
     let w = tauri::WebviewWindowBuilder::new(&app, "main", Default::default()).build().unwrap();
+
+    // Inventory is opt-in. A saved record survives a disable/enable cycle.
+    let cmd = |name: &str, args| send(&w, name, InvokeBody::Json(args), Default::default());
+    let draft = json!({"name":"M4 washer","category":"Fasteners","brand":"","part_number":"",
+        "dimensions":"4.3 mm bore","quantity":0,"pack_quantity":50,"notes":"","supplier":null});
+    let off = cmd("list_inventory", json!({})).unwrap_err();
+    assert!(off.contains("off"), "{off}");
+    let enable = |enabled| cmd("set_inventory_enabled", json!({"enabled":enabled})).unwrap();
+    assert_eq!(enable(true)["inventory_enabled"], true);
+    let added = cmd("save_inventory", json!({"id":null,"draft":draft})).unwrap();
+    assert_eq!(added["quantity"], 0);
+    assert_eq!(added["pack_quantity"], 50);
+    let bad_photo = send(&w, "read_inventory_label", InvokeBody::Raw(vec![]), Default::default()).unwrap_err();
+    assert!(bad_photo.contains("photo"), "{bad_photo}");
+    let no_query = cmd("search_inventory_listings", json!({"name":"","brand":"","partNumber":""}));
+    assert!(no_query.is_err());
+    assert_eq!(enable(false)["inventory_enabled"], false);
+    assert!(cmd("delete_inventory", json!({"id":added["id"]})).is_err());
+    enable(true);
+    assert_eq!(cmd("list_inventory", json!({})).unwrap()[0], added);
+    cmd("delete_inventory", json!({"id":added["id"]})).unwrap();
+    assert_eq!(cmd("list_inventory", json!({})).unwrap(), json!([]));
+
+    inventory_photo::reviewed_record(&w, &lib);
 
     let lang = lib.create_language("Soft shell", "").unwrap();
     assert_eq!(lib.save_manual_spec(&lang.id, &spec([2.0, 4.0]), "test").unwrap(), 1);

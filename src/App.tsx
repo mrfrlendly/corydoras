@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { listen } from '@tauri-apps/api/event';
 import { api, AppInfo, CaptureDone, errText, Language, Project, RuleSet, StatusReport } from './api';
 import Sidebar from './components/Sidebar';
@@ -12,7 +12,10 @@ import Onboarding from './components/Onboarding';
 import Logo from './components/Logo';
 import { ToastProvider, useToast } from './components/Toast';
 
+const WorkshopInventory = lazy(() => import('./components/WorkshopInventory'));
+
 export type View =
+  | { kind: 'inventory' }
   | { kind: 'home' }
   | { kind: 'language'; id: string }
   | { kind: 'project'; id: string }
@@ -157,6 +160,7 @@ function Shell() {
   return (
     <div className="app">
       <Sidebar
+        inventoryEnabled={info.inventory_enabled}
         languages={languages}
         projects={projects}
         ruleSets={ruleSets}
@@ -200,6 +204,11 @@ function Shell() {
               bump();
             }}
           />
+        )}
+        {view.kind === 'inventory' && info.inventory_enabled && (
+          <Suspense fallback={<p className="muted" role="status">Opening workshop inventory…</p>}>
+            <WorkshopInventory key={info.library_path} />
+          </Suspense>
         )}
         {view.kind === 'settings' && <SettingsView info={info} onInfo={setInfo} status={status} onChanged={bump} />}
         {view.kind === 'ruleset' && ruleSet && (

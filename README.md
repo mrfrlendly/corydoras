@@ -79,6 +79,23 @@ The Board has two views: **Grid** (the masonry of cards) and **Canvas**, a free 
 - New items, for example a drop, a capture or video frames, appear below the arrangement.
 - The canvas is layout only: moving cards does not start an analysis or a new version.
 
+## Optional workshop inventory
+
+The workshop inventory has its own tab. It is off by default for each library. Turn it off at any time to hide the tab and keep your items.
+
+1. Open **Settings → Modules**. Select **Workshop inventory**.
+2. Open **Workshop inventory** in the sidebar and select **Add item**.
+3. Enter the item details, or select **Choose label photo**. Use a JPEG, PNG, or WebP file of 12 MiB or less.
+4. Check the suggested name, category, brand, part number, and dimensions. Enter the quantity on hand.
+5. Check the supplier and product variant before you select **Use listing**.
+6. Select **Save item**. Select its name in the inventory to change its details or delete it.
+
+The photo goes to the provider that you selected for **Images and sources**. Label analysis uses the library's token budget. The app does not keep the photo. A printed package count goes in **Quantity per pack**. A blank stock count means unknown. Zero means none remain.
+
+Supplier search sends product identifiers to Canada Bolts, 3D Printing Canada, and The Pi Hut. To skip this search, clear **Search suppliers after label analysis** before you select a photo. A selected listing keeps its URL and product details with the item. **Search Amazon** opens a separate browser search. You can attach its product link by hand.
+
+Manual entry works without a provider or a supplier connection. The library database and its snapshots include the inventory records.
+
 ## Screen capture
 
 The fish in the menu bar captures part of the screen into a language. The keyboard shortcut does the same, from any app; the default is **⌃⌥⌘C** (Control-Option-Command-C).
@@ -505,6 +522,7 @@ claude mcp add corydoras -- ~/.local/bin/corydoras-mcp
 npm install
 npm run tauri dev                        # app with hot reload
 CORYDORAS_LIBRARY=/tmp/lib npm run tauri dev   # same, on another library (the saved setting stays)
+npm run test:workshop                      # inventory form rules (Node.js 22.6 or newer with TypeScript support)
 cargo test -p corydoras-core             # unit tests of the library
 cargo test -p corydoras                  # the app commands, called with the arguments that src/api.ts sends
 CORYDORAS_API_KEY=… cargo run -p corydoras-core --example e2e -- /tmp/lib https://api.deepseek.com

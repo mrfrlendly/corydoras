@@ -1,6 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 
 export interface AppInfo {
+  inventory_enabled: boolean;
   library_path: string | null;
   default_library: string;
   config_path: string;

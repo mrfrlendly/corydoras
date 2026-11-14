@@ -27,6 +27,7 @@ mod accounts;
 mod bridge;
 mod capture;
 mod features;
+mod inventory;
 #[cfg(test)]
 mod ipc_tests;
 
@@ -78,6 +79,7 @@ fn lib(state: &State<'_, AppState>) -> CmdResult<Arc<Library>> {
 
 #[derive(Serialize)]
 struct AppInfo {
+    inventory_enabled: bool,
     library_path: Option<String>,
     default_library: String,
     config_path: String,
@@ -111,12 +113,12 @@ fn dirs_home() -> Option<PathBuf> {
 }
 
 fn app_info_of(state: &State<'_, AppState>) -> AppInfo {
-    let path = state
-        .lib
-        .read()
-        .unwrap_or_else(|e| e.into_inner())
-        .as_ref()
-        .map(|l| l.root().to_string_lossy().into_owned());
+    let library = state.lib.read().unwrap_or_else(|e| e.into_inner()).clone();
+    let path = library.as_ref().map(|l| l.root().to_string_lossy().into_owned());
+    let inventory_enabled = library.as_ref().is_some_and(|l| l.inventory_enabled().unwrap_or_else(|e| {
+        eprintln!("Cannot read the workshop inventory preference: {e}");
+        false
+    }));
     let cfg = AppConfig::load();
     let recent_libraries = cfg
         .recent_libraries
@@ -126,6 +128,7 @@ fn app_info_of(state: &State<'_, AppState>) -> AppInfo {
         .collect();
     let library_warning = path.as_ref().and_then(|p| storage::cloud_warning(std::path::Path::new(p)));
     AppInfo {
+        inventory_enabled,
         recent_libraries,
         library_warning,
         library_path: path,
@@ -1222,6 +1225,12 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             app_info,
+            inventory::set_inventory_enabled,
+            inventory::list_inventory,
+            inventory::save_inventory,
+            inventory::delete_inventory,
+            inventory::read_inventory_label,
+            inventory::search_inventory_listings,
             set_library,
             list_languages,
             create_language,

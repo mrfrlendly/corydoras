@@ -91,7 +91,7 @@ pub(super) fn reviewed_record(w: &WebviewWindow<MockRuntime>, library: &Library)
     assert_eq!(
         draft,
         json!({"name":"Hex key","category":"Tools","brand":"Fixture Tools","part_number":"F-08",
-        "colour":"Blue","dimensions":"8 mm","quantity":null,"pack_quantity":2,"notes":"","supplier":null})
+        "colour":"Blue","dimensions":"8 mm","quantity":null,"pack_quantity":2,"notes":"","specs":[],"supplier":null})
     );
     let after = library.usage().unwrap();
     assert_eq!(

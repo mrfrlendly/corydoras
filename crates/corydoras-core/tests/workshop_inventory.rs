@@ -1,6 +1,7 @@
 use anyhow::Result;
 use corydoras_core::{
     inventory::{InventoryDraft, SupplierListing},
+    inventory_specs::{Spec, SpecRole, SpecSource},
     snapshot, Library,
 };
 use std::path::Path;
@@ -16,6 +17,7 @@ fn example() -> InventoryDraft {
         quantity: None,
         pack_quantity: Some(25),
         notes: "Bin B7".into(),
+        specs: vec![],
         supplier: Some(SupplierListing {
             title: "A2-816 socket head screws".into(),
             url: "https://supplier.example.com/parts/a2-816".into(),
@@ -171,6 +173,87 @@ fn disable_hides_stock_and_pipeline_changes_preserve_the_preference() -> Result<
     let reopened = Library::open(root.path())?;
     assert!(!reopened.inventory_enabled()?);
     reopened.set_inventory_enabled(true)?;
+    assert_eq!(reopened.list_inventory()?, vec![item]);
+    Ok(())
+}
+
+fn spec(role: SpecRole, value: &str, unit: &str, source: SpecSource) -> Spec {
+    Spec {
+        role,
+        name: String::new(),
+        value: value.into(),
+        unit: unit.into(),
+        tolerance: String::new(),
+        source,
+        evidence: String::new(),
+    }
+}
+
+#[test]
+fn specs_persist_and_generate_the_dimensions_text() -> Result<()> {
+    let root = tempfile::tempdir()?;
+    let lib = Library::open(root.path())?;
+    let draft = InventoryDraft {
+        dimensions: "ignored".into(),
+        specs: vec![
+            spec(SpecRole::Thread, "M3", "", SpecSource::Label),
+            spec(SpecRole::Length, "5.7", "mm", SpecSource::Label),
+        ],
+        ..example()
+    };
+    let item = lib.save_inventory(None, &draft)?;
+    assert_eq!(item.draft.dimensions, "M3 thread; length 5.7 mm");
+    assert_eq!(lib.list_inventory()?, vec![item.clone()]);
+    assert_eq!(item.draft.specs, draft.specs);
+    Ok(())
+}
+
+#[test]
+fn an_item_without_specs_keeps_its_typed_dimensions() -> Result<()> {
+    let root = tempfile::tempdir()?;
+    let lib = Library::open(root.path())?;
+    let item = lib.save_inventory(
+        None,
+        &InventoryDraft {
+            dimensions: "Length 20 mm".into(),
+            ..example()
+        },
+    )?;
+    assert_eq!(item.draft.dimensions, "Length 20 mm");
+    assert!(item.draft.specs.is_empty());
+    Ok(())
+}
+
+#[test]
+fn saving_refreshes_standard_rows() -> Result<()> {
+    let root = tempfile::tempdir()?;
+    let lib = Library::open(root.path())?;
+    let draft = InventoryDraft {
+        specs: vec![
+            spec(SpecRole::Thread, "M3", "", SpecSource::Label),
+            spec(SpecRole::Pitch, "0.5", "mm", SpecSource::Standard),
+        ],
+        ..example()
+    };
+    let item = lib.save_inventory(None, &draft)?;
+    let mut edited = item.draft.clone();
+    edited.specs[0] = spec(SpecRole::Thread, "M4", "", SpecSource::Entered);
+    let saved = lib.save_inventory(Some(&item.id), &edited)?;
+    let pitch = saved.draft.specs.iter().find(|s| s.role == SpecRole::Pitch).unwrap();
+    assert_eq!((pitch.value.as_str(), pitch.source), ("0.7", SpecSource::Standard));
+    assert_eq!(saved.draft.dimensions, "M4 thread; pitch 0.7 mm");
+    Ok(())
+}
+
+#[test]
+fn a_library_without_the_specs_column_migrates() -> Result<()> {
+    let root = tempfile::tempdir()?;
+    let lib = Library::open(root.path())?;
+    let item = lib.save_inventory(None, &example())?;
+    drop(lib);
+    rusqlite::Connection::open(root.path().join("library.sqlite"))?
+        .execute("ALTER TABLE workshop_inventory DROP COLUMN specs", [])?;
+    let reopened = Library::open(root.path())?;
     assert_eq!(reopened.list_inventory()?, vec![item]);
     Ok(())
 }

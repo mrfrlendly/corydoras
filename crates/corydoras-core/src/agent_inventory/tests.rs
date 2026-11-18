@@ -14,6 +14,7 @@ fn fixture() -> Result<(TempDir, Library, String)> {
         brand: "Acme".into(), part_number: "BL-041".into(), colour: "Black".into(),
         dimensions: "Thread M3; length 8mm".into(), quantity: Some(5), pack_quantity: Some(100),
         notes: "Material: Brass (label)\nLocation: Drawer 8\nParent kit: Ring terminal M5 (archived)\nAmazon (similar product): Green M12 screw https://example.com/needle".into(),
+        specs: vec![],
         supplier: Some(SupplierListing {title:"Box of screws".into(),url:"https://example.com/needle".into(),details:"Supplier says green".into()})
     };
     let id = lib.save_inventory(None, &screw)?.id;

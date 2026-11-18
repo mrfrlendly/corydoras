@@ -16,17 +16,19 @@ pub const MAX_EXACT_INTEGER: i64 = (1 << 53) - 1;
 // Earlier inventory schemas lack the colour and photo columns. A design check
 // must still read those libraries without a migration or a write transaction.
 fn select_items(conn: &Connection) -> Result<String> {
-    let (has_colour, has_photo): (bool, bool) = conn.query_row(
-        "SELECT count(*) FILTER (WHERE name='colour'), count(*) FILTER (WHERE name='photo_key')
+    let (has_colour, has_photo, has_specs): (bool, bool, bool) = conn.query_row(
+        "SELECT count(*) FILTER (WHERE name='colour'), count(*) FILTER (WHERE name='photo_key'),
+                count(*) FILTER (WHERE name='specs')
          FROM pragma_table_info('workshop_inventory')",
         [],
-        |row| Ok((row.get(0)?, row.get(1)?)),
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
     )?;
     let colour = if has_colour { "colour" } else { "''" };
     let photo = if has_photo { "photo_key" } else { "NULL" };
+    let specs = if has_specs { "specs" } else { "'[]'" };
     Ok(format!(
         "SELECT id, name, category, brand, part_number, dimensions, quantity, pack_quantity,
-                notes, supplier_url, supplier_title, supplier_details, {colour}, {photo}
+                notes, supplier_url, supplier_title, supplier_details, {colour}, {photo}, {specs}
                 FROM workshop_inventory"
     ))
 }

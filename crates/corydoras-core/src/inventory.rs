@@ -2,6 +2,7 @@
 
 use crate::{
     inventory_media::{prepare_photo, store_photo, InventoryPhotoChange},
+    inventory_specs::{self, Spec},
     Library,
 };
 use anyhow::{anyhow, ensure, Result};
@@ -35,6 +36,8 @@ pub struct InventoryDraft {
     /// The number of units per package, as printed on the label.
     pub pack_quantity: Option<i64>,
     pub notes: String,
+    /// Structured dimensions with their source. When present they generate `dimensions` on save.
+    pub specs: Vec<Spec>,
     pub supplier: Option<SupplierListing>,
 }
 
@@ -130,8 +133,13 @@ pub(crate) fn normalized_colour(value: &str) -> Result<String> {
 
 impl InventoryDraft {
     pub fn normalized(&self) -> Result<Self> {
-        let draft = self.normalized_for_review()?;
+        let mut draft = self.normalized_for_review()?;
         ensure!(!draft.name.is_empty(), "Enter an item name.");
+        // Specs are the source of truth. Standard rows follow the thread, and the text is rebuilt from them.
+        draft.specs = inventory_specs::refresh_standard(draft.specs);
+        if !draft.specs.is_empty() {
+            draft.dimensions = inventory_specs::summary(&draft.specs);
+        }
         Ok(draft)
     }
 
@@ -159,6 +167,7 @@ impl InventoryDraft {
             quantity: self.quantity,
             pack_quantity: self.pack_quantity,
             notes: field(&self.notes, "The notes", 8192)?,
+            specs: inventory_specs::normalized(&self.specs)?,
             supplier: self
                 .supplier
                 .as_ref()
@@ -190,6 +199,9 @@ pub(crate) fn inventory_row(row: &Row<'_>) -> rusqlite::Result<InventoryItem> {
             quantity: row.get(6)?,
             pack_quantity: row.get(7)?,
             notes: row.get(8)?,
+            specs: serde_json::from_str(&row.get::<_, String>(14)?).map_err(|e| {
+                rusqlite::Error::FromSqlConversionFailure(14, rusqlite::types::Type::Text, Box::new(e))
+            })?,
             supplier,
         },
     })
@@ -221,7 +233,7 @@ impl Library {
         let conn = self.c();
         let mut stmt = conn.prepare(
             "SELECT id, name, category, brand, part_number, dimensions, quantity, pack_quantity,
-                    notes, supplier_url, supplier_title, supplier_details, colour, photo_key
+                    notes, supplier_url, supplier_title, supplier_details, colour, photo_key, specs
              FROM workshop_inventory ORDER BY name COLLATE NOCASE, id",
         )?;
         let items = stmt
@@ -254,6 +266,7 @@ impl Library {
             .map(str::to_owned)
             .unwrap_or_else(|| Uuid::new_v4().to_string());
         let listing = draft.supplier.as_ref();
+        let specs = serde_json::to_string(&draft.specs)?;
         let key = photo.as_ref().map(|p| p.key.as_str());
         let mut conn = self.c();
         let tx = conn.transaction()?;
@@ -263,12 +276,12 @@ impl Library {
         let sql = if id.is_some() {
             "UPDATE workshop_inventory SET name=?2, category=?3, brand=?4, part_number=?5,
                  dimensions=?6, quantity=?7, pack_quantity=?8, notes=?9, supplier_url=?10,
-                 supplier_title=?11, supplier_details=?12, colour=?13,
+                 supplier_title=?11, supplier_details=?12, colour=?13, specs=?16,
                  photo_key=CASE WHEN ?15 THEN photo_key ELSE ?14 END WHERE id=?1 RETURNING photo_key"
         } else {
             "INSERT INTO workshop_inventory (id,name,category,brand,part_number,dimensions,
-                 quantity,pack_quantity,notes,supplier_url,supplier_title,supplier_details,colour,photo_key)
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,CASE WHEN ?15 THEN NULL ELSE ?14 END)
+                 quantity,pack_quantity,notes,supplier_url,supplier_title,supplier_details,colour,photo_key,specs)
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,CASE WHEN ?15 THEN NULL ELSE ?14 END,?16)
              RETURNING photo_key"
         };
         let photo_key = tx
@@ -290,6 +303,7 @@ impl Library {
                     draft.colour,
                     key,
                     matches!(change, InventoryPhotoChange::Keep),
+                    specs,
                 ],
                 |row| row.get(0),
             )

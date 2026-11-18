@@ -116,7 +116,8 @@ CREATE TABLE IF NOT EXISTS workshop_inventory (
     supplier_title   TEXT NOT NULL,
     supplier_details TEXT NOT NULL,
     colour           TEXT NOT NULL DEFAULT '',
-    photo_key        TEXT REFERENCES workshop_photos(key)
+    photo_key        TEXT REFERENCES workshop_photos(key),
+    specs            TEXT NOT NULL DEFAULT '[]'
 );
 
 CREATE TABLE IF NOT EXISTS usage (
@@ -268,6 +269,7 @@ pub fn migrate(conn: &Connection) -> Result<()> {
     let steps: &[(&str, &str, &str)] = &[
         ("workshop_inventory", "colour", "ALTER TABLE workshop_inventory ADD COLUMN colour TEXT NOT NULL DEFAULT ''"),
         ("workshop_inventory", "photo_key", "ALTER TABLE workshop_inventory ADD COLUMN photo_key TEXT REFERENCES workshop_photos(key)"),
+        ("workshop_inventory", "specs", "ALTER TABLE workshop_inventory ADD COLUMN specs TEXT NOT NULL DEFAULT '[]'"),
         ("versions", "schema", "ALTER TABLE versions ADD COLUMN schema INTEGER NOT NULL DEFAULT 1"),
         ("versions", "warnings", "ALTER TABLE versions ADD COLUMN warnings TEXT NOT NULL DEFAULT '[]'"),
         ("projects", "process_id", "ALTER TABLE projects ADD COLUMN process_id TEXT"),

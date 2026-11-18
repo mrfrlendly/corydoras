@@ -155,3 +155,12 @@ fn normalized_rejects_imperial_units_and_overlong_values() {
     other.name.clear();
     assert!(normalized(&[other]).is_err());
 }
+
+#[test]
+fn refresh_never_adds_rows_to_an_item_without_standard_ones() {
+    let typed = vec![
+        spec(SpecRole::Thread, "M3", "", SpecSource::Entered),
+        spec(SpecRole::Length, "5.7", "mm", SpecSource::Entered),
+    ];
+    assert_eq!(refresh_standard(typed.clone()), typed);
+}

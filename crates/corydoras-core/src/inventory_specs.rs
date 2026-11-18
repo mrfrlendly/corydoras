@@ -200,7 +200,7 @@ pub fn refresh_standard(specs: Vec<Spec>) -> Vec<Spec> {
             .iter()
             .any(|s| s.role == role && s.source == SpecSource::Standard)
     };
-    let (clearance, tap) = (had(SpecRole::ClearanceHole), had(SpecRole::TapDrill));
+    let (pitch, clearance, tap) = (had(SpecRole::Pitch), had(SpecRole::ClearanceHole), had(SpecRole::TapDrill));
     let mut kept: Vec<Spec> = specs
         .into_iter()
         .filter(|s| s.source != SpecSource::Standard)
@@ -209,7 +209,7 @@ pub fn refresh_standard(specs: Vec<Spec>) -> Vec<Spec> {
         return kept;
     };
     let thread = row.thread;
-    if !has(&kept, SpecRole::Pitch) {
+    if pitch && !has(&kept, SpecRole::Pitch) {
         kept.push(standard_spec(
             SpecRole::Pitch,
             row.pitch,

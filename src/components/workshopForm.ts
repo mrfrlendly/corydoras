@@ -1,4 +1,4 @@
-import type { InventoryDraft, InventoryItem } from '../inventoryApi';
+import type { InventoryDraft, InventoryItem, Spec } from '../inventoryApi';
 
 export type WorkshopForm = Omit<InventoryDraft, 'quantity' | 'pack_quantity'> & {
   quantity: string;
@@ -13,7 +13,7 @@ export const LABEL_CATEGORIES = [
 export function blankForm(): WorkshopForm {
   return {
     name: '', category: '', brand: '', part_number: '', colour: '', dimensions: '',
-    quantity: '', pack_quantity: '', notes: '', supplier: null,
+    quantity: '', pack_quantity: '', notes: '', specs: [], supplier: null,
   };
 }
 
@@ -21,20 +21,55 @@ export function editForm(item: InventoryDraft): WorkshopForm {
   return {
     name: item.name, category: item.category, brand: item.brand, part_number: item.part_number,
     colour: item.colour ?? '', dimensions: item.dimensions, quantity: item.quantity?.toString() ?? '',
-    pack_quantity: item.pack_quantity?.toString() ?? '', notes: item.notes, supplier: item.supplier,
+    pack_quantity: item.pack_quantity?.toString() ?? '', notes: item.notes, specs: item.specs ?? [], supplier: item.supplier,
   };
+}
+
+const roleWords: Record<string, string> = {
+  thread: 'thread', pitch: 'pitch', length: 'length', outer_diameter: 'outer diameter', hole_diameter: 'hole diameter',
+  clearance_hole: 'clearance hole', tap_drill: 'tap drill', diameter: 'diameter', net_weight: 'net weight',
+  material: 'material', nozzle_temp: 'nozzle temperature', bed_temp: 'bed temperature', drying: 'drying',
+};
+
+/** The Dimensions line. The database builds the same text when it saves; this one is for display. */
+export function specSummary(specs: Spec[]): string {
+  return specs.map(spec => {
+    if (spec.role === 'thread') return `${spec.value} thread`;
+    const words = spec.role === 'other' ? spec.name : roleWords[spec.role] ?? spec.role;
+    return `${words} ${spec.value}${spec.tolerance ? ` ±${spec.tolerance}` : ''}${spec.unit ? ` ${spec.unit}` : ''}`;
+  }).join('; ');
+}
+
+/** A designer's edit to a value makes it theirs. The printed evidence stays and cannot be edited. */
+export function editSpec(specs: Spec[], index: number, patch: Partial<Omit<Spec, 'source' | 'evidence'>>): Spec[] {
+  const current = specs[index];
+  const changed = (['role', 'name', 'value', 'unit', 'tolerance'] as const).some(key => patch[key] !== undefined && patch[key] !== current[key]);
+  if (!changed) return specs;
+  const next: Spec = { ...current, source: 'entered' };
+  for (const key of ['role', 'name', 'value', 'unit', 'tolerance'] as const) if (patch[key] !== undefined) next[key] = patch[key];
+  return specs.map((spec, i) => i === index ? next : spec);
+}
+
+export function addSpec(specs: Spec[]): Spec[] {
+  return [...specs, { role: 'other', name: '', value: '', unit: '', tolerance: '', source: 'entered', evidence: '' }];
+}
+
+export function removeSpec(specs: Spec[], index: number): Spec[] {
+  return specs.filter((_, i) => i !== index);
 }
 
 export function reviewLabel(form: WorkshopForm, label: InventoryDraft): WorkshopForm {
   const keep = (current: string, suggested: string) => current.trim() ? current : suggested;
+  const specs = form.specs.length ? form.specs : label.specs ?? [];
   return {
     ...form,
+    specs,
     name: keep(form.name, label.name),
     category: keep(form.category, label.category),
     brand: keep(form.brand, label.brand),
     part_number: keep(form.part_number, label.part_number),
     colour: keep(form.colour, label.colour ?? ''),
-    dimensions: keep(form.dimensions, label.dimensions),
+    dimensions: specs.length ? specSummary(specs) : keep(form.dimensions, label.dimensions),
     pack_quantity: keep(form.pack_quantity, label.pack_quantity?.toString() ?? ''),
     notes: keep(form.notes, label.notes),
   };
@@ -47,6 +82,15 @@ function quantity(text: string): number | null {
     throw new Error('Enter a whole number from 0 to 9,007,199,254,740,991.');
   }
   return Number(value);
+}
+
+/** One bought pack adds the pack's count to the stock on hand. */
+export function addPack(form: WorkshopForm): WorkshopForm {
+  const pack = quantity(form.pack_quantity);
+  if (pack === null) throw new Error('Enter the quantity per pack first.');
+  const total = (quantity(form.quantity) ?? 0) + pack;
+  if (!Number.isSafeInteger(total)) throw new Error('Enter a whole number from 0 to 9,007,199,254,740,991.');
+  return { ...form, quantity: String(total) };
 }
 
 export function saveDraft(form: WorkshopForm): InventoryDraft {
@@ -93,4 +137,12 @@ export async function validateItemPhoto(file: File): Promise<void> {
   const isWebP = String.fromCharCode(...header.slice(0, 4)) === 'RIFF'
     && String.fromCharCode(...header.slice(8, 12)) === 'WEBP';
   if (!isJpeg && !isPng && !isWebP) throw new Error('Choose a JPEG, PNG, or WebP photo.');
+}
+
+/** Drafts for one batch save. A draft that cannot be saved is named by its place in the list. */
+export function batchDrafts(forms: WorkshopForm[]): InventoryDraft[] {
+  return forms.map((form, i) => {
+    try { return saveDraft(form); }
+    catch (e) { throw new Error(`Item ${i + 1}: ${e instanceof Error ? e.message : String(e)}`); }
+  });
 }

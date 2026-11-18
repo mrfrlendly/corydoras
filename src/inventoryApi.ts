@@ -7,6 +7,19 @@ export interface SupplierListing {
   details: string;
 }
 
+/** Where a spec came from: printed with its role, printed digits whose role is a notation, a table value, or typed. */
+export type SpecSource = 'label' | 'notation' | 'standard' | 'entered';
+
+export interface Spec {
+  role: string;
+  name: string;
+  value: string;
+  unit: string;
+  tolerance: string;
+  source: SpecSource;
+  evidence: string;
+}
+
 export interface InventoryDraft {
   name: string;
   category: string;
@@ -17,6 +30,7 @@ export interface InventoryDraft {
   quantity: number | null;
   pack_quantity: number | null;
   notes: string;
+  specs: Spec[];
   supplier: SupplierListing | null;
 }
 
@@ -57,6 +71,17 @@ async function save(id: string | null, draft: InventoryDraft, change?: File | 'r
   return invoke<InventoryItem>('save_inventory_photo', frame);
 }
 
+/** Save the reviewed items of one photo in one request. Either all are saved or none. */
+async function saveBatch(drafts: InventoryDraft[], photo: File): Promise<InventoryItem[]> {
+  if (!photo.size || photo.size > maxPhotoBytes) throw new Error('Select a nonempty photo of 12 MiB or less.');
+  const meta = new TextEncoder().encode(JSON.stringify({ drafts }));
+  const frame = new Uint8Array(4 + meta.length + photo.size);
+  new DataView(frame.buffer).setUint32(0, meta.length, false);
+  frame.set(meta, 4);
+  frame.set(new Uint8Array(await photo.arrayBuffer()), 4 + meta.length);
+  return invoke<InventoryItem[]>('save_inventory_batch', frame);
+}
+
 export const inventoryApi = {
   setEnabled: (enabled: boolean) => invoke<AppInfo>('set_inventory_enabled', { enabled }),
   list: () => {
@@ -69,8 +94,10 @@ export const inventoryApi = {
   remove: (id: string) => invoke<void>('delete_inventory', { id }),
   search: (name: string, brand: string, partNumber: string) =>
     invoke<SupplierListing[]>('search_inventory_listings', { name, brand, partNumber }),
-  readLabel: async (file: File): Promise<InventoryDraft> => {
+  /** One draft per item that the photo shows. Nothing is saved. */
+  readLabels: async (file: File): Promise<InventoryDraft[]> => {
     if (!file.size || file.size > maxPhotoBytes) throw new Error('Select a nonempty photo of 12 MiB or less.');
-    return invoke<InventoryDraft>('read_inventory_label', new Uint8Array(await file.arrayBuffer()));
+    return invoke<InventoryDraft[]>('read_inventory_label', new Uint8Array(await file.arrayBuffer()));
   },
+  saveBatch,
 };

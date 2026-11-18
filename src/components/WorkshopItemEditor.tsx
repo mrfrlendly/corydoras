@@ -123,7 +123,7 @@ export default function WorkshopItemEditor({ item, categories, onSaved, onRemove
       setLabelFile(file);
       searchRequest.current += 1;
       setSearchState({ status: 'idle' });
-      const label = await inventoryApi.readLabel(file);
+      const [label] = await inventoryApi.readLabels(file);
       if (!mounted.current) return;
       const reviewed = reviewLabel(form, label);
       setForm(reviewed);

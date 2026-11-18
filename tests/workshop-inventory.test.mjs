@@ -70,3 +70,60 @@ test('photo selection checks actual file format and size before reading or attac
   await assert.rejects(validateItemPhoto(file([])), /12 MiB/);
   await assert.rejects(validateItemPhoto({ size: 12 * 1024 * 1024 + 1 }), /12 MiB/);
 });
+
+const spec = (role, value, unit = '', source = 'label', extra = {}) =>
+  ({ role, name: '', value, unit, tolerance: '', source, evidence: 'printed', ...extra });
+
+test('specSummary matches the summary the database stores', async () => {
+  const { specSummary } = await import('../src/components/workshopForm.ts');
+  const specs = [spec('thread', 'M3'), spec('pitch', '0.5', 'mm', 'standard'), spec('length', '5.7', 'mm')];
+  assert.equal(specSummary(specs), 'M3 thread; pitch 0.5 mm; length 5.7 mm');
+  assert.equal(specSummary([]), '');
+  assert.equal(specSummary([spec('other', 'Hex', '', 'entered', { name: 'Drive' })]), 'Drive Hex');
+  assert.equal(specSummary([spec('diameter', '1.75', 'mm', 'label', { tolerance: '0.03' })]), 'diameter 1.75 ±0.03 mm');
+});
+
+test('editing a printed or table value turns it into an entered one', async () => {
+  const { editSpec, addSpec, removeSpec } = await import('../src/components/workshopForm.ts');
+  const specs = [spec('thread', 'M3', '', 'notation'), spec('pitch', '0.5', 'mm', 'standard')];
+  const edited = editSpec(specs, 1, { value: '0.6' });
+  assert.equal(edited[1].value, '0.6');
+  assert.equal(edited[1].source, 'entered');
+  assert.equal(edited[1].evidence, 'printed');
+  assert.equal(edited[0], specs[0]);
+  assert.equal(specs[1].source, 'standard');
+  assert.equal(editSpec(specs, 0, { value: 'M3' })[0].source, 'notation');
+  assert.equal(editSpec(specs, 0, { evidence: 'forged' })[0].evidence, 'printed');
+  const added = addSpec(edited);
+  assert.equal(added.length, 3);
+  assert.equal(added[2].source, 'entered');
+  assert.deepEqual(removeSpec(added, 0).map(s => s.role), ['pitch', 'other']);
+});
+
+test('a bought pack adds its count to the stock', async () => {
+  const { addPack } = await import('../src/components/workshopForm.ts');
+  const form = { ...blankForm(), name: 'M3 insert', pack_quantity: '50' };
+  assert.equal(addPack(form).quantity, '50');
+  assert.equal(addPack({ ...form, quantity: '20' }).quantity, '70');
+  assert.equal(addPack({ ...form, quantity: '0' }).quantity, '50');
+  assert.throws(() => addPack({ ...form, pack_quantity: '' }), /quantity per pack/);
+});
+
+test('a batch names the item that cannot be saved', async () => {
+  const { batchDrafts } = await import('../src/components/workshopForm.ts');
+  const good = { ...blankForm(), name: 'M3 insert' };
+  const drafts = batchDrafts([good, { ...good, name: 'M4 insert', quantity: '7' }]);
+  assert.deepEqual(drafts.map(d => d.quantity), [null, 7]);
+  assert.throws(() => batchDrafts([good, { ...good, name: ' ' }]), /^Error: Item 2: Enter an item name/);
+  assert.throws(() => batchDrafts([good, { ...good, quantity: '1.5' }]), /Item 2: .*whole number/);
+});
+
+test('a label review keeps the specs the user already has and builds the Dimensions text from them', () => {
+  const scan = { ...saveDraft({ ...blankForm(), name: 'Insert' }), dimensions: 'old', specs: [spec('thread', 'M3')] };
+  const fresh = reviewLabel(blankForm(), scan);
+  assert.equal(fresh.specs.length, 1);
+  assert.equal(fresh.dimensions, 'M3 thread');
+  const own = { ...blankForm(), specs: [spec('length', '5', 'mm', 'entered')] };
+  assert.deepEqual(reviewLabel(own, scan).specs, own.specs);
+  assert.equal(blankForm().specs.length, 0);
+});

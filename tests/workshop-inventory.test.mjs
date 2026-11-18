@@ -77,7 +77,7 @@ const spec = (role, value, unit = '', source = 'label', extra = {}) =>
 test('specSummary matches the summary the database stores', async () => {
   const { specSummary } = await import('../src/components/workshopForm.ts');
   const specs = [spec('thread', 'M3'), spec('pitch', '0.5', 'mm', 'standard'), spec('length', '5.7', 'mm')];
-  assert.equal(specSummary(specs), 'M3 thread; pitch 0.5 mm; length 5.7 mm');
+  assert.equal(specSummary(specs), 'M3 thread; pitch 0.5 mm (standard); length 5.7 mm');
   assert.equal(specSummary([]), '');
   assert.equal(specSummary([spec('other', 'Hex', '', 'entered', { name: 'Drive' })]), 'Drive Hex');
   assert.equal(specSummary([spec('diameter', '1.75', 'mm', 'label', { tolerance: '0.03' })]), 'diameter 1.75 ±0.03 mm');
@@ -126,4 +126,22 @@ test('a label review keeps the specs the user already has and builds the Dimensi
   const own = { ...blankForm(), specs: [spec('length', '5', 'mm', 'entered')] };
   assert.deepEqual(reviewLabel(own, scan).specs, own.specs);
   assert.equal(blankForm().specs.length, 0);
+});
+
+test('changing a role away from Other drops the name that only Other may carry', async () => {
+  const { editSpec } = await import('../src/components/workshopForm.ts');
+  const specs = [spec('other', 'Hex', '', 'entered', { name: 'Head height' })];
+  assert.equal(editSpec(specs, 0, { role: 'length' })[0].name, '');
+  assert.equal(editSpec(specs, 0, { value: 'Torx' })[0].name, 'Head height');
+});
+
+test('adding the first spec keeps the typed Dimensions text in the notes', async () => {
+  const { withSpecs } = await import('../src/components/workshopForm.ts');
+  const form = { ...blankForm(), name: 'Imported', dimensions: 'M3 x 5.7, OD 4.6', notes: 'Bin 4' };
+  const one = withSpecs(form, [spec('hole_diameter', '4.2', 'mm', 'entered')]);
+  assert.equal(one.dimensions, 'hole diameter 4.2 mm');
+  assert.equal(one.notes, 'Bin 4\nEarlier dimensions: M3 x 5.7, OD 4.6');
+  const two = withSpecs(one, [...one.specs, spec('length', '5.7', 'mm', 'entered')]);
+  assert.equal(two.notes, one.notes);
+  assert.equal(withSpecs({ ...blankForm(), dimensions: '' }, [spec('length', '5', 'mm', 'entered')]).notes, '');
 });

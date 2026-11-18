@@ -192,10 +192,11 @@ async function multiItemFlow(page) {
   const first = page.getByRole('region', { name: 'Item 1' });
   const third = page.getByRole('region', { name: 'Item 3' });
   await expect(first.getByLabel('Item name')).toHaveValue('M3 heat-set insert');
+  await expect(page.getByLabel('Choose another photo')).toHaveCount(0);
   await expect(first.getByText('Printed, role read from notation').first()).toBeVisible();
   await expect(first.getByText('Standard, not measured')).toBeVisible();
   await expect(first.getByLabel('Dimensions')).not.toBeEditable();
-  await expect(first.getByLabel('Dimensions')).toHaveValue('M3 thread; length 5.7 mm; pitch 0.5 mm');
+  await expect(first.getByLabel('Dimensions')).toHaveValue('M3 thread; length 5.7 mm; pitch 0.5 mm (standard)');
   await expect(first.getByLabel('Quantity on hand')).toHaveValue('');
   await first.getByRole('button', { name: 'Add spec' }).click();
   await first.getByLabel('Spec 4 role').selectOption('hole_diameter');

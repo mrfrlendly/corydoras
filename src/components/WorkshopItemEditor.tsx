@@ -5,7 +5,7 @@ import { inventoryApi, type InventoryDraft, type InventoryItem } from '../invent
 import { useConfirmRow } from './useConfirmRow';
 import WorkshopSpecsTable from './WorkshopSpecsTable';
 import WorkshopSupplier, { type SearchState } from './WorkshopSupplier';
-import { blankForm, editForm, LABEL_CATEGORIES, reviewLabel, saveDraft, specSummary, validateItemPhoto, type WorkshopForm } from './workshopForm';
+import { blankForm, editForm, LABEL_CATEGORIES, reviewLabel, saveDraft, specSummary, validateItemPhoto, withSpecs, type WorkshopForm } from './workshopForm';
 import './workshopPhotoEditor.css';
 
 interface Props {
@@ -233,7 +233,7 @@ export default function WorkshopItemEditor({ item, categories, onSaved, onRemove
             onChange={e => update('notes', e.target.value)} /></label>
         </div>
         <WorkshopSpecsTable specs={form.specs} disabled={busy !== 'idle'} label={form.name || 'this item'}
-          onChange={specs => setForm(previous => ({ ...previous, specs, dimensions: specs.length ? specSummary(specs) : previous.dimensions }))} />
+          onChange={specs => setForm(previous => withSpecs(previous, specs))} />
       </section>
       <WorkshopSupplier selected={form.supplier} query={query} canSearch={!!(form.name.trim() || form.part_number.trim())}
         manual={manualLink} setManual={setManualLink} state={searchState}

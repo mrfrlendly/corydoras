@@ -241,7 +241,7 @@ fn saving_refreshes_standard_rows() -> Result<()> {
     let saved = lib.save_inventory(Some(&item.id), &edited)?;
     let pitch = saved.draft.specs.iter().find(|s| s.role == SpecRole::Pitch).unwrap();
     assert_eq!((pitch.value.as_str(), pitch.source), ("0.7", SpecSource::Standard));
-    assert_eq!(saved.draft.dimensions, "M4 thread; pitch 0.7 mm");
+    assert_eq!(saved.draft.dimensions, "M4 thread; pitch 0.7 mm (standard)");
     Ok(())
 }
 

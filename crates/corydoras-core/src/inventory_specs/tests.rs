@@ -30,7 +30,10 @@ fn summary_lists_specs_in_order() {
         spec(SpecRole::Pitch, "0.5", "mm", SpecSource::Standard),
         spec(SpecRole::Length, "5.7", "mm", SpecSource::Label),
     ];
-    assert_eq!(summary(&specs), "M3 thread; pitch 0.5 mm; length 5.7 mm");
+    assert_eq!(
+        summary(&specs),
+        "M3 thread; pitch 0.5 mm (standard); length 5.7 mm"
+    );
     assert_eq!(summary(&[]), "");
 }
 
@@ -90,10 +93,7 @@ fn a_printed_pitch_beats_the_table() {
         standard(&fine, SpecRole::ClearanceHole).as_deref(),
         Some("9 mm")
     );
-    assert_eq!(
-        standard(&fine, SpecRole::TapDrill).as_deref(),
-        Some("6.8 mm")
-    );
+    assert_eq!(standard(&fine, SpecRole::TapDrill).as_deref(), Some("7 mm"));
 }
 
 #[test]
@@ -163,4 +163,51 @@ fn refresh_never_adds_rows_to_an_item_without_standard_ones() {
         spec(SpecRole::Length, "5.7", "mm", SpecSource::Entered),
     ];
     assert_eq!(refresh_standard(typed.clone()), typed);
+}
+
+#[test]
+fn tap_drill_follows_a_printed_or_entered_fine_pitch() {
+    let m8 = |pitch: &str, source| {
+        vec![
+            spec(SpecRole::Thread, "M8", "", SpecSource::Label),
+            spec(SpecRole::Pitch, pitch, "mm", source),
+        ]
+    };
+    assert_eq!(
+        standard(
+            &with_standard(m8("1", SpecSource::Label), ProductType::Screw),
+            SpecRole::TapDrill
+        )
+        .as_deref(),
+        Some("7 mm")
+    );
+    assert_eq!(
+        standard(
+            &with_standard(m8("1.25", SpecSource::Label), ProductType::Screw),
+            SpecRole::TapDrill
+        )
+        .as_deref(),
+        Some("6.8 mm")
+    );
+    let mut rows = with_standard(
+        vec![spec(SpecRole::Thread, "M8", "", SpecSource::Label)],
+        ProductType::Screw,
+    );
+    rows.push(spec(SpecRole::Pitch, "1", "mm", SpecSource::Entered));
+    rows.retain(|s| !(s.role == SpecRole::Pitch && s.source == SpecSource::Standard));
+    assert_eq!(
+        standard(&refresh_standard(rows), SpecRole::TapDrill).as_deref(),
+        Some("7 mm")
+    );
+}
+
+#[test]
+fn a_pitch_printed_in_a_marking_is_read_only_when_it_fits_the_size() {
+    assert_eq!(printed_pitch("M8x1").as_deref(), Some("1"));
+    assert_eq!(printed_pitch("M8 x 1.25").as_deref(), Some("1.25"));
+    assert_eq!(printed_pitch("M12 x 1,5").as_deref(), Some("1.5"));
+    assert_eq!(printed_pitch("M4-.70").as_deref(), Some("0.7"));
+    assert_eq!(printed_pitch("M8x30"), None);
+    assert_eq!(printed_pitch("M3x8"), None);
+    assert_eq!(printed_pitch("M3"), None);
 }

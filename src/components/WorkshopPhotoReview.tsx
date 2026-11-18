@@ -4,7 +4,7 @@ import { errText } from '../api';
 import { inventoryApi, type InventoryDraft, type InventoryItem } from '../inventoryApi';
 import { useConfirmRow } from './useConfirmRow';
 import WorkshopSpecsTable from './WorkshopSpecsTable';
-import { addPack, batchDrafts, editForm, LABEL_CATEGORIES, specSummary, validateItemPhoto, type WorkshopForm } from './workshopForm';
+import { addPack, batchDrafts, editForm, LABEL_CATEGORIES, specSummary, validateItemPhoto, withSpecs, type WorkshopForm } from './workshopForm';
 import './workshopPhotoEditor.css';
 
 interface Props {
@@ -109,14 +109,14 @@ export default function WorkshopPhotoReview({ categories, initial, onSaved, onCa
       <div className="workshop-editor-photo-row">
         {preview && <img alt="Selected label photo" src={preview} />}
         <div>
-          <label className={`btn small workshop-file ${working ? 'disabled' : ''}`}>
+          {cards.length === 0 ? <label className={`btn small workshop-file ${working ? 'disabled' : ''}`}>
             <input className="sr-only" type="file" accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp" disabled={working}
               onChange={event => {
                 const chosen = event.currentTarget.files?.[0];
                 event.currentTarget.value = '';
                 if (chosen) void pick(chosen);
               }} />{file ? 'Choose another photo' : 'Choose label photo'}
-          </label>
+          </label> : <p className="small muted">To read a different photo, cancel this review and start again. Your edits stay here until then.</p>}
           <p className="small muted">JPEG, PNG, or WebP, up to 12 MiB. Your analysis provider reads the photo and returns one draft per item. Nothing is saved until you press Save.</p>
           {busy === 'read' && <p className="small" role="status">Label analysis in progress…</p>}
         </div>
@@ -146,7 +146,7 @@ export default function WorkshopPhotoReview({ categories, initial, onSaved, onCa
         </label>
       </div>
       <WorkshopSpecsTable specs={card.form.specs} disabled={working} label={card.form.name || `item ${index + 1}`}
-        onChange={specs => change(card.id, { specs, dimensions: specs.length ? specSummary(specs) : card.form.dimensions })} />
+        onChange={specs => setCards(previous => previous.map(other => other.id === card.id ? { ...other, form: withSpecs(other.form, specs) } : other))} />
       <div className="workshop-actions">
         <button type="button" className="link-btn small" disabled={working}
           onClick={() => setCards(previous => previous.filter(other => other.id !== card.id))}>Discard</button>

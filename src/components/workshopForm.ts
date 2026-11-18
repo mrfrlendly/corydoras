@@ -36,7 +36,7 @@ export function specSummary(specs: Spec[]): string {
   return specs.map(spec => {
     if (spec.role === 'thread') return `${spec.value} thread`;
     const words = spec.role === 'other' ? spec.name : roleWords[spec.role] ?? spec.role;
-    return `${words} ${spec.value}${spec.tolerance ? ` ±${spec.tolerance}` : ''}${spec.unit ? ` ${spec.unit}` : ''}`;
+    return `${words} ${spec.value}${spec.tolerance ? ` ±${spec.tolerance}` : ''}${spec.unit ? ` ${spec.unit}` : ''}${spec.source === 'standard' ? ' (standard)' : ''}`;
   }).join('; ');
 }
 
@@ -47,11 +47,24 @@ export function editSpec(specs: Spec[], index: number, patch: Partial<Omit<Spec,
   if (!changed) return specs;
   const next: Spec = { ...current, source: 'entered' };
   for (const key of ['role', 'name', 'value', 'unit', 'tolerance'] as const) if (patch[key] !== undefined) next[key] = patch[key];
+  if (next.role !== 'other') next.name = '';
   return specs.map((spec, i) => i === index ? next : spec);
 }
 
 export function addSpec(specs: Spec[]): Spec[] {
   return [...specs, { role: 'other', name: '', value: '', unit: '', tolerance: '', source: 'entered', evidence: '' }];
+}
+
+/**
+ * Set the specs of a form. The first spec of an item that has typed Dimensions text moves that text into the notes,
+ * because the saved Dimensions text is built from the specs and would otherwise replace it.
+ */
+export function withSpecs(form: WorkshopForm, specs: Spec[]): WorkshopForm {
+  const typed = form.dimensions.trim();
+  const keepTyped = form.specs.length === 0 && specs.length > 0 && typed !== '';
+  const earlier = `Earlier dimensions: ${typed}`;
+  const notes = keepTyped && !form.notes.includes(earlier) ? (form.notes.trim() ? `${form.notes}\n${earlier}` : earlier) : form.notes;
+  return { ...form, specs, notes, dimensions: specs.length ? specSummary(specs) : form.dimensions };
 }
 
 export function removeSpec(specs: Spec[], index: number): Spec[] {

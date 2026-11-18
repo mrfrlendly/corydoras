@@ -151,7 +151,7 @@ fn notation_specs_are_marked_notation() {
     assert_eq!(got.iter().filter(|s| s.2 == "label").count(), 0);
     assert_eq!(
         draft.dimensions,
-        "M2 thread; length 2 mm; outer diameter 3.2 mm; pitch 0.4 mm"
+        "M2 thread; length 2 mm; outer diameter 3.2 mm; pitch 0.4 mm (standard)"
     );
 }
 
@@ -438,4 +438,123 @@ async fn budget_and_incompatible_models_fail_before_any_request() {
         .unwrap_err()
         .to_string()
         .contains("budget"));
+}
+
+fn one_row(text: &str, specs: Value) -> InventoryDraft {
+    parse_labels(&sheet("", vec![row(text, "Part", "other", specs)]))
+        .unwrap()
+        .remove(0)
+}
+
+#[test]
+fn the_fraction_of_a_decimal_is_not_a_printed_number() {
+    for (text, role, value, unit, evidence) in [
+        ("1.75 mm", "diameter", "75", "mm", "75 mm"),
+        ("Length 2.5 mm", "length", "5", "mm", "5 mm"),
+        ("Length 5,7 mm", "length", "7", "mm", "7 mm"),
+        ("M2x2x3.8 mm", "length", "8", "mm", "8 mm"),
+    ] {
+        let draft = one_row(text, json!([spec(role, value, unit, "stated", evidence)]));
+        assert!(draft.specs.is_empty(), "{text}: {:?}", specs_of(&draft));
+    }
+}
+
+#[test]
+fn the_unit_must_be_printed_with_the_value() {
+    let kept = |text: &str, role: &str, value: &str, unit: &str, evidence: &str| {
+        one_row(text, json!([spec(role, value, unit, "stated", evidence)]))
+            .specs
+            .len()
+            == 1
+    };
+    assert!(!kept("Net weight 1 kg", "net_weight", "1", "g", "1 kg"));
+    assert!(!kept("1KG / 2.2LBS", "net_weight", "2.2", "kg", "2.2LBS"));
+    assert!(!kept("Length 1/2 in", "length", "2", "mm", "1/2 in"));
+    assert!(!kept("Net weight 1 kg", "net_weight", "1", "", "1 kg"));
+    assert!(kept("1KG / 2.2LBS", "net_weight", "1", "kg", "1KG"));
+    assert!(kept("Length 8 MM", "length", "8", "MM", "8 MM"));
+}
+
+#[test]
+fn harmless_formatting_does_not_lose_a_printed_spec() {
+    let draft = one_row(
+        "Nozzle 220 °C. Length 8 mm",
+        json!([
+        spec("nozzle_temp", "220", "C", "stated", "220 °C"),
+        {"role": "length", "name": "Length", "value": "8", "unit": "mm", "basis": "stated", "evidence": "8 mm"}]),
+    );
+    assert_eq!(draft.specs.len(), 2);
+    assert_eq!(draft.specs[0].unit, "°C");
+    assert!(draft.specs[1].name.is_empty());
+}
+
+#[test]
+fn a_tolerance_must_be_printed() {
+    let with = |tolerance: &str| {
+        one_row(
+            "1.75 ±0.03 mm",
+            json!([{"role": "diameter", "value": "1.75", "unit": "mm", "tolerance": tolerance,
+            "basis": "stated", "evidence": "1.75 ±0.03 mm"}]),
+        )
+        .specs
+        .remove(0)
+        .tolerance
+    };
+    assert_eq!(with("0.03"), "0.03");
+    assert_eq!(with("0.02"), "");
+}
+
+#[test]
+fn a_printed_pitch_in_the_marking_beats_the_table() {
+    let bolt = |text: &str, thread: &str| {
+        let items = vec![row(
+            text,
+            "Bolt",
+            "bolt",
+            json!([
+                spec("thread", "M8", "", "notation", thread),
+                spec("length", "30", "mm", "stated", "30 mm")
+            ]),
+        )];
+        specs_of(&parse_labels(&sheet("", items)).unwrap()[0])
+    };
+    let fine = bolt("M8x1 x 30 mm", "M8x1");
+    assert!(fine.contains(&("pitch".into(), "1".into(), "notation".into())));
+    assert!(!fine.iter().any(|s| s.0 == "pitch" && s.2 == "standard"));
+    assert!(fine.contains(&("tap_drill".into(), "7".into(), "standard".into())));
+    let coarse = bolt("M8x30 mm 30 mm", "M8x30");
+    assert!(coarse.contains(&("pitch".into(), "1.25".into(), "standard".into())));
+    assert!(coarse.contains(&("tap_drill".into(), "6.8".into(), "standard".into())));
+    let hyphen = one_row(
+        "M4-.70 x 10 mm",
+        json!([spec("thread", "M4", "", "notation", "M4-.70")]),
+    );
+    assert!(specs_of(&hyphen).contains(&("pitch".into(), "0.7".into(), "notation".into())));
+}
+
+#[test]
+fn a_row_that_cannot_be_saved_is_reported_by_number() {
+    let mut spool = row("Translucent\nOrange spool", "Spool", "filament", json!([]));
+    spool["colour"] = json!("Translucent\nOrange");
+    assert_eq!(
+        parse_labels(&sheet("", vec![spool])).unwrap()[0].colour,
+        "Translucent Orange"
+    );
+    let long = row("Row two text", &"x".repeat(600), "screw", json!([]));
+    let error = parse_labels(&sheet(
+        "",
+        vec![row("Row one", "One", "screw", json!([])), long],
+    ))
+    .unwrap_err()
+    .to_string();
+    assert!(error.contains("Item 2"), "{error}");
+    assert!(!SCHEMA.contains("at most 40"));
+}
+
+#[test]
+fn notes_need_evidence_in_the_items_own_row() {
+    let mut item = row("M3 x 5 mm", "Insert", "insert", json!([]));
+    item["notes"] = json!(["M4 x 10 mm", "M3 x 5 mm"]);
+    let draft = &parse_labels(&sheet("Kit M4 x 10 mm", vec![item])).unwrap()[0];
+    assert_eq!(draft.notes, "M3 x 5 mm");
 }

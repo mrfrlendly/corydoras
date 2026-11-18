@@ -66,6 +66,79 @@ pub struct Spec {
     pub evidence: String,
 }
 
+/// Metric thread sizes with their coarse and fine pitches (ISO 261), for reading a printed pitch.
+const PITCHES: &[(&str, &[f64])] = &[
+    ("1.6", &[0.35, 0.2]),
+    ("2", &[0.4, 0.25]),
+    ("2.5", &[0.45, 0.35]),
+    ("3", &[0.5, 0.35]),
+    ("4", &[0.7, 0.5]),
+    ("5", &[0.8, 0.5]),
+    ("6", &[1.0, 0.75]),
+    ("8", &[1.25, 1.0, 0.75]),
+    ("10", &[1.5, 1.25, 1.0, 0.75]),
+    ("12", &[1.75, 1.5, 1.25, 1.0]),
+];
+
+fn number(x: f64) -> String {
+    let text = format!("{x:.2}");
+    text.trim_end_matches('0').trim_end_matches('.').to_owned()
+}
+
+// Read digits with one decimal mark ("1.25", "1,5", ".70") from `start`. Returns the number and where it ends.
+fn read_number(chars: &[char], start: usize) -> Option<(f64, usize)> {
+    let mut end = start;
+    let mut text = String::new();
+    while let Some(&c) = chars.get(end) {
+        if c.is_ascii_digit() {
+            text.push(c);
+        } else if (c == '.' || c == ',')
+            && !text.contains('.')
+            && chars.get(end + 1).is_some_and(char::is_ascii_digit)
+        {
+            text.push('.');
+        } else {
+            break;
+        }
+        end += 1;
+    }
+    if text.starts_with('.') {
+        text.insert(0, '0');
+    }
+    text.parse().ok().map(|n| (n, end))
+}
+
+/// The pitch printed in a thread marking such as M8x1 or M4-.70, when it fits the size.
+/// M8x30 gives none: 30 is a length, and no M8 thread has that pitch.
+pub fn printed_pitch(marking: &str) -> Option<String> {
+    let chars: Vec<char> = marking.chars().collect();
+    (0..chars.len()).find_map(|i| {
+        if !matches!(chars[i], 'M' | 'm') || (i > 0 && chars[i - 1].is_alphanumeric()) {
+            return None;
+        }
+        let (size, mut at) = read_number(&chars, i + 1)?;
+        let allowed = PITCHES
+            .iter()
+            .find(|(name, _)| name.parse::<f64>().ok() == Some(size))?
+            .1;
+        while chars.get(at) == Some(&' ') {
+            at += 1;
+        }
+        if !matches!(chars.get(at), Some('x' | 'X' | '×' | '-' | '–')) {
+            return None;
+        }
+        at += 1;
+        while chars.get(at) == Some(&' ') {
+            at += 1;
+        }
+        let (pitch, _) = read_number(&chars, at)?;
+        allowed
+            .iter()
+            .any(|p| (p - pitch).abs() < 1e-9)
+            .then(|| number(pitch))
+    })
+}
+
 const MAX_SPECS: usize = 40;
 const UNITS: &[&str] = &["", "mm", "g", "kg", "°C"];
 
@@ -84,6 +157,7 @@ const METRIC: &[(&str, &str, &str, &str)] = &[
 ];
 
 struct Row {
+    diameter: f64,
     thread: &'static str,
     pitch: &'static str,
     clearance: &'static str,
@@ -96,11 +170,23 @@ fn table_row(specs: &[Spec]) -> Option<Row> {
         .find(|s| s.role == SpecRole::Thread && s.source != SpecSource::Standard)?;
     let size = thread.value.trim().strip_prefix(['M', 'm'])?;
     METRIC.iter().find(|r| r.0 == size).map(|r| Row {
+        diameter: r.0.parse().unwrap_or_default(),
         thread: r.0,
         pitch: r.1,
         clearance: r.2,
         tap: r.3,
     })
+}
+
+// A coarse thread uses the table's tap drill. A printed or entered fine pitch makes it the size minus the pitch.
+fn tap_drill(row: &Row, specs: &[Spec]) -> String {
+    let coarse = row.pitch.parse::<f64>().unwrap_or_default();
+    let printed = specs
+        .iter()
+        .find(|s| s.role == SpecRole::Pitch && s.source != SpecSource::Standard)
+        .and_then(|s| s.value.trim().replace(',', ".").parse::<f64>().ok())
+        .filter(|p| *p > 0.0 && *p < row.diameter && (p - coarse).abs() > 1e-9);
+    printed.map_or_else(|| row.tap.to_owned(), |p| number(row.diameter - p))
 }
 
 fn standard_spec(role: SpecRole, value: &str, evidence: String) -> Spec {
@@ -149,6 +235,9 @@ pub fn summary(specs: &[Spec]) -> String {
             if !s.unit.is_empty() {
                 text.push_str(&format!(" {}", s.unit));
             }
+            if s.source == SpecSource::Standard {
+                text.push_str(" (standard)");
+            }
             text
         })
         .collect::<Vec<_>>()
@@ -185,7 +274,7 @@ pub fn with_standard(mut specs: Vec<Spec>, product: ProductType) -> Vec<Spec> {
     if screw && !specs.iter().any(|s| s.role == SpecRole::TapDrill) {
         specs.push(standard_spec(
             SpecRole::TapDrill,
-            row.tap,
+            &tap_drill(&row, &specs),
             format!("Tap drill for M{thread}"),
         ));
     }
@@ -200,7 +289,11 @@ pub fn refresh_standard(specs: Vec<Spec>) -> Vec<Spec> {
             .iter()
             .any(|s| s.role == role && s.source == SpecSource::Standard)
     };
-    let (pitch, clearance, tap) = (had(SpecRole::Pitch), had(SpecRole::ClearanceHole), had(SpecRole::TapDrill));
+    let (pitch, clearance, tap) = (
+        had(SpecRole::Pitch),
+        had(SpecRole::ClearanceHole),
+        had(SpecRole::TapDrill),
+    );
     let mut kept: Vec<Spec> = specs
         .into_iter()
         .filter(|s| s.source != SpecSource::Standard)
@@ -226,7 +319,7 @@ pub fn refresh_standard(specs: Vec<Spec>) -> Vec<Spec> {
     if tap && !has(&kept, SpecRole::TapDrill) {
         kept.push(standard_spec(
             SpecRole::TapDrill,
-            row.tap,
+            &tap_drill(&row, &kept),
             format!("Tap drill for M{thread}"),
         ));
     }

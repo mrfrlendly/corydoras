@@ -9,7 +9,8 @@ use crate::inventory_specs::{self, ProductType, Spec, SpecRole, SpecSource};
 use crate::provider::{Part, Provider, Thinking};
 use crate::Library;
 use anyhow::{anyhow, ensure, Context, Result};
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer};
+use serde_json::Value;
 #[cfg(test)]
 use std::io::Cursor;
 
@@ -49,39 +50,114 @@ specs: an array of objects with role, name, value, unit, tolerance, basis and ev
   evidence is the exact printed phrase that contains the value.
 Give hole_diameter, clearance_hole and tap_drill only when they are printed. Never estimate a size from the photo. Use empty strings or arrays for missing details. Omit personal information. Never infer stock on hand. Never add URLs."#;
 
+// Models answer with numbers where text was asked, with null for a missing field, and with extra keys.
+// All of that is read, never trusted: only the fields below are used, and stock is never among them.
+fn text_of(value: Value) -> Result<String, String> {
+    match value {
+        Value::Null => Ok(String::new()),
+        Value::String(s) => Ok(s),
+        Value::Bool(b) => Ok(b.to_string()),
+        Value::Number(n) => Ok(match n.as_f64() {
+            Some(f) if n.is_f64() && f.fract() == 0.0 && f.abs() < 1e15 => (f as i64).to_string(),
+            _ => n.to_string(),
+        }),
+        _ => Err("expected text".to_owned()),
+    }
+}
+
+fn text<'de, D: Deserializer<'de>>(d: D) -> Result<String, D::Error> {
+    text_of(Value::deserialize(d)?).map_err(serde::de::Error::custom)
+}
+
+fn texts<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<String>, D::Error> {
+    match Value::deserialize(d)? {
+        Value::Null => Ok(Vec::new()),
+        Value::Array(items) => items
+            .into_iter()
+            .map(|v| text_of(v).map_err(serde::de::Error::custom))
+            .collect(),
+        other => text_of(other)
+            .map(|s| vec![s])
+            .map_err(serde::de::Error::custom),
+    }
+}
+
+fn list<'de, D: Deserializer<'de>, T: Deserialize<'de>>(d: D) -> Result<Vec<T>, D::Error> {
+    Ok(Option::<Vec<T>>::deserialize(d)?.unwrap_or_default())
+}
+
+fn count<'de, D: Deserializer<'de>>(d: D) -> Result<Option<i64>, D::Error> {
+    Ok(match Value::deserialize(d)? {
+        Value::Number(n) => n
+            .as_i64()
+            .or_else(|| n.as_f64().filter(|f| f.fract() == 0.0).map(|f| f as i64)),
+        Value::String(s) => s.trim().parse().ok(),
+        _ => None,
+    })
+}
+
 #[derive(Default, Deserialize)]
-#[serde(default, deny_unknown_fields)]
+#[serde(default)]
 struct Sheet {
+    #[serde(deserialize_with = "text")]
     shared_text: String,
+    #[serde(deserialize_with = "list")]
     items: Vec<Row>,
 }
 
 #[derive(Default, Deserialize)]
-#[serde(default, deny_unknown_fields)]
+#[serde(default)]
 struct Row {
+    #[serde(deserialize_with = "text")]
     row_text: String,
+    #[serde(deserialize_with = "text")]
     name: String,
+    #[serde(deserialize_with = "text")]
     category: String,
+    #[serde(deserialize_with = "text")]
     product_type: String,
+    #[serde(deserialize_with = "text")]
     brand: String,
+    #[serde(deserialize_with = "text")]
     part_number: String,
+    #[serde(deserialize_with = "text")]
     colour: String,
+    #[serde(deserialize_with = "count")]
     pack_quantity: Option<i64>,
+    #[serde(deserialize_with = "text")]
     pack_evidence: String,
+    #[serde(deserialize_with = "texts")]
     notes: Vec<String>,
+    #[serde(deserialize_with = "list")]
     specs: Vec<RawSpec>,
 }
 
 #[derive(Default, Deserialize)]
-#[serde(default, deny_unknown_fields)]
+#[serde(default)]
 struct RawSpec {
+    #[serde(deserialize_with = "text")]
     role: String,
+    #[serde(deserialize_with = "text")]
     name: String,
+    #[serde(deserialize_with = "text")]
     value: String,
+    #[serde(deserialize_with = "text")]
     unit: String,
+    #[serde(deserialize_with = "text")]
     tolerance: String,
+    #[serde(deserialize_with = "text")]
     basis: String,
+    #[serde(deserialize_with = "text")]
     evidence: String,
+}
+
+// Some models wrap their answer in a code fence.
+fn unfence(reply: &str) -> &str {
+    let Some(rest) = reply.strip_prefix("```") else {
+        return reply;
+    };
+    let rest = rest.split_once('\n').map_or(rest, |(_, body)| body);
+    rest.trim_end().strip_suffix("```").unwrap_or(rest).trim()
 }
 
 // Compare printed text across line breaks without changing the original spelling in the draft.
@@ -338,8 +414,14 @@ fn parse_labels(reply: &str) -> Result<Vec<InventoryDraft>> {
         reply.len() <= MAX_REPLY_BYTES,
         "The label response is too long. Try a closer photo or one section of the label at a time."
     );
-    let sheet: Sheet = serde_json::from_str(reply.trim()).map_err(|_| {
-        anyhow!("The provider returned an invalid label. Try again or enter the item manually.")
+    let body = unfence(reply.trim());
+    let sheet: Sheet = serde_json::from_str(body).map_err(|e| {
+        if body.starts_with('{') {
+            anyhow!("The provider's reply did not match the label format ({e}). Try again or enter the item manually.")
+        } else {
+            let start: String = body.chars().take(120).collect();
+            anyhow!("The provider answered in text, not JSON: \"{start}\". Try again, or choose a model that can read images and follow JSON instructions in Settings.")
+        }
     })?;
     ensure!(
         sheet.items.len() <= MAX_ITEMS,

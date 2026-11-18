@@ -267,7 +267,6 @@ fn item_count_and_reply_size_are_limited() {
         sheet("", vec![row("", "Ghost", "screw", json!([]))]),
         sheet("", vec![json!({"row_text": "unrelated text"})]),
         "{}".to_owned(),
-        r#"{"items":[{"row_text":"bolts","quantity":90}]}"#.to_owned(),
         r#"{"items":[{"row_text":"bolts","specs":"6 mm"}]}"#.to_owned(),
         "Here is your JSON: {}".to_owned(),
     ] {
@@ -557,4 +556,42 @@ fn notes_need_evidence_in_the_items_own_row() {
     item["notes"] = json!(["M4 x 10 mm", "M3 x 5 mm"]);
     let draft = &parse_labels(&sheet("Kit M4 x 10 mm", vec![item])).unwrap()[0];
     assert_eq!(draft.notes, "M3 x 5 mm");
+}
+
+#[test]
+fn a_reply_with_numbers_nulls_and_extra_keys_still_reads() {
+    let reply = r#"{"shared_text": null, "items": [{
+        "row_text": "M3 x 8 mm 50 pcs", "name": "M3 screw", "category": null, "product_type": "screw",
+        "brand": null, "finish": "zinc", "quantity": 90, "pack_quantity": "50", "pack_evidence": "50 pcs", "notes": null,
+        "specs": [{"role": "length", "name": null, "value": 8, "unit": null, "tolerance": null, "basis": "stated", "evidence": "8 mm"},
+                  {"role": "length", "value": 8, "unit": "mm", "tolerance": 0.1, "basis": "stated", "evidence": "8 mm"}]}]}"#;
+    let draft = &parse_labels(reply).unwrap()[0];
+    assert_eq!((draft.pack_quantity, draft.quantity), (Some(50), None));
+    assert_eq!(draft.specs.len(), 1);
+    assert_eq!(
+        (draft.specs[0].value.as_str(), draft.specs[0].unit.as_str()),
+        ("8", "mm")
+    );
+}
+
+#[test]
+fn a_fenced_reply_is_read() {
+    let fenced = format!("```json\n{}\n```", sheet("", two_rows()));
+    assert_eq!(parse_labels(&fenced).unwrap().len(), 2);
+}
+
+#[test]
+fn the_error_says_what_was_wrong() {
+    let prose = parse_labels("Sorry, I cannot read this image.")
+        .unwrap_err()
+        .to_string();
+    assert!(
+        prose.contains("not JSON") && prose.contains("Sorry, I cannot"),
+        "{prose}"
+    );
+    let shape = parse_labels(r#"{"items": 5}"#).unwrap_err().to_string();
+    assert!(
+        shape.contains("did not match") && shape.contains("sequence"),
+        "{shape}"
+    );
 }

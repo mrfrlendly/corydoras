@@ -12,7 +12,7 @@ function mockDesktop(seed) {
   const label = {
     name: 'Socket head screws', brand: 'Sample Hardware', part_number: 'SH-306',
     colour: 'Blue', category: 'Fasteners', dimensions: 'M3 × 6 mm', quantity: null,
-    pack_quantity: 25, notes: '', supplier: null,
+    pack_quantity: 25, notes: '', specs: [], supplier: null,
   };
   const listing = {
     title: 'Socket head screws SH-306', url: 'https://supplier.example.com/products/sh-306',
@@ -28,7 +28,8 @@ function mockDesktop(seed) {
     store([...items().filter(row => row.id !== item.id), item]);
     return item;
   };
-  window.workshopProbe = { searches: 0, failSearch: false, commands: [] };
+  // Set `labels` to a list of drafts to make a photo show several items.
+  window.workshopProbe = { searches: 0, failSearch: false, labels: null, commands: [] };
   window.__TAURI_EVENT_PLUGIN_INTERNALS__ = { unregisterListener() {} };
   window.__TAURI_INTERNALS__ = {
     transformCallback: () => 1,
@@ -72,10 +73,21 @@ function mockDesktop(seed) {
           sessionStorage.media = JSON.stringify({ ...media(), [key]: 'data:image/png;base64,' + btoa(String.fromCharCode(...raw)) });
           return save(id, draft, key);
         }
+        case 'save_inventory_batch': {
+          const bytes = new Uint8Array(args);
+          const length = new DataView(bytes.buffer).getUint32(0);
+          const { drafts } = JSON.parse(new TextDecoder().decode(bytes.subarray(4, 4 + length)));
+          const raw = bytes.slice(4 + length);
+          if (raw[0] !== 137) throw new Error('Expected PNG bytes after the item fields.');
+          const hash = new Uint8Array(await crypto.subtle.digest('SHA-256', raw));
+          const key = Array.from(hash, byte => byte.toString(16).padStart(2, '0')).join('');
+          sessionStorage.media = JSON.stringify({ ...media(), [key]: 'data:image/png;base64,' + btoa(String.fromCharCode(...raw)) });
+          return drafts.map(draft => save(undefined, draft, key));
+        }
         case 'delete_inventory': store(items().filter(row => row.id !== args.id)); return;
         case 'read_inventory_label':
           if (new Uint8Array(args)[0] !== 137) throw new Error('Expected PNG file bytes.');
-          return label;
+          return probe.labels ?? [label];
         case 'search_inventory_listings':
           probe.searches += 1;
           if (probe.failSearch) throw new Error('Supplier connection failed.');

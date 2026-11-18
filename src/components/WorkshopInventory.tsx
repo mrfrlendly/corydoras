@@ -1,9 +1,10 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Boxes, Plus, Search } from 'lucide-react';
+import { Boxes, Camera, Plus, Search } from 'lucide-react';
 import { errText } from '../api';
-import { inventoryApi, type InventoryItem } from '../inventoryApi';
+import { inventoryApi, type InventoryDraft, type InventoryItem } from '../inventoryApi';
 import { useToast } from './Toast';
 import WorkshopItemEditor from './WorkshopItemEditor';
+import WorkshopPhotoReview from './WorkshopPhotoReview';
 import { matchingItems } from './workshopForm';
 import WorkshopInventoryTable from './WorkshopInventoryTable';
 import { defaultListSort, nextListSort, parseListSort, sortItems, type ListSort } from './workshopList';
@@ -23,6 +24,7 @@ export default function WorkshopInventory() {
   const [error, setError] = useState('');
   const [retry, setRetry] = useState(0);
   const [editor, setEditor] = useState<InventoryItem | 'new' | null>(null);
+  const [review, setReview] = useState<{ file: File; drafts: InventoryDraft[] } | 'new' | null>(null);
   const [query, setQuery] = useState('');
   const [category, setCategory] = useState('');
   const [sort, setSort] = useState(readSort);
@@ -52,13 +54,13 @@ export default function WorkshopInventory() {
   }, [sort]);
 
   useLayoutEffect(() => {
-    if (editor !== null || focusAfterClose.current === undefined) return;
+    if (editor !== null || review !== null || focusAfterClose.current === undefined) return;
     const id = focusAfterClose.current;
     focusAfterClose.current = undefined;
     const button = Array.from(list.current?.querySelectorAll<HTMLButtonElement>('button[data-item-id]') ?? [])
       .find(node => node.dataset.itemId === id);
     (button ?? addButton.current)?.focus();
-  }, [editor]);
+  }, [editor, review]);
 
   function closeEditor(focusId: string | null) {
     focusAfterClose.current = focusId;
@@ -73,6 +75,15 @@ export default function WorkshopInventory() {
     toast.info('Item saved.');
   }
 
+  function savedMany(saved: InventoryItem[]) {
+    setItems(previous => [...saved, ...previous.filter(other => !saved.some(item => item.id === other.id))]);
+    setQuery('');
+    setCategory('');
+    focusAfterClose.current = null;
+    setReview(null);
+    toast.info(saved.length === 1 ? 'Item saved.' : `${saved.length} items saved.`);
+  }
+
   function removed(id: string) {
     setItems(previous => previous.filter(item => item.id !== id));
     closeEditor(null);
@@ -85,15 +96,22 @@ export default function WorkshopInventory() {
         <div className="lang-title">
           <h1>Workshop inventory</h1>
         </div>
-        {!editor && <button className="btn primary" ref={addButton} disabled={loading || !!error}
-          onClick={() => { returnTo.current = null; setEditor('new'); }}>
-          <Plus size={15} aria-hidden="true" /> Add item
-        </button>}
+        {!editor && !review && <div className="row">
+          <button className="btn" disabled={loading || !!error} onClick={() => setReview('new')}>
+            <Camera size={15} aria-hidden="true" /> Add from photo
+          </button>
+          <button className="btn primary" ref={addButton} disabled={loading || !!error}
+            onClick={() => { returnTo.current = null; setEditor('new'); }}>
+            <Plus size={15} aria-hidden="true" /> Add item
+          </button>
+        </div>}
       </header>
       <div className="settings-body workshop-body">
-        {editor ? <WorkshopItemEditor key={editor === 'new' ? 'new' : editor.id}
+        {review ? <WorkshopPhotoReview categories={categories} initial={review === 'new' ? null : review}
+          onCancel={() => { focusAfterClose.current = null; setReview(null); }} onSaved={savedMany} /> : editor ? <WorkshopItemEditor key={editor === 'new' ? 'new' : editor.id}
           item={editor === 'new' ? null : editor} categories={categories}
-          onCancel={() => closeEditor(returnTo.current)} onSaved={saved} onRemoved={removed} /> : (
+          onCancel={() => closeEditor(returnTo.current)} onSaved={saved} onRemoved={removed}
+          onReviewMany={(file, drafts) => { setEditor(null); setReview({ file, drafts }); }} /> : (
           <>
             {loading && <p role="status">Loading inventory…</p>}
             {error && <div className="panel"><p className="error-text" role="alert">{error}</p>

@@ -170,6 +170,88 @@ async function labelWithoutLookup(page) {
   await expect(button(page, 'Socket head screws')).toHaveCount(0);
 }
 
+const spec = (role, value, unit, source, evidence) => ({ role, name: '', value, unit, tolerance: '', source, evidence });
+const draft = (name, pack, specs) => ({
+  name, brand: 'Sample Hardware', part_number: '', colour: '', category: 'Fasteners', dimensions: '',
+  quantity: null, pack_quantity: pack, notes: '', specs, supplier: null,
+});
+const readCount = page => page.evaluate(() => window.workshopProbe.commands.filter(c => c === 'read_inventory_label').length);
+const cards = page => page.getByRole('region', { name: /^Item \d/ });
+
+async function multiItemFlow(page) {
+  await page.evaluate(([a, b, c]) => { window.workshopProbe.labels = [a, b, c]; }, [
+    draft('M3 heat-set insert', 50, [
+      spec('thread', 'M3', '', 'notation', 'M3x5.7'), spec('length', '5.7', 'mm', 'notation', 'M3x5.7'),
+      spec('pitch', '0.5', 'mm', 'standard', 'ISO 261 coarse pitch, M3')]),
+    draft('M4 heat-set insert', 40, [spec('thread', 'M4', '', 'notation', 'M4x8')]),
+    draft('Spare label row', null, []),
+  ]);
+  await button(page, 'Add from photo').click();
+  await page.getByLabel('Choose label photo').setInputFiles(fixture('blue'));
+  await expect(cards(page)).toHaveCount(3);
+  const first = page.getByRole('region', { name: 'Item 1' });
+  const third = page.getByRole('region', { name: 'Item 3' });
+  await expect(first.getByLabel('Item name')).toHaveValue('M3 heat-set insert');
+  await expect(first.getByText('Printed, role read from notation').first()).toBeVisible();
+  await expect(first.getByText('Standard, not measured')).toBeVisible();
+  await expect(first.getByLabel('Dimensions')).not.toBeEditable();
+  await expect(first.getByLabel('Dimensions')).toHaveValue('M3 thread; length 5.7 mm; pitch 0.5 mm');
+  await expect(first.getByLabel('Quantity on hand')).toHaveValue('');
+  await first.getByRole('button', { name: 'Add spec' }).click();
+  await first.getByLabel('Spec 4 role').selectOption('hole_diameter');
+  await first.getByLabel('Spec 4 value').fill('4.2');
+  await first.getByLabel('Spec 4 unit').selectOption('mm');
+  await expect(first.getByText('Entered', { exact: true })).toBeVisible();
+  await expect(first.getByLabel('Dimensions')).toHaveValue(/hole diameter 4\.2 mm$/);
+  await first.getByRole('button', { name: 'I bought one pack' }).click();
+  await expect(first.getByLabel('Quantity on hand')).toHaveValue('50');
+  await expect(third.getByRole('button', { name: 'I bought one pack' })).toBeDisabled();
+  if (process.env.WORKSHOP_SCREENSHOTS) {
+    await mkdir(process.env.WORKSHOP_SCREENSHOTS, { recursive: true });
+    await page.screenshot({ path: resolve(process.env.WORKSHOP_SCREENSHOTS, 'photo-review.png'), fullPage: true });
+  }
+  await third.getByRole('button', { name: 'Discard' }).click();
+  await expect(cards(page)).toHaveCount(2);
+  await button(page, 'Cancel').click();
+  await expect(page.getByText('Discard the 2 unsaved items from this photo?')).toBeVisible();
+  await button(page, 'Keep reviewing').click();
+  await expect(page.getByText('Discard the 2 unsaved items from this photo?')).toHaveCount(0);
+  await button(page, 'Save 2 items').click();
+  await expect(button(page, 'M3 heat-set insert')).toBeVisible();
+  await expect(button(page, 'M4 heat-set insert')).toBeVisible();
+  assert.equal(await page.evaluate(() => window.workshopProbe.commands.filter(c => c === 'save_inventory_batch').length), 1);
+  const stored = await page.evaluate(() => JSON.parse(sessionStorage.inventory).filter(r => r.name.endsWith('heat-set insert')));
+  assert.equal(stored.length, 2);
+  assert.equal(stored[0].photo_key, stored[1].photo_key);
+  await button(page, 'M3 heat-set insert').click();
+  await expect(page.getByLabel('Dimensions')).not.toBeEditable();
+  await expect(page.getByLabel('Spec 4 value')).toHaveValue('4.2');
+  await expect(page.getByLabel('Quantity on hand')).toHaveValue('50');
+  await button(page, 'Cancel').click();
+  await page.evaluate(() => { window.workshopProbe.labels = null; });
+}
+
+async function handoffFlow(page) {
+  await page.evaluate(() => {
+    const spec = { role: 'thread', name: '', value: 'M3', unit: '', tolerance: '', source: 'label', evidence: 'M3' };
+    const row = name => ({ name, brand: '', part_number: '', colour: '', category: 'Fasteners', dimensions: '', quantity: null, pack_quantity: 10, notes: '', specs: [spec], supplier: null });
+    window.workshopProbe.labels = [row('M3 nut'), row('M3 washer')];
+  });
+  const before = await readCount(page);
+  await button(page, 'Add item').click();
+  await page.getByLabel('Choose label photo').setInputFiles(fixture('blue'));
+  await expect(page.getByText('This photo shows 2 items.')).toBeVisible();
+  await button(page, 'Open them in the review list').click();
+  await expect(page.getByRole('heading', { name: 'Add from photo' })).toBeVisible();
+  await expect(cards(page)).toHaveCount(2);
+  assert.equal(await readCount(page), before + 1);
+  await button(page, 'Cancel').click();
+  await button(page, 'Discard items').click();
+  await expect(page.getByRole('heading', { name: 'Workshop inventory' })).toBeVisible();
+  await expect(button(page, 'M3 nut')).toHaveCount(0);
+  await page.evaluate(() => { window.workshopProbe.labels = null; });
+}
+
 async function photoFlow(page) {
   await button(page, 'Add item').click();
   await page.evaluate(() => { window.workshopProbe.failSearch = true; });
@@ -211,6 +293,8 @@ async function smoke() {
     await attachmentFlow(page);
     assert.equal(await page.evaluate(() => window.workshopProbe.searches), 0);
     await labelWithoutLookup(page);
+    await multiItemFlow(page);
+    await handoffFlow(page);
     await photoFlow(page);
     await enableWorkshop(page, false);
     await page.reload();

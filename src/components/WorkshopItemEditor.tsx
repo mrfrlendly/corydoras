@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { Camera, Trash2 } from 'lucide-react';
 import { errText } from '../api';
-import { inventoryApi, type InventoryItem } from '../inventoryApi';
+import { inventoryApi, type InventoryDraft, type InventoryItem } from '../inventoryApi';
 import { useConfirmRow } from './useConfirmRow';
+import WorkshopSpecsTable from './WorkshopSpecsTable';
 import WorkshopSupplier, { type SearchState } from './WorkshopSupplier';
-import { blankForm, editForm, LABEL_CATEGORIES, reviewLabel, saveDraft, validateItemPhoto, type WorkshopForm } from './workshopForm';
+import { blankForm, editForm, LABEL_CATEGORIES, reviewLabel, saveDraft, specSummary, validateItemPhoto, type WorkshopForm } from './workshopForm';
 import './workshopPhotoEditor.css';
 
 interface Props {
@@ -13,6 +14,8 @@ interface Props {
   onSaved: (item: InventoryItem) => void;
   onRemoved: (id: string) => void;
   onCancel: () => void;
+  /** A photo that shows several items goes to the review list with the drafts already read. */
+  onReviewMany: (file: File, drafts: InventoryDraft[]) => void;
 }
 
 const identifierFields = new Set(['name', 'brand', 'part_number']);
@@ -61,7 +64,7 @@ function usePhotoPreview(key: string | null, change: PhotoChange) {
   return preview;
 }
 
-export default function WorkshopItemEditor({ item, categories, onSaved, onRemoved, onCancel }: Props) {
+export default function WorkshopItemEditor({ item, categories, onSaved, onRemoved, onCancel, onReviewMany }: Props) {
   const [form, setForm] = useState<WorkshopForm>(() => item ? editForm(item) : blankForm());
   const [busy, setBusy] = useState<'idle' | 'attach' | 'photo' | 'save' | 'delete'>('idle');
   const [autoSearch, setAutoSearch] = useState(true);
@@ -70,6 +73,7 @@ export default function WorkshopItemEditor({ item, categories, onSaved, onRemove
   const [photoChange, setPhotoChange] = useState<PhotoChange>(undefined);
   const [labelFile, setLabelFile] = useState<File | null>(null);
   const [labelRead, setLabelRead] = useState(false);
+  const [many, setMany] = useState<{ file: File; drafts: InventoryDraft[] } | null>(null);
   const preview = usePhotoPreview(item?.photo_key ?? null, photoChange);
   const hasPhoto = photoChange === 'remove' ? false : Boolean(photoChange || item?.photo_key);
   const [photoError, setPhotoError] = useState('');
@@ -123,9 +127,13 @@ export default function WorkshopItemEditor({ item, categories, onSaved, onRemove
       setLabelFile(file);
       searchRequest.current += 1;
       setSearchState({ status: 'idle' });
-      const [label] = await inventoryApi.readLabels(file);
+      const labels = await inventoryApi.readLabels(file);
       if (!mounted.current) return;
-      const reviewed = reviewLabel(form, label);
+      if (labels.length > 1) {
+        setMany({ file, drafts: labels });
+        return;
+      }
+      const reviewed = reviewLabel(form, labels[0]);
       setForm(reviewed);
       setLabelRead(true);
       if (autoSearch && (reviewed.name.trim() || reviewed.part_number.trim())) void search(reviewed);
@@ -197,6 +205,10 @@ export default function WorkshopItemEditor({ item, categories, onSaved, onRemove
       </div>}
       {busy === 'photo' && <p className="small" role="status">Label analysis in progress…</p>}
       {photoError && <p className="small error-text" role="alert">{photoError}</p>}
+      {many && <div className="workshop-many" role="status">
+        <p className="small">This photo shows {many.drafts.length} items.</p>
+        <button type="button" className="btn small primary" onClick={() => onReviewMany(many.file, many.drafts)}>Open them in the review list</button>
+      </div>}
       {labelRead && <p className="small selectable" role="status">Review the values from {labelFile?.name}. Enter the quantity on hand.</p>}
     </section>
     <fieldset disabled={busy !== 'idle'} className="workshop-fields">
@@ -206,7 +218,10 @@ export default function WorkshopItemEditor({ item, categories, onSaved, onRemove
           {fields.map(([key, title, max, placeholder]) => <label key={key} className="field">
             <span>{title}</span>
             <input required={key === 'name'} list={key === 'category' ? 'workshop-category-options' : undefined}
-              maxLength={max} placeholder={placeholder} value={form[key]} onChange={e => update(key, e.target.value)} />
+              maxLength={max} placeholder={placeholder} onChange={e => update(key, e.target.value)}
+              readOnly={key === 'dimensions' && form.specs.length > 0}
+              value={key === 'dimensions' && form.specs.length > 0 ? specSummary(form.specs) : form[key]} />
+            {key === 'dimensions' && form.specs.length > 0 && <span className="small muted">Generated from the specs below.</span>}
           </label>)}
           <datalist id="workshop-category-options">{options.map(option => <option key={option} value={option} />)}</datalist>
           {([['quantity', 'Quantity on hand'], ['pack_quantity', 'Quantity per pack']] as const).map(([key, title]) =>
@@ -217,6 +232,8 @@ export default function WorkshopItemEditor({ item, categories, onSaved, onRemove
           <label className="field workshop-wide"><span>Notes</span><textarea rows={2} maxLength={8192} value={form.notes}
             onChange={e => update('notes', e.target.value)} /></label>
         </div>
+        <WorkshopSpecsTable specs={form.specs} disabled={busy !== 'idle'} label={form.name || 'this item'}
+          onChange={specs => setForm(previous => ({ ...previous, specs, dimensions: specs.length ? specSummary(specs) : previous.dimensions }))} />
       </section>
       <WorkshopSupplier selected={form.supplier} query={query} canSearch={!!(form.name.trim() || form.part_number.trim())}
         manual={manualLink} setManual={setManualLink} state={searchState}

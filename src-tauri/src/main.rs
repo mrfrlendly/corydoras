@@ -1229,6 +1229,7 @@ fn main() {
             inventory::list_inventory,
             inventory::save_inventory,
             inventory::save_inventory_photo,
+            inventory::save_inventory_batch,
             inventory::get_inventory_photo,
             inventory::delete_inventory,
             inventory::read_inventory_label,

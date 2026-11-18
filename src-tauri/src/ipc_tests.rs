@@ -129,6 +129,7 @@ fn app_with(lib: Arc<Library>) -> tauri::App<MockRuntime> {
             inventory::list_inventory,
             inventory::save_inventory,
             inventory::save_inventory_photo,
+            inventory::save_inventory_batch,
             inventory::get_inventory_photo,
             inventory::delete_inventory,
             inventory::read_inventory_label,
@@ -208,6 +209,7 @@ fn commands_take_what_the_frontend_sends() {
     assert_eq!(cmd("list_inventory", json!({})).unwrap(), json!([]));
 
     inventory_photo::reviewed_record(&w, &lib);
+    inventory_photo::batch_record(&w, &lib);
 
     let lang = lib.create_language("Soft shell", "").unwrap();
     assert_eq!(lib.save_manual_spec(&lang.id, &spec([2.0, 4.0]), "test").unwrap(), 1);

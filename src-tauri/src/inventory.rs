@@ -67,8 +67,14 @@ struct PhotoForm {
     draft: InventoryDraft,
 }
 
-fn unpack_photo(bytes: &[u8]) -> CmdResult<(PhotoForm, &[u8])> {
-    const MAX_FORM: usize = 128 * 1024;
+#[derive(serde::Deserialize)]
+struct BatchForm {
+    drafts: Vec<InventoryDraft>,
+}
+
+// One request carries the fields and the photo: a 4-byte length, the JSON, then the photo bytes.
+fn unpack_frame<T: serde::de::DeserializeOwned>(bytes: &[u8]) -> CmdResult<(T, &[u8])> {
+    const MAX_FORM: usize = 512 * 1024;
     let header = bytes.get(..4).ok_or("Missing photo metadata.")?;
     let size = u32::from_be_bytes(header.try_into().expect("four bytes")) as usize;
     if size > MAX_FORM || size > bytes.len() - 4 {
@@ -82,6 +88,9 @@ fn unpack_photo(bytes: &[u8]) -> CmdResult<(PhotoForm, &[u8])> {
     Ok((form, photo))
 }
 
+// One photo is decoded and saved at a time.
+static DECODER: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(1);
+
 #[tauri::command]
 pub(super) async fn save_inventory_photo(
     state: State<'_, AppState>,
@@ -91,8 +100,7 @@ pub(super) async fn save_inventory_photo(
     let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else {
         return Err("Select an item photo.".into());
     };
-    let (form, photo) = unpack_photo(bytes)?;
-    static DECODER: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(1);
+    let (form, photo): (PhotoForm, _) = unpack_frame(bytes)?;
     let slot = DECODER
         .try_acquire()
         .map_err(|_| "Wait for the current photo to finish.")?;
@@ -104,6 +112,30 @@ pub(super) async fn save_inventory_photo(
             &form.draft,
             InventoryPhotoChange::Replace(&data),
         )
+    })
+    .await
+    .map_err(e2s)?
+    .map_err(e2s)
+}
+
+/// Save the reviewed items of one label photo together. All of them share the photo.
+#[tauri::command]
+pub(super) async fn save_inventory_batch(
+    state: State<'_, AppState>,
+    request: tauri::ipc::Request<'_>,
+) -> CmdResult<Vec<InventoryItem>> {
+    let library = enabled_library(&state)?;
+    let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else {
+        return Err("Select the label photo.".into());
+    };
+    let (form, photo): (BatchForm, _) = unpack_frame(bytes)?;
+    let slot = DECODER
+        .try_acquire()
+        .map_err(|_| "Wait for the current photo to finish.")?;
+    let data = photo.to_vec();
+    tauri::async_runtime::spawn_blocking(move || {
+        let _slot = slot;
+        library.save_inventory_batch(&form.drafts, &data)
     })
     .await
     .map_err(e2s)?

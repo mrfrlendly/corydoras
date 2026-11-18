@@ -108,3 +108,48 @@ fn established_legacy_rows_gain_nullable_media_and_unknown_colour() -> Result<()
     assert_eq!(rows[0].draft.pack_quantity, Some(25));
     Ok(())
 }
+
+#[test]
+fn a_batch_shares_one_photo() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let lib = Library::open(dir.path())?;
+    let bytes = png([9, 50, 80]);
+    let items = lib.save_inventory_batch(&[draft("A"), draft("B"), draft("C")], &bytes)?;
+    assert_eq!(items.len(), 3);
+    let key = items[0].photo_key.clone().expect("a photo key");
+    assert!(items.iter().all(|i| i.photo_key.as_deref() == Some(key.as_str())));
+    assert_eq!(lib.list_inventory()?.len(), 3);
+    // One stored photo serves all three rows: it goes only with the last reference.
+    lib.delete_inventory(&items[0].id)?;
+    lib.delete_inventory(&items[1].id)?;
+    assert!(lib.inventory_photo(&key, false).is_ok());
+    lib.delete_inventory(&items[2].id)?;
+    assert!(lib.inventory_photo(&key, false).is_err());
+    Ok(())
+}
+
+#[test]
+fn a_batch_with_a_bad_draft_saves_nothing() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let lib = Library::open(dir.path())?;
+    let error = lib
+        .save_inventory_batch(&[draft("A"), draft(""), draft("C")], &png([9, 50, 80]))
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("Item 2"), "{error}");
+    assert!(lib.list_inventory()?.is_empty());
+    Ok(())
+}
+
+#[test]
+fn a_batch_is_limited() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let lib = Library::open(dir.path())?;
+    let bytes = png([9, 50, 80]);
+    assert!(lib.save_inventory_batch(&[], &bytes).is_err());
+    let many: Vec<_> = (0..41).map(|i| draft(&format!("Item {i}"))).collect();
+    assert!(lib.save_inventory_batch(&many, &bytes).is_err());
+    assert!(lib.save_inventory_batch(&many[..40], &bytes)?.len() == 40);
+    assert!(lib.save_inventory_batch(&[draft("A")], b"not a photo").is_err());
+    Ok(())
+}

@@ -162,3 +162,19 @@ pub(super) fn reviewed_record(w: &WebviewWindow<MockRuntime>, library: &Library)
     )
     .is_err());
 }
+
+pub(super) fn batch_record(w: &WebviewWindow<MockRuntime>, library: &Library) {
+    let png = base64::engine::general_purpose::STANDARD.decode(PNG).unwrap();
+    let before = library.list_inventory().unwrap().len();
+    let drafts = json!({"drafts":[{"name":"M3 insert"},{"name":"M4 insert"}]});
+    let metadata = serde_json::to_vec(&drafts).unwrap();
+    let frame = [(metadata.len() as u32).to_be_bytes().as_slice(), &metadata, &png].concat();
+    let saved = send(w, "save_inventory_batch", InvokeBody::Raw(frame), Default::default()).unwrap();
+    assert_eq!(saved.as_array().map(Vec::len), Some(2));
+    assert_eq!(saved[0]["photo_key"], saved[1]["photo_key"]);
+    assert_eq!(library.list_inventory().unwrap().len(), before + 2);
+    for raw in [vec![], vec![255, 255, 255, 255], vec![0, 0, 0, 2, b'{', b'}']] {
+        assert!(send(w, "save_inventory_batch", InvokeBody::Raw(raw), Default::default()).is_err());
+    }
+    assert_eq!(library.list_inventory().unwrap().len(), before + 2);
+}

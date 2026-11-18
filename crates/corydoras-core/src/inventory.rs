@@ -12,6 +12,8 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 const SHORT_FIELD_LIMIT: usize = 512;
+/// The most items one photo may add at once.
+pub const MAX_BATCH: usize = 40;
 // The desktop form sends JSON numbers through JavaScript.
 const MAX_QUANTITY: i64 = (1 << 53) - 1;
 
@@ -200,7 +202,11 @@ pub(crate) fn inventory_row(row: &Row<'_>) -> rusqlite::Result<InventoryItem> {
             pack_quantity: row.get(7)?,
             notes: row.get(8)?,
             specs: serde_json::from_str(&row.get::<_, String>(14)?).map_err(|e| {
-                rusqlite::Error::FromSqlConversionFailure(14, rusqlite::types::Type::Text, Box::new(e))
+                rusqlite::Error::FromSqlConversionFailure(
+                    14,
+                    rusqlite::types::Type::Text,
+                    Box::new(e),
+                )
             })?,
             supplier,
         },
@@ -315,6 +321,67 @@ impl Library {
             draft,
             photo_key,
         })
+    }
+
+    /// Save new items that came from one photo. All of them share the stored photo, and either
+    /// every item is saved or none is. A draft that fails names its place in the list.
+    pub fn save_inventory_batch(
+        &self,
+        drafts: &[InventoryDraft],
+        photo: &[u8],
+    ) -> Result<Vec<InventoryItem>> {
+        ensure!(
+            (1..=MAX_BATCH).contains(&drafts.len()),
+            "Save between 1 and {MAX_BATCH} items at a time."
+        );
+        let drafts = drafts
+            .iter()
+            .enumerate()
+            .map(|(i, draft)| {
+                draft
+                    .normalized()
+                    .map_err(|e| anyhow!("Item {}: {e}", i + 1))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let photo = prepare_photo(photo)?;
+        let mut conn = self.c();
+        let tx = conn.transaction()?;
+        store_photo(&tx, &photo)?;
+        let mut items = Vec::with_capacity(drafts.len());
+        for draft in drafts {
+            let id = Uuid::new_v4().to_string();
+            let listing = draft.supplier.as_ref();
+            tx.execute(
+                "INSERT INTO workshop_inventory (id,name,category,brand,part_number,dimensions,
+                     quantity,pack_quantity,notes,supplier_url,supplier_title,supplier_details,
+                     colour,photo_key,specs)
+                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15)",
+                params![
+                    id,
+                    draft.name,
+                    draft.category,
+                    draft.brand,
+                    draft.part_number,
+                    draft.dimensions,
+                    draft.quantity,
+                    draft.pack_quantity,
+                    draft.notes,
+                    listing.map(|s| s.url.as_str()),
+                    listing.map_or("", |s| &s.title),
+                    listing.map_or("", |s| &s.details),
+                    draft.colour,
+                    photo.key,
+                    serde_json::to_string(&draft.specs)?,
+                ],
+            )?;
+            items.push(InventoryItem {
+                id,
+                photo_key: Some(photo.key.clone()),
+                draft,
+            });
+        }
+        tx.commit()?;
+        Ok(items)
     }
 
     pub fn delete_inventory(&self, id: &str) -> Result<()> {

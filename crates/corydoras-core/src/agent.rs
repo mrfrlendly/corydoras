@@ -10,8 +10,8 @@ use serde_json::{json, Value};
 pub const WORKSHOP_CHECK: &str = "\
 Use the Workshop inventory in this Corydoras library to confirm stock before you select parts, materials, or tools.\n\n\
 1. Call `search_workshop_inventory` with the part name, size, or other identifiers.\n\
-2. Call `get_workshop_item` with the exact item ID. Set `required_quantity` to the number of whole items that you need.\n\
-3. Check the recorded dimensions and colour when they affect fit or finish.\n\
+2. Call `get_workshop_item` with the exact item ID. Set `required_quantity` to the number of whole items that you need. For hardware sold in packs, one item is one piece.\n\
+3. Check the recorded specs and colour when they affect fit or finish. A `standard` spec is a table value that is not measured, and a `notation` spec has printed digits whose role is a convention.\n\
 4. Cite the item ID, quantity required, and quantity on hand in the design or bill of materials.\n\n\
 Report whether the last recorded count meets the requirement. Report any shortage.\n\
 If the module is off, the count is unknown, or no item matches, report availability as unconfirmed.\n\

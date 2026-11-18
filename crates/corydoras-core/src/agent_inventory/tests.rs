@@ -209,3 +209,46 @@ fn spool_quantity_counts_whole_inventory_items() -> Result<()> {
     assert_eq!(detail["quantity_check"]["status"], "insufficient");
     Ok(())
 }
+
+fn typed_spec(role: crate::inventory_specs::SpecRole, value: &str, unit: &str, source: crate::inventory_specs::SpecSource) -> crate::inventory_specs::Spec {
+    crate::inventory_specs::Spec {
+        role,
+        name: String::new(),
+        value: value.into(),
+        unit: unit.into(),
+        tolerance: String::new(),
+        source,
+        evidence: "printed".into(),
+    }
+}
+
+#[test]
+fn search_and_item_return_specs_with_sources() -> Result<()> {
+    use crate::inventory_specs::{SpecRole::*, SpecSource::*};
+    let (_dir, lib, _) = fixture()?;
+    let saved = lib.save_inventory(
+        None,
+        &InventoryDraft {
+            name: "Heat-set insert".into(),
+            specs: vec![typed_spec(Thread, "M3", "", Label), typed_spec(HoleDiameter, "4.2", "mm", Entered)],
+            ..InventoryDraft::default()
+        },
+    )?;
+    let found = search(&lib, "heat-set insert", 5, 0)?;
+    let specs = &found["items"][0]["specs"];
+    assert_eq!((specs[0]["source"].as_str(), specs[1]["source"].as_str()), (Some("label"), Some("entered")));
+    assert_eq!(specs[1]["role"], "hole_diameter");
+    assert_eq!(found["items"][0]["dimensions"], "M3 thread; hole diameter 4.2 mm");
+    let detail = item(&lib, &saved.id, None)?;
+    assert_eq!(detail["item"]["specs"], *specs);
+    Ok(())
+}
+
+#[test]
+fn an_older_library_returns_empty_specs_without_a_write() -> Result<()> {
+    let (_dir, lib, _) = fixture()?;
+    lib.c().execute_batch("ALTER TABLE workshop_inventory DROP COLUMN specs; PRAGMA query_only=ON")?;
+    assert_eq!(search(&lib, "m3", 1, 0)?["items"][0]["specs"], json!([]));
+    assert_eq!(item(&lib, IMPORT_ID, None)?["item"]["specs"], json!([]));
+    Ok(())
+}

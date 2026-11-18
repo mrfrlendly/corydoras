@@ -1,5 +1,6 @@
 //! Read-only access to the workshop stock that the current library records.
 //! The `item` unit counts whole instances of the exact inventory item. For a spool, one item means one spool.
+//! For hardware sold in packs, one item is one piece; `pack_quantity` says how many pieces a pack held.
 use crate::inventory::{inventory_enabled, inventory_row, InventoryItem};
 use crate::Library;
 use anyhow::{ensure, Result};
@@ -43,7 +44,8 @@ fn summary(record: &InventoryItem) -> Value {
     json!({
         "id": record.id, "name": draft.name, "category": draft.category,
         "brand": draft.brand, "part_number": draft.part_number, "colour": draft.colour,
-        "dimensions": draft.dimensions, "quantity": draft.quantity, "quantity_unit": "item",
+        "dimensions": draft.dimensions, "specs": draft.specs,
+        "quantity": draft.quantity, "quantity_unit": "item",
         "pack_quantity": draft.pack_quantity,
         "stock_state": stock_state, "has_photo": record.photo_key.is_some()
     })

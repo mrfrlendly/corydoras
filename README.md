@@ -122,7 +122,7 @@ Design agents use this inventory to confirm parts, materials, and tools. The MCP
 3. Check the dimensions and colour for the selected variant. Use `include_photo` to view its thumbnail when necessary.
 4. Cite the item ID, the required quantity, and the recorded quantity on hand in the design.
 
-The comparison uses the last recorded count of whole items. For filament, this means spools. It cannot confirm the remaining mass of filament, length of tape, or contents of a kit. A lower count indicates a shortage. An unknown count or a missing match leaves availability unconfirmed. Supplier listings and package counts do not confirm stock. When the module is off, the tools return `disabled` and withhold inventory records.
+The comparison uses the last recorded count of whole items. For filament, this means spools. For hardware sold in packs, one item is one piece. It cannot confirm the remaining mass of filament, length of tape, or contents of a kit. A lower count indicates a shortage. An unknown count or a missing match leaves availability unconfirmed. Supplier listings and package counts do not confirm stock. When the module is off, the tools return `disabled` and withhold inventory records.
 
 ## Screen capture
 

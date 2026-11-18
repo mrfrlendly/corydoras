@@ -37,11 +37,12 @@ fn serve_label(listener: TcpListener) {
         .as_str()
         .unwrap();
     assert!(image.starts_with("data:image/jpeg;base64,"));
-    let label = json!({
-        "label_text":"Fixture Tools F-08 Blue Hex key 8 mm 2 pcs",
-        "name":"Hex key", "category":"Tools", "brand":"Fixture Tools", "part_number":"F-08",
-        "colour":"Blue","dimensions":["8 mm"], "pack_quantity":2, "pack_evidence":"2 pcs", "notes":[]
-    });
+    let label = json!({"shared_text":"", "items":[{
+        "row_text":"Fixture Tools F-08 Blue Hex key 8 mm 2 pcs",
+        "name":"Hex key", "category":"Tools", "product_type":"other", "brand":"Fixture Tools", "part_number":"F-08",
+        "colour":"Blue", "pack_quantity":2, "pack_evidence":"2 pcs", "notes":[],
+        "specs":[{"role":"length","value":"8","unit":"mm","basis":"stated","evidence":"8 mm"}]
+    }]});
     let reply = json!({
         "choices":[{"message":{"content":label.to_string()},"finish_reason":"stop"}],
         "usage":{"prompt_tokens":41,"completion_tokens":17}
@@ -83,15 +84,19 @@ pub(super) fn reviewed_record(w: &WebviewWindow<MockRuntime>, library: &Library)
         Default::default(),
     );
     previous.save().unwrap();
-    let draft = result.unwrap();
+    let drafts = result.unwrap();
     server.join().unwrap();
+    assert_eq!(drafts.as_array().map(Vec::len), Some(1));
+    let draft = drafts[0].clone();
 
     let cmd = |name, args| send(w, name, InvokeBody::Json(args), Default::default()).unwrap();
     assert_eq!(cmd("list_inventory", json!({})), json!([]));
     assert_eq!(
         draft,
         json!({"name":"Hex key","category":"Tools","brand":"Fixture Tools","part_number":"F-08",
-        "colour":"Blue","dimensions":"8 mm","quantity":null,"pack_quantity":2,"notes":"","specs":[],"supplier":null})
+        "colour":"Blue","dimensions":"length 8 mm","quantity":null,"pack_quantity":2,"notes":"",
+        "specs":[{"role":"length","name":"","value":"8","unit":"mm","tolerance":"","source":"label","evidence":"8 mm"}],
+        "supplier":null})
     );
     let after = library.usage().unwrap();
     assert_eq!(

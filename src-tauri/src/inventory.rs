@@ -130,7 +130,7 @@ pub(super) fn delete_inventory(state: State<'_, AppState>, id: String) -> CmdRes
 pub(super) async fn read_inventory_label(
     state: State<'_, AppState>,
     request: tauri::ipc::Request<'_>,
-) -> CmdResult<InventoryDraft> {
+) -> CmdResult<Vec<InventoryDraft>> {
     let library = enabled_library(&state)?;
     let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else {
         return Err("Select a label photo.".into());
@@ -144,7 +144,7 @@ pub(super) async fn read_inventory_label(
         .map_err(|_| "Wait for the current label to finish.")?;
     let settings = library.settings().map_err(e2s)?;
     let cfg = AiConfig::effective(AppConfig::load().ai.as_ref(), &settings);
-    inventory_label::read_label(&library, &cfg, bytes)
+    inventory_label::read_labels(&library, &cfg, bytes)
         .await
         .map_err(e2s)
 }

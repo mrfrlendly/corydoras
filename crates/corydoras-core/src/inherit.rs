@@ -471,6 +471,23 @@ mod tests {
     }
 
     #[test]
+    fn midjourney_prompt_patch() {
+        // A language that extends a base changes one Midjourney prompt: the change is one override.
+        let base = crate::spec::tests::sample_mj();
+        let mut target = base.clone();
+        target["prompts"]["midjourney"]["families"]["blade-field"] = json!("thin blades");
+        let patch = diff_patch(&base, &target);
+        assert_eq!(patch.len(), 1);
+        assert_eq!(patch[0]["path"], "/prompts/midjourney/families/blade-field");
+        let (out, _) = apply_patch(&base, &Value::Array(patch)).unwrap();
+        assert_eq!(out, target);
+        // A base made before the prompt existed: the whole prompt is one added value.
+        let patch = diff_patch(&sample(), &base);
+        assert_eq!(patch[0]["op"], "add");
+        assert_eq!(patch[0]["path"], "/prompts/midjourney");
+    }
+
+    #[test]
     fn derived_language_follows_its_base() {
         let dir = tempfile::tempdir().unwrap();
         let lib = Library::open(dir.path()).unwrap();

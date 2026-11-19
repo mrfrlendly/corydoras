@@ -213,9 +213,18 @@ The extension talks to a small bridge inside the app. The bridge listens on this
 | `exceptions` | Which ID they override, scope, condition, replacement, and priority |
 | `cmf.object` / `cmf.presentation` | Product colours and materials, separate from background, light, and shadow colours |
 | `prompts` | Positive and negative fragments, plus fragments for each family |
+| `prompts.midjourney` | Prompt text for Midjourney: one for the whole language, one for each family, and one exclusion list. The document shows each as a line to paste: `[your object], <text> --no <exclusions> --raw` |
 | `extends` | Only in a language with a base: the base, its version, and each change with the value that it replaced (see [Inheritance](#inheritance)) |
 
 A process-dependent measure has no value in the language. A hard rule with the same name supplies it.
+
+### Midjourney prompt
+
+The model writes the Midjourney text in the same pass as the rest of the spec: a few short phrases for the look, with colours in words, and a short list of things to leave out. The app adds the slot `[your object]` at the start and the parameters at the end (`--no` with the exclusions, then `--raw`), so each line is ready to paste. Replace the slot with the thing to draw. The **Document** tab has a **Copy** button on each line.
+
+A language gets the prompt when the model next writes its document: click **Synthesize now**, or change a reference. A version made before this feature has none, and a hand edit, an accepted proposal or a restore does not add it; the language stays due for synthesis. A language that extends a base carries the prompt of the base until you change it.
+
+A hand edit is not repaired. When the text of a hand edit has a slot, a command or a parameter, the note at the top of the document says so.
 
 ## Versions
 

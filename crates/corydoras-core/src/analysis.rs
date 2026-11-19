@@ -110,7 +110,7 @@ pub fn prepare_item_images(
 
 /// Changes to the prompts or the schema change this value. It is part of the
 /// input fingerprint, so an upgrade makes the next synthesis run again.
-pub const PIPELINE_VERSION: &str = "3";
+pub const PIPELINE_VERSION: &str = "4";
 /// Most sources that one synthesis pass reads.
 pub const SYNTH_SOURCE_LIMIT: usize = 30;
 /// Most characters of a source text that pass 1 sends.
@@ -243,6 +243,14 @@ Evidence:
 
 Colours:
 - "cmf.object" holds product colours, materials and finishes only. Light, shadow and background colours go in "cmf.presentation". Pantone values are approximations; put them only in "pantone_approx".
+
+Midjourney:
+- "prompts.midjourney" holds prompt text for the Midjourney image tool. The app adds the object at the start and the parameters at the end. Do not write an object name, a slot or "--" parameters.
+- "language" describes the look that every family shares. Each entry in "families" (one for each family ID) is complete: it must work without "language".
+- Write a few short descriptive phrases in this order: medium (for example "product concept render"), form and surfaces, material and finish, colour, light and background. Use at most 40 words. Do not write long keyword lists.
+- Use words that an outsider understands. Name colours in words, not hex codes. Give no dimensions. Do not use the language name, a family name or a term from "definitions".
+- Take the content from this spec: product colours and finishes from "cmf.object", light and background from "cmf.presentation".
+- Say what the image shows. Put what to leave out in "no": at most 8 nouns for visible things, separated by commas (for example "chrome, visible screws"). Midjourney reads each word of "no" alone, so do not use a word that is wrong on its own.
 
 Size:
 - Keep the spec compact, so that it fits the output limit: at most 6 families, 8 measures and 6 rules for each family, 8 principles, 8 exceptions, 8 product colours and 8 items in each do and dont list. Keep each text field under 40 words.
@@ -449,6 +457,12 @@ mod tests {
         assert!(validate_tokens(&bad).is_err());
         let md = "# X\n\n## Summary\nA long enough markdown body for the check.";
         assert!(check_synth_output(&json!({"language_md": md, "tokens": good})).is_ok());
+    }
+
+    #[test]
+    fn synthesis_asks_for_midjourney() {
+        assert!(crate::spec::output_shape()["prompts"]["midjourney"]["language"].is_string());
+        assert!(SYNTH_SYSTEM.contains("\"prompts.midjourney\""));
     }
 }
 

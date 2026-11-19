@@ -265,6 +265,29 @@ pub fn semantic(a: &Value, b: &Value) -> Vec<Change> {
         push(&mut out, "Image-generation tokens", "removed", k, format!("Prompt for family {k} removed."));
     }
 
+    // Midjourney prompt. A version made before it existed has none.
+    let mj = |t: &Value, k: &str| t.pointer(&format!("/prompts/midjourney/{k}")).and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+    for (k, name, verb) in [("language", "The Midjourney prompt for the whole language", "is"), ("no", "The Midjourney exclusions", "are")] {
+        let (x, y) = (mj(a, k), mj(b, k));
+        if y.is_empty() && !x.is_empty() {
+            push(&mut out, "Midjourney prompt", "removed", k, format!("{name} {} removed.", if verb == "is" { "was" } else { "were" }));
+        } else if x != y {
+            push(&mut out, "Midjourney prompt", "changed", k, format!("{name} {verb} now: {}", quote(&y)));
+        }
+    }
+    let fam = |t: &Value| t.pointer("/prompts/midjourney/families").and_then(|v| v.as_object()).cloned().unwrap_or_default();
+    let (fa, fb) = (fam(a), fam(b));
+    for (k, v) in &fb {
+        match fa.get(k) {
+            None => push(&mut out, "Midjourney prompt", "added", k, format!("Midjourney prompt for family {k} added: {}", quote(v.as_str().unwrap_or("")))),
+            Some(old) if old != v => push(&mut out, "Midjourney prompt", "changed", k, format!("The Midjourney prompt for family {k} is now: {}", quote(v.as_str().unwrap_or("")))),
+            _ => {}
+        }
+    }
+    for k in fa.keys().filter(|k| !fb.contains_key(*k)) {
+        push(&mut out, "Midjourney prompt", "removed", k, format!("Midjourney prompt for family {k} removed."));
+    }
+
     // Do and do not, by text.
     for (k, word) in [("do", "Do"), ("dont", "Do not")] {
         let list = |t: &Value| -> Vec<String> { arr(t, k).iter().map(|d| s(d, "text").trim().to_string()).collect() };
@@ -364,6 +387,24 @@ impl Library {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn midjourney_changes_in_words() {
+        let (a, b) = (crate::spec::tests::sample(), crate::spec::tests::sample_mj());
+        assert!(semantic(&b, &b).is_empty());
+        let c = semantic(&a, &b);
+        let has = |c: &[Change], needle: &str| c.iter().any(|x| x.section == "Midjourney prompt" && x.text.contains(needle));
+        assert!(has(&c, "The Midjourney prompt for the whole language is now: “product concept render, one continuous matte shell"), "{c:#?}");
+        assert!(has(&c, "The Midjourney exclusions are now: “chrome, visible frame”"));
+        assert!(has(&c, "Midjourney prompt for family shell added: “product concept render, single soft laminated shell"));
+        let mut b2 = b.clone();
+        b2["prompts"]["midjourney"]["families"]["blade-field"] = json!("thin blades");
+        b2["prompts"]["midjourney"]["families"].as_object_mut().unwrap().remove("shell");
+        let c = semantic(&b, &b2);
+        assert!(has(&c, "The Midjourney prompt for family blade-field is now: “thin blades”"));
+        assert!(has(&c, "Midjourney prompt for family shell removed."));
+        assert!(has(&semantic(&b, &a), "The Midjourney prompt for the whole language was removed."));
+    }
 
     #[test]
     fn changes_in_words() {

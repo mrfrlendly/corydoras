@@ -45,7 +45,9 @@ The hard rules come with a print-feedback table: results of real prints. When th
 out, call log_print_result, so the next design does not repeat a failure. Call get_coverage before you rely on a family: \
 it lists what the language cannot answer yet. Call compare_versions to see what changed between two versions, for example \
 after the designer updated a language. Call export_tokens for the measures and colours as CSS variables, design tokens or \
-Grasshopper parameters. A language can extend a base language; its document is complete and says what it changes.";
+Grasshopper parameters. A language can extend a base language; its document is complete and says what it changes. \
+For concept images in Midjourney, use the \"Midjourney prompt\" section of the language document: replace [your object] \
+with the object and keep the rest of the line.";
 
 fn tools() -> Value {
     json!([
@@ -78,7 +80,7 @@ fn tools() -> Value {
         },
         {
             "name": "get_language",
-            "description": "Get a design language: the rendered document and its tokens.json. Without a version, it returns the latest version. With \"family\", it returns only that object family plus the principles, definitions, exceptions, CMF and prompts that apply to it.",
+            "description": "Get a design language: the rendered document and its tokens.json. Without a version, it returns the latest version. With \"family\", it returns only that object family plus the principles, definitions, exceptions, CMF and prompts that apply to it. The document has a \"Midjourney prompt\" section when the version has one: lines to paste, with a slot for the object.",
             "inputSchema": {
                 "type": "object",
                 "properties": {

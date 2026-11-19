@@ -1248,11 +1248,15 @@ impl Library {
         Ok(known)
     }
 
-    /// The input hash and item IDs that a manual version records.
+    /// The input hash and item IDs that a manual version records. A manual version does not bring the
+    /// document up to date with its inputs: when the latest version is behind them (the references
+    /// changed, or a newer pipeline writes more), it keeps that version's hash, so the language stays
+    /// due for synthesis.
     fn manual_version_inputs(&self, language_id: &str) -> Result<(String, Vec<String>)> {
         let inputs = self.synthesis_inputs(language_id, analysis::SYNTH_ITEM_LIMIT)?;
         let srcs = self.source_inputs(language_id, analysis::SYNTH_SOURCE_LIMIT)?;
-        let hash = analysis::input_hash(&self.get_language(language_id)?, &inputs, &srcs);
+        let today = analysis::input_hash(&self.get_language(language_id)?, &inputs, &srcs);
+        let hash = self.latest_input_hash(language_id)?.filter(|stored| *stored != today).unwrap_or(today);
         let ids: Vec<String> = inputs.iter().map(|i| i.item.id.clone()).collect();
         Ok((hash, ids))
     }
@@ -2091,6 +2095,26 @@ impl Library {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_manual_version_keeps_the_language_due() {
+        let dir = tempfile::tempdir().unwrap();
+        let lib = Library::open(dir.path()).unwrap();
+        let lang = lib.create_language("Organic", "").unwrap();
+        let spec = crate::spec::tests::sample();
+        let today = lib.manual_version_inputs(&lang.id).unwrap().0;
+
+        // The latest version is behind its inputs: an older pipeline wrote it, or the references changed.
+        // A hand edit, an accepted proposal or a restore must not hide that, or the next synthesis is skipped.
+        lib.save_spec_version(&lang.id, &spec, "model", &[], false, "an older fingerprint", &[]).unwrap();
+        lib.save_manual_spec(&lang.id, &spec, "edited by you").unwrap();
+        assert_eq!(lib.latest_input_hash(&lang.id).unwrap().as_deref(), Some("an older fingerprint"));
+
+        // A language that is up to date stays up to date after a hand edit.
+        lib.save_spec_version(&lang.id, &spec, "model", &[], false, &today, &[]).unwrap();
+        lib.save_manual_spec(&lang.id, &spec, "edited by you").unwrap();
+        assert_eq!(lib.latest_input_hash(&lang.id).unwrap(), Some(today));
+    }
 
     #[test]
     fn read_only_open_preserves_an_older_library() {

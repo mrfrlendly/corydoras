@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { type ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
 import ReactMarkdown, { Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { save as saveDialog } from '@tauri-apps/plugin-dialog';
@@ -116,7 +116,30 @@ function nodeText(node: unknown): string {
   return (n.children ?? []).map(nodeText).join('');
 }
 
+/** A fenced block with a Copy button. A Midjourney line must reach the clipboard exactly as the document shows it. */
+function CodeBlock({ node, children }: { node?: unknown; children?: ReactNode }) {
+  const toast = useToast();
+  const [copied, setCopied] = useState(false);
+  const copy = async () => {
+    if (await copyText(nodeText(node).replace(/\n$/, ''))) {
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1500);
+    } else {
+      toast.error('Copy failed.');
+    }
+  };
+  return (
+    <div className="code-block">
+      <pre>{children}</pre>
+      <button className="btn small code-copy" onClick={copy} title="Copy this line">
+        {copied ? <Check size={13} /> : <Copy size={13} />} {copied ? 'Copied' : 'Copy'}
+      </button>
+    </div>
+  );
+}
+
 const MARKDOWN: Components = {
+  pre: ({ node, children }) => <CodeBlock node={node}>{children}</CodeBlock>,
   h2: ({ node, ...p }) => <h2 id={headingId(nodeText(node))} {...p} />,
   h3: ({ node, ...p }) => <h3 id={headingId(nodeText(node))} {...p} />,
   // A link with a scheme opens in the browser; a #link jumps in the document. Any other link (a relative path)

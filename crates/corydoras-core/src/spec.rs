@@ -15,6 +15,13 @@ pub const MEASURE_BASES: &[&str] = &["observed", "preferred", "process-dependent
 pub const RULE_BASES: &[&str] = &["observed", "designer", "inferred", "source"];
 pub const PRESENTATION_ROLES: &[&str] = &["background", "light", "shadow", "surface", "other"];
 
+/// The slot at the start of a Midjourney line. The designer replaces it with the object to draw.
+pub const MIDJOURNEY_SLOT: &str = "[your object]";
+/// The parameters that the app adds to every Midjourney line. "--raw" turns off Midjourney's own styling.
+pub const MIDJOURNEY_PARAMS: &str = "--raw";
+/// A Midjourney text with more words than this gets a warning. The model is told 40.
+pub const MIDJOURNEY_WORD_WARN: usize = 60;
+
 /// The shape that the synthesis pass must return (example values).
 pub fn output_shape() -> Value {
     json!({
@@ -54,7 +61,12 @@ pub fn output_shape() -> Value {
         "prompts": {
             "positive": "Comma-separated prompt fragments.",
             "negative": "Comma-separated negative prompt fragments.",
-            "families": {"blade-field": "Prompt fragments for this family only."}
+            "families": {"blade-field": "Prompt fragments for this family only."},
+            "midjourney": {
+                "language": "Short phrases for the look that every family shares. No object name, no parameters.",
+                "no": "Comma-separated nouns to leave out.",
+                "families": {"blade-field": "A complete description for this family only."}
+            }
         },
         "do": [{"text": "", "scope": "global | family id"}],
         "dont": [{"text": "", "scope": "global | family id"}],
@@ -249,6 +261,111 @@ fn text_object(v: &mut Value, key: &str) {
     }
 }
 
+/// One line of plain text: whitespace collapsed, and no backticks, which would close the fenced block.
+fn clean_midjourney(text: &str) -> String {
+    text.replace('`', "").split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// Where the first "--" parameter starts: at the start of the text or after a space.
+fn param_start(text: &str) -> Option<usize> {
+    text.match_indices("--").map(|(i, _)| i).find(|&i| i == 0 || text[..i].ends_with(' '))
+}
+
+fn has_hex_code(text: &str) -> bool {
+    text.split('#').skip(1).any(|rest| {
+        let n = rest.chars().take_while(|c| c.is_ascii_hexdigit()).count();
+        (n == 3 || n == 6) && !rest.chars().nth(n).is_some_and(|c| c.is_alphanumeric())
+    })
+}
+
+fn strip_prefix_ci<'a>(text: &'a str, prefix: &str) -> Option<&'a str> {
+    let head = text.get(..prefix.len())?;
+    head.eq_ignore_ascii_case(prefix).then(|| text[prefix.len()..].trim_start())
+}
+
+/// Removes what the app adds itself: a command, the object slot and the parameters.
+/// Returns the text and whether more than whitespace changed.
+fn strip_midjourney(text: &str, is_no: bool) -> (String, bool) {
+    let plain = clean_midjourney(text);
+    let mut t = plain.as_str();
+    if is_no {
+        t = t.strip_prefix("--no").unwrap_or(t).trim_start();
+    } else {
+        for prefix in ["/imagine", "prompt:"] {
+            t = strip_prefix_ci(t, prefix).unwrap_or(t);
+        }
+        if let Some(end) = t.starts_with('[').then(|| t.find(']')).flatten() {
+            t = t[end + 1..].trim_start().trim_start_matches(',').trim_start();
+        }
+    }
+    if let Some(i) = param_start(t) {
+        t = &t[..i];
+    }
+    let t = t.trim_end_matches([',', '.', ';', ' ']);
+    (t.to_string(), t != plain)
+}
+
+/// The repaired text of one Midjourney field. `None` when the value is not text: validation reports it.
+fn midjourney_text(v: &Value, is_no: bool, field: &str, r: &mut Repair) -> Option<String> {
+    let raw = match v {
+        Value::String(x) => x.clone(),
+        Value::Array(a) => {
+            r.fixed.push(format!("\"{field}\" was a list"));
+            a.iter().filter_map(|x| x.as_str()).collect::<Vec<_>>().join(", ")
+        }
+        _ => return None,
+    };
+    let (text, changed) = strip_midjourney(&raw, is_no);
+    if changed {
+        r.fixed.push(format!("\"{field}\" had a command, a slot or parameters"));
+    }
+    Some(text)
+}
+
+/// "prompts.midjourney": the text that the app turns into lines to paste.
+fn repair_midjourney(p: &mut serde_json::Map<String, Value>, r: &mut Repair) {
+    match p.get("midjourney") {
+        Some(Value::Object(_)) => {}
+        Some(Value::String(text)) => {
+            let whole = json!({"language": text});
+            p.insert("midjourney".into(), whole);
+            r.fixed.push("\"prompts.midjourney\" was a string".into());
+        }
+        _ => {
+            p.remove("midjourney");
+            r.flagged.push("The model gave no Midjourney prompt.".into());
+            return;
+        }
+    }
+    let Some(Value::Object(m)) = p.get_mut("midjourney") else { return };
+    // The prompt is optional, so nothing here may become a validation error: an error costs a paid retry.
+    // A text that is missing or not text becomes empty, and validation warns about it.
+    for (k, is_no) in [("language", false), ("no", true)] {
+        let text = m.get(k).and_then(|v| midjourney_text(v, is_no, &format!("prompts.midjourney.{k}"), r)).unwrap_or_default();
+        m.insert(k.into(), json!(text));
+    }
+    match m.get_mut("families") {
+        None => {}
+        Some(Value::Object(f)) => {
+            let mut not_text: Vec<String> = Vec::new();
+            for (k, v) in f.iter_mut() {
+                match midjourney_text(v, false, &format!("prompts.midjourney.families.{k}"), r) {
+                    Some(text) => *v = json!(text),
+                    None => not_text.push(k.clone()),
+                }
+            }
+            for k in not_text {
+                f.remove(&k);
+                r.fixed.push(format!("\"prompts.midjourney.families.{k}\" was not text"));
+            }
+        }
+        Some(_) => {
+            m.remove("families");
+            r.fixed.push("\"prompts.midjourney.families\" was not an object".into());
+        }
+    }
+}
+
 fn get_i64(v: &Value) -> Option<i64> {
     match v {
         Value::Number(n) => n.as_i64().or_else(|| n.as_f64().map(|f| f.round() as i64)),
@@ -347,6 +464,7 @@ pub fn repair(t: &mut Value) -> Repair {
                     }
                 }
             }
+            repair_midjourney(p, &mut r);
         }
         _ => {
             obj.insert("prompts".into(), json!({"positive": "", "negative": ""}));
@@ -875,6 +993,67 @@ pub fn validate(t: &Value, known_items: &[String]) -> Check {
                     }
                 }
             }
+            // The Midjourney prompt is optional: versions made before it existed have none.
+            match p.get("midjourney") {
+                None | Some(Value::Null) => {}
+                Some(Value::Object(m)) => {
+                    let mut texts: Vec<(String, &str)> = Vec::new();
+                    match m.get("language") {
+                        Some(Value::String(x)) if x.trim().is_empty() => warnings.push("prompts.midjourney.language is empty.".into()),
+                        Some(Value::String(x)) => texts.push(("prompts.midjourney.language".into(), x)),
+                        _ => errors.push("\"prompts.midjourney.language\" must be a string.".into()),
+                    }
+                    match m.get("no") {
+                        None | Some(Value::Null) => {}
+                        Some(Value::String(no)) => {
+                            if param_start(&clean_midjourney(no)).is_some() {
+                                warnings.push("prompts.midjourney.no has a parameter (\"--\"). The app adds the parameters.".into());
+                            }
+                        }
+                        Some(_) => errors.push("\"prompts.midjourney.no\" must be a string.".into()),
+                    }
+                    let none = serde_json::Map::new();
+                    let fam = match m.get("families") {
+                        None | Some(Value::Null) => &none,
+                        Some(Value::Object(f)) if f.values().all(|v| v.is_string()) => f,
+                        Some(_) => {
+                            errors.push("\"prompts.midjourney.families\" must be an object of strings.".into());
+                            &none
+                        }
+                    };
+                    for k in fam.keys().filter(|k| !family_ids.contains(*k)) {
+                        warnings.push(format!("prompts.midjourney.families has \"{k}\", which is not a family ID."));
+                    }
+                    for f in arr(t, "families") {
+                        let id = s(f, "id");
+                        match fam.get(id).and_then(|v| v.as_str()).filter(|x| !x.trim().is_empty()) {
+                            Some(x) => texts.push((format!("prompts.midjourney.families.{id}"), x)),
+                            None if !id.is_empty() => warnings.push(format!("No Midjourney prompt for family {id}.")),
+                            None => {}
+                        }
+                    }
+                    // A hand edit or an accepted proposal gets no repair: say what is wrong with the line.
+                    for (where_, text) in texts {
+                        // The line is built from the cleaned text, where a line break is a space.
+                        let text = clean_midjourney(text);
+                        let text = text.as_str();
+                        if text.starts_with('[') || text.contains(MIDJOURNEY_SLOT) || ["/imagine", "prompt:"].iter().any(|p| strip_prefix_ci(text, p).is_some()) {
+                            warnings.push(format!("{where_} has a slot or a command. The app adds them."));
+                        }
+                        if param_start(text).is_some() {
+                            warnings.push(format!("{where_} has a parameter (\"--\"). The app adds the parameters."));
+                        }
+                        if has_hex_code(text) {
+                            warnings.push(format!("{where_} has a hex code. Midjourney needs colour words."));
+                        }
+                        let words = text.split_whitespace().count();
+                        if words > MIDJOURNEY_WORD_WARN {
+                            warnings.push(format!("{where_} has {words} words. Midjourney works best with at most 40."));
+                        }
+                    }
+                }
+                Some(_) => errors.push("\"prompts.midjourney\" must be an object.".into()),
+            }
         }
         _ => errors.push("\"prompts\" must have \"positive\" and \"negative\" strings.".into()),
     }
@@ -1269,6 +1448,42 @@ fn sec_prompts(t: &Value, out: &mut String, family: Option<&str>) {
     }
 }
 
+/// The line to paste into Midjourney: the object slot, the text, the exclusions, then the parameters.
+pub fn midjourney_line(text: &str, no: &str) -> String {
+    let mut line = format!("{MIDJOURNEY_SLOT}, {}", clean_midjourney(text));
+    let no = clean_midjourney(no);
+    if !no.is_empty() {
+        line.push_str(&format!(" --no {no}"));
+    }
+    line.push_str(&format!(" {MIDJOURNEY_PARAMS}"));
+    line
+}
+
+/// One line for the whole language and one for each family. With `family`, only the line of that
+/// family, or the line of the whole language when the family has none.
+fn sec_midjourney(t: &Value, out: &mut String, family: Option<&str>) {
+    let Some(m) = t.pointer("/prompts/midjourney").filter(|m| m.is_object()) else { return };
+    let text_of = |v: Option<&Value>| v.and_then(|x| x.as_str()).map(clean_midjourney).filter(|x| !x.is_empty());
+    let whole = text_of(m.get("language")).map(|text| ("**Whole language**".to_string(), text));
+    let of_family = |f: &Value| {
+        let id = s(f, "id");
+        text_of(m.get("families").and_then(|x| x.get(id))).map(|text| (format!("**{}** (`{id}`)", s(f, "name")), text))
+    };
+    let families = arr(t, "families");
+    let blocks: Vec<(String, String)> = match family {
+        Some(id) => families.iter().find(|f| s(f, "id") == id).and_then(of_family).or(whole).into_iter().collect(),
+        None => whole.into_iter().chain(families.iter().filter_map(of_family)).collect(),
+    };
+    if blocks.is_empty() {
+        return;
+    }
+    out.push_str("## Midjourney prompt\n\n");
+    out.push_str(&format!("Replace `{MIDJOURNEY_SLOT}` with the thing to draw. Keep the rest of the line as it is.\n\n"));
+    for (label, text) in blocks {
+        out.push_str(&format!("{label}\n\n```text\n{}\n```\n\n", midjourney_line(&text, s(m, "no"))));
+    }
+}
+
 fn sec_do_dont(t: &Value, out: &mut String, family: Option<&str>) {
     let pick = |k: &str| -> Vec<String> {
         arr(t, k)
@@ -1349,6 +1564,7 @@ pub fn render_markdown(name: &str, t: &Value, warnings: &[String]) -> String {
     sec_cmf(t, &mut out, None);
     sec_presentation(t, &mut out);
     sec_prompts(t, &mut out, None);
+    sec_midjourney(t, &mut out, None);
     sec_do_dont(t, &mut out, None);
     sec_refs(t, &mut out, "anti_references", "Anti-references", "lesson");
     sec_refs(t, &mut out, "key_references", "Key references", "why");
@@ -1371,6 +1587,7 @@ pub fn render_family_brief(name: &str, t: &Value, family: &str) -> Option<String
     sec_process_dependent(t, &mut out, Some(family));
     sec_cmf(t, &mut out, Some(family));
     sec_prompts(t, &mut out, Some(family));
+    sec_midjourney(t, &mut out, Some(family));
     sec_do_dont(t, &mut out, Some(family));
     sec_basis_key(&mut out);
     Some(out)
@@ -1398,6 +1615,7 @@ pub fn render_scope(name: &str, t: &Value, scope: Scope) -> String {
         Scope::Prompts => {
             let mut out = String::new();
             sec_prompts(t, &mut out, None);
+            sec_midjourney(t, &mut out, None);
             sec_presentation(t, &mut out);
             out
         }
@@ -1454,8 +1672,187 @@ pub mod tests {
         })
     }
 
+    /// The sample with a Midjourney prompt. `sample()` stays without one: versions made before the prompt existed have none.
+    pub fn sample_mj() -> Value {
+        let mut t = sample();
+        t["prompts"]["midjourney"] = json!({
+            "language": "product concept render, one continuous matte shell, soft tangent surfaces, warm white oak veneer, soft studio light, pale neutral background",
+            "no": "chrome, visible frame",
+            "families": {
+                "shell": "product concept render, single soft laminated shell, seams along the flow lines, warm white oak veneer, matte finish, soft studio light",
+                "blade-field": "product concept render, field of thin parallel blades at a constant spacing, warm white matte finish, soft studio light"
+            }
+        });
+        t
+    }
+
     fn known() -> Vec<String> {
         vec!["aaaaaaaa".into(), "bbbbbbbb".into(), "cccccccc".into()]
+    }
+
+    #[test]
+    fn midjourney_is_optional() {
+        let c = validate(&sample_mj(), &known());
+        assert!(c.errors.is_empty(), "{:?}", c.errors);
+        assert!(c.warnings.is_empty(), "{:?}", c.warnings);
+        let mut t = sample();
+        t["prompts"]["midjourney"] = Value::Null;
+        let c = validate(&t, &known());
+        assert!(c.errors.is_empty() && c.warnings.is_empty(), "{:?} {:?}", c.errors, c.warnings);
+    }
+
+    #[test]
+    fn midjourney_hard_errors() {
+        let bad = |v: Value| {
+            let mut t = sample_mj();
+            t["prompts"]["midjourney"] = v;
+            validate(&t, &known()).errors.join(" ")
+        };
+        assert!(bad(json!("text")).contains("\"prompts.midjourney\" must be an object"));
+        assert!(bad(json!({"language": 5})).contains("\"prompts.midjourney.language\" must be a string"));
+        assert!(bad(json!({"no": "x"})).contains("\"prompts.midjourney.language\" must be a string"));
+        assert!(bad(json!({"language": "a", "no": ["x"]})).contains("\"prompts.midjourney.no\" must be a string"));
+        assert!(bad(json!({"language": "a", "families": {"shell": 3}})).contains("\"prompts.midjourney.families\" must be an object of strings"));
+    }
+
+    #[test]
+    fn midjourney_soft_warnings() {
+        let warn = |f: &dyn Fn(&mut Value)| {
+            let mut t = sample_mj();
+            f(&mut t["prompts"]["midjourney"]);
+            let c = validate(&t, &known());
+            assert!(c.errors.is_empty(), "{:?}", c.errors);
+            c.warnings.join(" | ")
+        };
+        assert!(warn(&|m: &mut Value| m["families"]["nope"] = json!("x")).contains("prompts.midjourney.families has \"nope\", which is not a family ID."));
+        assert!(warn(&|m: &mut Value| {
+            m["families"].as_object_mut().unwrap().remove("shell");
+        })
+        .contains("No Midjourney prompt for family shell."));
+        assert!(warn(&|m: &mut Value| m["language"] = json!("body colour #E8E4DC, matte")).contains("prompts.midjourney.language has a hex code"));
+        assert!(warn(&|m: &mut Value| m["families"]["shell"] = json!("soft shell --ar 16:9")).contains("prompts.midjourney.families.shell has a parameter"));
+        assert!(warn(&|m: &mut Value| m["language"] = json!(vec!["word"; 61].join(" "))).contains("prompts.midjourney.language has 61 words"));
+        assert!(warn(&|m: &mut Value| m["language"] = json!(" ")).contains("prompts.midjourney.language is empty"));
+    }
+
+    #[test]
+    fn midjourney_repair() {
+        let mut t = sample_mj();
+        t["prompts"]["midjourney"]["language"] = json!("/imagine prompt: [object], matte shell, soft light --ar 16:9 --v 7.");
+        t["prompts"]["midjourney"]["no"] = json!("--no chrome, frame --raw");
+        t["prompts"]["midjourney"]["families"]["shell"] = json!(["soft\nshell", "with `seams`"]);
+        let rep = repair(&mut t);
+        let m = &t["prompts"]["midjourney"];
+        assert_eq!(m["language"], "matte shell, soft light");
+        assert_eq!(m["no"], "chrome, frame");
+        assert_eq!(m["families"]["shell"], "soft shell, with seams");
+        assert!(rep.fixed.iter().any(|f| f.contains("prompts.midjourney")), "{:?}", rep.fixed);
+        let c = validate(&t, &known());
+        assert!(c.errors.is_empty() && c.warnings.is_empty(), "{:?} {:?}", c.errors, c.warnings);
+
+        // A bare string is the prompt for the whole language.
+        let mut t = sample_mj();
+        t["prompts"]["midjourney"] = json!("matte shell");
+        repair(&mut t);
+        assert_eq!(t["prompts"]["midjourney"]["language"], "matte shell");
+
+        // No prompt: the document says so, and nothing is stored.
+        let mut t = sample();
+        let rep = repair(&mut t);
+        assert!(rep.flagged.iter().any(|f| f == "The model gave no Midjourney prompt."), "{:?}", rep.flagged);
+        assert!(t["prompts"].get("midjourney").is_none());
+    }
+
+    /// The warnings for the sample after one change to its Midjourney prompt. The change must not be an error.
+    fn midjourney_warnings(change: impl Fn(&mut Value)) -> String {
+        let mut t = sample_mj();
+        change(&mut t["prompts"]["midjourney"]);
+        let c = validate(&t, &known());
+        assert!(c.errors.is_empty(), "{:?}", c.errors);
+        c.warnings.join(" | ")
+    }
+
+    #[test]
+    fn midjourney_hand_edit_warnings() {
+        // A hand edit or an accepted proposal gets no repair. The document must say what is wrong with the line.
+        let slot = "has a slot or a command. The app adds them.";
+        // The whole line pasted back from the document.
+        let pasted = midjourney_warnings(|m| m["language"] = json!("[your object], matte shell --no chrome --raw"));
+        assert!(pasted.contains(&format!("prompts.midjourney.language {slot}")), "{pasted}");
+        assert!(pasted.contains("prompts.midjourney.language has a parameter"));
+        assert!(midjourney_warnings(|m| m["language"] = json!("/imagine prompt: matte shell")).contains(&format!("prompts.midjourney.language {slot}")));
+        assert!(midjourney_warnings(|m| m["families"]["shell"] = json!("render of [your object], matte")).contains(&format!("prompts.midjourney.families.shell {slot}")));
+        // The line break becomes a space in the line, so the parameter is real.
+        assert!(midjourney_warnings(|m| m["language"] = json!("matte shell\n--ar 16:9")).contains("prompts.midjourney.language has a parameter"));
+        assert!(midjourney_warnings(|m| m["no"] = json!("--no chrome")).contains("prompts.midjourney.no has a parameter"));
+        assert!(midjourney_warnings(|m| m["no"] = json!("chrome --ar 16:9")).contains("prompts.midjourney.no has a parameter"));
+        // Brackets and dashes inside the text are not a slot or a parameter.
+        assert_eq!(midjourney_warnings(|m| m["language"] = json!("semi--matte shell [satin] finish")), "");
+    }
+
+    #[test]
+    fn midjourney_repair_never_blocks_synthesis() {
+        // The prompt is optional. A careless answer from the model must not fail validation: that costs a paid retry,
+        // and after the last attempt the language gets no version at all.
+        for bad in [json!({}), json!({"no": "chrome"}), json!({"language": null}), json!({"language": {"text": "matte shell"}}), json!({"language": 5, "no": 5, "families": {"shell": null}})] {
+            let mut t = sample_mj();
+            t["prompts"]["midjourney"] = bad.clone();
+            repair(&mut t);
+            let c = validate(&t, &known());
+            assert!(c.errors.is_empty(), "{bad}: {:?}", c.errors);
+            assert!(c.warnings.iter().any(|w| w == "prompts.midjourney.language is empty."), "{bad}: {:?}", c.warnings);
+        }
+        // What is text stays.
+        let mut t = sample_mj();
+        t["prompts"]["midjourney"] = json!({"language": "matte shell", "no": 5, "families": {"shell": null, "blade-field": "thin blades"}});
+        let rep = repair(&mut t);
+        let m = &t["prompts"]["midjourney"];
+        assert_eq!(m["language"], "matte shell");
+        assert_eq!(m["no"], "");
+        assert_eq!(m["families"], json!({"blade-field": "thin blades"}));
+        assert!(rep.fixed.iter().any(|f| f.contains("prompts.midjourney.families.shell")), "{:?}", rep.fixed);
+        let c = validate(&t, &known());
+        assert!(c.errors.is_empty(), "{:?}", c.errors);
+        assert!(c.warnings.iter().any(|w| w == "No Midjourney prompt for family shell."), "{:?}", c.warnings);
+    }
+
+    #[test]
+    fn midjourney_line_format() {
+        assert_eq!(midjourney_line("matte shell", "chrome, frame"), "[your object], matte shell --no chrome, frame --raw");
+        // No exclusions: no dangling "--no".
+        assert_eq!(midjourney_line("matte shell", " "), "[your object], matte shell --raw");
+        // A hand edit with a newline or backticks still gives one line that the fenced block can hold.
+        assert_eq!(midjourney_line("soft\nshell  `x`", ""), "[your object], soft shell x --raw");
+    }
+
+    #[test]
+    fn render_midjourney() {
+        let mut t = sample_mj();
+        finalize(&mut t, "organic", 3);
+        let md = render_markdown("Organic", &t, &[]);
+        let at = |s: &str| md.find(s).unwrap_or_else(|| panic!("missing {s}"));
+        assert!(at("## Image-generation tokens") < at("## Midjourney prompt") && at("## Midjourney prompt") < at("## Do and do not"));
+        assert!(md.contains("Replace `[your object]` with the thing to draw. Keep the rest of the line as it is."));
+        assert!(md.contains("**Whole language**\n\n```text\n[your object], product concept render, one continuous matte shell, soft tangent surfaces, warm white oak veneer, soft studio light, pale neutral background --no chrome, visible frame --raw\n```"));
+        assert!(at("**Laminated shell** (`shell`)") < at("**Blade field** (`blade-field`)")); // the order of the families
+
+        // A family brief shows the prompt of that family only.
+        let fam = render_family_brief("Organic", &t, "blade-field").unwrap();
+        assert!(fam.contains("field of thin parallel blades"));
+        assert!(!fam.contains("single soft laminated shell") && !fam.contains("one continuous matte shell"));
+
+        // A family with no prompt falls back to the whole language. A key that is not a family is not shown.
+        let mut gap = t.clone();
+        gap["prompts"]["midjourney"]["families"].as_object_mut().unwrap().remove("blade-field");
+        gap["prompts"]["midjourney"]["families"]["nope"] = json!("never shown");
+        let fam = render_family_brief("Organic", &gap, "blade-field").unwrap();
+        assert!(fam.contains("**Whole language**") && fam.contains("one continuous matte shell"));
+        assert!(!render_markdown("Organic", &gap, &[]).contains("never shown"));
+
+        assert!(render_scope("Organic", &t, Scope::Prompts).contains("## Midjourney prompt"));
+        assert!(!render_scope("Organic", &t, Scope::Cad).contains("Midjourney"));
+        // A version made before the prompt existed has no section.
+        assert!(!render_markdown("Organic", &sample(), &[]).contains("Midjourney"));
     }
 
     #[test]

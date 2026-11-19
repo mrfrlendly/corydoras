@@ -110,7 +110,7 @@ pub fn prepare_item_images(
 
 /// Changes to the prompts or the schema change this value. It is part of the
 /// input fingerprint, so an upgrade makes the next synthesis run again.
-pub const PIPELINE_VERSION: &str = "4";
+pub const PIPELINE_VERSION: &str = "5";
 /// Most sources that one synthesis pass reads.
 pub const SYNTH_SOURCE_LIMIT: usize = 30;
 /// Most characters of a source text that pass 1 sends.
@@ -246,11 +246,12 @@ Colours:
 
 Midjourney:
 - "prompts.midjourney" holds prompt text for the Midjourney image tool. The app adds the object at the start and the parameters at the end. Do not write an object name, a slot or "--" parameters.
-- "language" describes the look that every family shares. Each entry in "families" (one for each family ID) is complete: it must work without "language".
+- "language" describes the look that every family shares. Name the form features that the principles require: they make the language recognisable. Each entry in "families" (one for each family ID) is complete: it must work without "language", so it repeats those features where the family has them.
 - Write a few short descriptive phrases in this order: medium (for example "product concept render"), form and surfaces, material and finish, colour, light and background. Use at most 40 words. Do not write long keyword lists.
-- Use words that an outsider understands. Name colours in words, not hex codes. Give no dimensions. Do not use the language name, a family name or a term from "definitions".
-- Take the content from this spec: product colours and finishes from "cmf.object", light and background from "cmf.presentation".
-- Say what the image shows. Put what to leave out in "no": at most 8 nouns for visible things, separated by commas (for example "chrome, visible screws"). Midjourney reads each word of "no" alone, so do not use a word that is wrong on its own.
+- Use plain visual words. A family name or a term from "definitions" is allowed when a person who has not read this spec pictures the same thing from it. Replace every other term with what it looks like. Do not use the language name. Give no dimensions.
+- Colour: name one product colour in words, not a hex code. Take it from "cmf.object" for that family or for the whole language. Do not list alternatives and do not join colours with "or": Midjourney mixes them.
+- Take finishes from "cmf.object", and light and background from "cmf.presentation".
+- Say what the image shows. Put what to leave out in "no": at most 8 items, separated by commas. Each item is one visible thing that must never appear, as a noun or as one adjective with a noun. Do not shorten a rule into words that mean something else. Do not exclude a thing that the language also needs in another form (for example holes, when the language has openings). Midjourney reads each word of "no" alone, so do not use a word that is wrong on its own.
 
 Size:
 - Keep the spec compact, so that it fits the output limit: at most 6 families, 8 measures and 6 rules for each family, 8 principles, 8 exceptions, 8 product colours and 8 items in each do and dont list. Keep each text field under 40 words.
@@ -463,6 +464,22 @@ mod tests {
     fn synthesis_asks_for_midjourney() {
         assert!(crate::spec::output_shape()["prompts"]["midjourney"]["language"].is_string());
         assert!(SYNTH_SYSTEM.contains("\"prompts.midjourney\""));
+    }
+
+    #[test]
+    fn midjourney_instruction_keeps_the_lessons_of_the_first_prompts() {
+        // The first real prompts (2026-11-18, Wall District v11) showed three faults.
+        // 1. The model left out the angular cutouts, the feature that makes the language recognisable,
+        //    because "angular cutout" is a defined term and a family name, and both were forbidden.
+        assert!(SYNTH_SYSTEM.contains("Name the form features that the principles require"));
+        assert!(SYNTH_SYSTEM.contains("A family name or a term from \"definitions\" is allowed when"));
+        assert!(!SYNTH_SYSTEM.contains("Do not use the language name, a family name or a term from \"definitions\""));
+        // 2. It joined four colours with "or". Midjourney has no "or": it mixes them.
+        assert!(SYNTH_SYSTEM.contains("join colours with \"or\""));
+        // 3. It shortened rules into vague exclusions and excluded holes in a language of cutouts.
+        assert!(SYNTH_SYSTEM.contains("Do not exclude a thing that the language also needs"));
+        // The example "chrome, visible screws" came back in both real exclusion lists, so it is gone.
+        assert!(!SYNTH_SYSTEM.contains("chrome, visible screws"));
     }
 }
 

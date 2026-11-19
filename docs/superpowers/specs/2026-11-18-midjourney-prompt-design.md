@@ -109,3 +109,12 @@ The exact wording of the instruction and the messages, the look of the Copy butt
 - **Hand edits get warnings, not repair.** Validation also warns when a text has a slot or a command, when a line break hides a parameter, and when `no` has a parameter. The line shows what was typed.
 - **The prompt never blocks the document.** A text from the model that is missing or not text becomes empty with a warning. It is never a validation error, because an error costs a paid retry.
 
+## Changes after the first real prompts (2026-11-18)
+
+Two real syntheses ran with deepseek-flash: Layered v4 and Wall District v11. Both prompts had the right form. Wall District showed three faults in the content, and the instruction changed for each. The pipeline version is now 5, so a language writes the prompt again at its next synthesis.
+
+- **The signature feature was missing.** No text said "angular", although a principle requires bold angular cutouts. "Angular cutout" is a defined term and a family name, and the instruction forbade both. Now the model must name the form features that the principles require, and it may use a family name or a defined term when a person who has not read the spec pictures the same thing from it.
+- **Colours were joined with "or".** Midjourney has no "or"; it mixes the colours. Now each text names one product colour from the CMF.
+- **Exclusions were vague or harmful.** "tool colours" lost its meaning, and "scattered small holes" can also remove wanted cutouts. Now each exclusion is one visible thing that must never appear, and the model must not exclude a thing that the language needs in another form.
+- **An example leaked.** Both real exclusion lists started with the instruction's own example, "chrome, visible screws". The example is gone.
+

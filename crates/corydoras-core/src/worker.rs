@@ -442,7 +442,7 @@ pub async fn synthesize(
         act.log("info", lang, format!("{}: no change since the last version, so no new version.", language.name));
         return Ok(None);
     }
-    let previous = lib.read_latest(language_id)?;
+    let previous = lib.previous_for_synthesis(language_id)?;
     let base_text = analysis::synth_user_text(&language, &inputs, &srcs, previous.as_ref());
     let mut known: Vec<String> = inputs.iter().map(|i| i.item.id.chars().take(8).collect()).collect();
     known.extend(srcs.iter().map(|x| x.source.id.chars().take(8).collect::<String>()));

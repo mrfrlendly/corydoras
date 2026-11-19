@@ -118,3 +118,12 @@ Two real syntheses ran with deepseek-flash: Layered v4 and Wall District v11. Bo
 - **Exclusions were vague or harmful.** "tool colours" lost its meaning, and "scattered small holes" can also remove wanted cutouts. Now each exclusion is one visible thing that must never appear, and the model must not exclude a thing that the language needs in another form.
 - **An example leaked.** Both real exclusion lists started with the instruction's own example, "chrome, visible screws". The example is gone.
 
+## Changes after the second run (2026-11-19)
+
+Wall District v12 ran with the tuned instruction. Only the colour fault was gone: three of the seven texts were the same as in v11, and four had small edits. The pipeline version is now 6.
+
+- **The model copied its own prompt.** The synthesis pass shows the model the previous version and tells it to keep the wording stable. That is right for rules and measures. It is wrong for the prompt, which follows from the spec. Now the pass leaves a prompt that a model wrote out of the previous version, and the stability rule names the prompt as the exception.
+- **A prompt that the designer wrote stays.** The model sees it and keeps it. The app finds who wrote a prompt from the version history: it takes the unbroken run of versions that hold the same prompt, and looks at the oldest one. A hand edit, an accepted proposal or a restore that only carries a prompt on does not make it the designer's. Limit: when a synthesis changes the designer's prompt, also by one word, the prompt is the model's from then on.
+- **The whole-language text could not hold the signature feature.** "language" was "the look that every family shares", and only some families have angular cutouts. Now it describes a typical object of the language, and it must show what each principle with priority 1 requires.
+- **The weak exclusions came from the token list.** "tool colours" and "scattered small holes" are shortened items of `prompts.negative`, and that list stays in the previous version. Now the model may take an item from `dont` or `prompts.negative` only when one or two words still say the same thing.
+- **"or" is forbidden for materials and features too.** Sleek v12, written with the first instruction, joined materials and features with "or".

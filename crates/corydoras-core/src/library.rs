@@ -1145,6 +1145,44 @@ impl Library {
         }
     }
 
+    /// The latest version as the synthesis pass reads it. The pass writes the Midjourney prompt again
+    /// from the spec each time, so it does not see a prompt that a model wrote: a model that sees its
+    /// own prompt copies it. It sees a prompt that the designer wrote, and keeps it.
+    pub fn previous_for_synthesis(&self, language_id: &str) -> Result<Option<VersionContent>> {
+        let Some(mut latest) = self.read_latest(language_id)? else { return Ok(None) };
+        if !self.designer_wrote_midjourney(&latest)? {
+            if let Some(prompts) = latest.tokens.get_mut("prompts").and_then(Value::as_object_mut) {
+                prompts.remove("midjourney");
+            }
+        }
+        Ok(Some(latest))
+    }
+
+    /// True when the Midjourney prompt of `latest` first appeared in a version that the designer made
+    /// (a hand edit, an accepted proposal or a restore). A version that only carries the prompt on
+    /// does not change who wrote it.
+    fn designer_wrote_midjourney(&self, latest: &VersionContent) -> Result<bool> {
+        let prompt = &latest.tokens["prompts"]["midjourney"];
+        if prompt.is_null() {
+            return Ok(false);
+        }
+        let mut older = self.list_versions(&latest.info.language_id)?;
+        older.retain(|v| v.version < latest.info.version);
+        older.sort_by_key(|v| std::cmp::Reverse(v.version));
+        let mut by_designer = latest.info.edited;
+        for v in older {
+            let tokens: Value = std::fs::read_to_string(self.version_dir(&v.language_id, v.version).join("tokens.json"))
+                .ok()
+                .and_then(|s| serde_json::from_str(&s).ok())
+                .unwrap_or(Value::Null);
+            if tokens["prompts"]["midjourney"] != *prompt {
+                break;
+            }
+            by_designer = v.edited;
+        }
+        Ok(by_designer)
+    }
+
     /// Writes a new schema 1 version (free markdown + tokens). Returns its number.
     pub fn save_version(
         &self,
@@ -2114,6 +2152,58 @@ mod tests {
         lib.save_spec_version(&lang.id, &spec, "model", &[], false, &today, &[]).unwrap();
         lib.save_manual_spec(&lang.id, &spec, "edited by you").unwrap();
         assert_eq!(lib.latest_input_hash(&lang.id).unwrap(), Some(today));
+    }
+
+    #[test]
+    fn synthesis_sees_only_a_midjourney_prompt_that_the_designer_wrote() {
+        let dir = tempfile::tempdir().unwrap();
+        let lib = Library::open(dir.path()).unwrap();
+        let lang = lib.create_language("Organic", "").unwrap();
+        // The text that the synthesis pass sends to the model.
+        let sent = || {
+            let previous = lib.previous_for_synthesis(&lang.id).unwrap();
+            analysis::synth_user_text(&lang, &[], &[], previous.as_ref())
+        };
+        let models = "one continuous matte shell";
+        let designers = "the words of the designer";
+
+        // A model wrote the prompt. The next synthesis must write it again from the spec: a model that
+        // sees its own prompt copies it (Wall District v12 repeated v11, 2026-11-18).
+        let mut spec = crate::spec::tests::sample_mj();
+        lib.save_spec_version(&lang.id, &spec, "model", &[], false, "h1", &[]).unwrap();
+        let text = sent();
+        assert!(text.contains("PREVIOUS VERSION v1"), "{text}");
+        assert!(!text.contains(models), "the model sees its own prompt");
+        assert!(text.contains("continuous laminated shell"), "the rest of the previous version stays");
+        let stored = lib.read_latest(&lang.id).unwrap().unwrap();
+        assert!(stored.tokens["prompts"]["midjourney"]["language"].as_str().unwrap().contains(models), "the stored version keeps it");
+
+        // A manual version that only carries the prompt on does not make it the designer's.
+        spec["summary"] = serde_json::json!("A new summary.");
+        lib.save_manual_spec(&lang.id, &spec, "edited by you").unwrap();
+        assert!(!sent().contains(models), "an edit of another field shows the model its own prompt");
+
+        // The designer wrote the prompt: the model sees it.
+        spec["prompts"]["midjourney"]["language"] = serde_json::json!(format!("product concept render, {designers}"));
+        lib.save_manual_spec(&lang.id, &spec, "edited by you").unwrap();
+        assert!(sent().contains(designers));
+        // It stays the designer's while later versions carry it on: a hand edit, then a synthesis that kept it.
+        spec["summary"] = serde_json::json!("Another summary.");
+        lib.save_manual_spec(&lang.id, &spec, "edited by you").unwrap();
+        assert!(sent().contains(designers));
+        lib.save_spec_version(&lang.id, &spec, "model", &[], false, "h2", &[]).unwrap();
+        assert!(sent().contains(designers), "a synthesis that kept the designer's prompt hides it from the next one");
+
+        // A synthesis that changed it makes it the model's again.
+        spec["prompts"]["midjourney"]["language"] = serde_json::json!("product concept render, the words of a model");
+        lib.save_spec_version(&lang.id, &spec, "model", &[], false, "h3", &[]).unwrap();
+        assert!(!sent().contains("the words of a model"));
+
+        // No version, and a version without a prompt: nothing to hide.
+        let other = lib.create_language("Plain", "").unwrap();
+        assert!(lib.previous_for_synthesis(&other.id).unwrap().is_none());
+        lib.save_spec_version(&other.id, &crate::spec::tests::sample(), "model", &[], false, "h", &[]).unwrap();
+        assert!(lib.previous_for_synthesis(&other.id).unwrap().unwrap().tokens["prompts"]["positive"].is_string());
     }
 
     #[test]

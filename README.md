@@ -224,6 +224,8 @@ The model writes the Midjourney text in the same pass as the rest of the spec: a
 
 A language gets the prompt when the model next writes its document: click **Synthesize now**, or change a reference. A version made before this feature has none, and a hand edit, an accepted proposal or a restore does not add it; the language stays due for synthesis. A language that extends a base carries the prompt of the base until you change it.
 
+Each synthesis writes the prompt again from the spec, so a change to a principle or a colour reaches the prompt. The model does not see the prompt that a model wrote for the previous version. The exception is a prompt that you changed by hand: the model sees it, keeps it, and changes only what the spec no longer supports.
+
 A hand edit is not repaired. When the text of a hand edit has a slot, a command or a parameter, the note at the top of the document says so.
 
 ## Versions

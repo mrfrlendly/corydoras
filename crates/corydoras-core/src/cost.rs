@@ -232,7 +232,7 @@ pub fn estimate(lib: &Library, ai: &AiConfig, language_id: &str, scope: Scope) -
         // The real prompt of the document pass, built from the analyses that exist now.
         let inputs = lib.synthesis_inputs(language_id, analysis::SYNTH_ITEM_LIMIT)?;
         let srcs = lib.source_inputs(language_id, analysis::SYNTH_SOURCE_LIMIT)?;
-        let previous = lib.read_latest(language_id)?;
+        let previous = lib.previous_for_synthesis(language_id)?;
         let text = analysis::synth_user_text(&lang, &inputs, &srcs, previous.as_ref());
         let mut input = ((text.len() + analysis::SYNTH_SYSTEM.len()) / CHARS_PER_TOKEN) as i64;
         // Items that have no analysis yet add their notes to the prompt later.

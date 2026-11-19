@@ -110,7 +110,7 @@ pub fn prepare_item_images(
 
 /// Changes to the prompts or the schema change this value. It is part of the
 /// input fingerprint, so an upgrade makes the next synthesis run again.
-pub const PIPELINE_VERSION: &str = "5";
+pub const PIPELINE_VERSION: &str = "6";
 /// Most sources that one synthesis pass reads.
 pub const SYNTH_SOURCE_LIMIT: usize = 30;
 /// Most characters of a source text that pass 1 sends.
@@ -246,18 +246,20 @@ Colours:
 
 Midjourney:
 - "prompts.midjourney" holds prompt text for the Midjourney image tool. The app adds the object at the start and the parameters at the end. Do not write an object name, a slot or "--" parameters.
-- "language" describes the look that every family shares. Name the form features that the principles require: they make the language recognisable. Each entry in "families" (one for each family ID) is complete: it must work without "language", so it repeats those features where the family has them.
+- "language" describes a typical object of the whole language. It must show what each principle with priority 1 requires, also when only some families have that feature: these features make the language recognisable. Name the form features that the principles require. Each entry in "families" (one for each family ID) is complete: it must work without "language", so it repeats those features where the family has them.
 - Write a few short descriptive phrases in this order: medium (for example "product concept render"), form and surfaces, material and finish, colour, light and background. Use at most 40 words. Do not write long keyword lists.
-- Use plain visual words. A family name or a term from "definitions" is allowed when a person who has not read this spec pictures the same thing from it. Replace every other term with what it looks like. Do not use the language name. Give no dimensions.
-- Colour: name one product colour in words, not a hex code. Take it from "cmf.object" for that family or for the whole language. Do not list alternatives and do not join colours with "or": Midjourney mixes them.
+- Use plain visual words. Keep the words of a principle when they are plain visual words. A family name or a term from "definitions" is allowed when a person who has not read this spec pictures the same thing from it. Replace every other term with what it looks like. Do not use the language name. Give no dimensions.
+- Colour: name one product colour in words, not a hex code. Take it from "cmf.object" for that family or for the whole language.
+- Midjourney has no "or": it mixes the alternatives. Do not write "or" and do not list alternatives for a colour, a material or a feature.
 - Take finishes from "cmf.object", and light and background from "cmf.presentation".
-- Say what the image shows. Put what to leave out in "no": at most 8 items, separated by commas. Each item is one visible thing that must never appear, as a noun or as one adjective with a noun. Do not shorten a rule into words that mean something else. Do not exclude a thing that the language also needs in another form (for example holes, when the language has openings). Midjourney reads each word of "no" alone, so do not use a word that is wrong on its own.
+- Say what the image shows. Put what to leave out in "no": at most 8 items, separated by commas. Each item is one visible thing that must never appear, as a noun or as one adjective with a noun. Do not shorten a rule into words that mean something else: take an item from "dont" or from "prompts.negative" only when one or two words still say the same thing. Do not exclude a thing that the language also needs in another form (for example holes, when the language has openings). Midjourney reads each word of "no" alone, so do not use a word that is wrong on its own.
 
 Size:
 - Keep the spec compact, so that it fits the output limit: at most 6 families, 8 measures and 6 rules for each family, 8 principles, 8 exceptions, 8 product colours and 8 items in each do and dont list. Keep each text field under 40 words.
 
 Stability:
 - If a previous version exists, keep its IDs, wording and values stable unless the notes justify a change. If the designer edited the previous version, treat its content as authoritative where the notes still support it.
+- "prompts.midjourney" is the exception: write it from this spec each time. If the previous version has a "prompts.midjourney", the designer wrote it: keep it, and change only what this spec no longer supports.
 
 Write all text in clear, simple technical English: short sentences, active voice, simple tenses. Return only one JSON object."#;
 
@@ -475,11 +477,30 @@ mod tests {
         assert!(SYNTH_SYSTEM.contains("A family name or a term from \"definitions\" is allowed when"));
         assert!(!SYNTH_SYSTEM.contains("Do not use the language name, a family name or a term from \"definitions\""));
         // 2. It joined four colours with "or". Midjourney has no "or": it mixes them.
-        assert!(SYNTH_SYSTEM.contains("join colours with \"or\""));
+        //    Sleek v12 did the same with materials and features, so the rule covers all three.
+        assert!(SYNTH_SYSTEM.contains("Do not write \"or\" and do not list alternatives for a colour, a material or a feature"));
         // 3. It shortened rules into vague exclusions and excluded holes in a language of cutouts.
         assert!(SYNTH_SYSTEM.contains("Do not exclude a thing that the language also needs"));
         // The example "chrome, visible screws" came back in both real exclusion lists, so it is gone.
         assert!(!SYNTH_SYSTEM.contains("chrome, visible screws"));
+    }
+
+    #[test]
+    fn midjourney_instruction_keeps_the_lessons_of_the_second_run() {
+        // Wall District v12 (2026-11-18) ran with the tuned instruction and repeated most of v11.
+        // 1. The model copied its own previous prompt, because the stability rule told it to keep wording.
+        //    The prompt is now the exception. (The library also hides a prompt that a model wrote.)
+        assert!(SYNTH_SYSTEM.contains("\"prompts.midjourney\" is the exception: write it from this spec each time"));
+        // 2. "language" was "the look that every family shares", so a feature that only some families
+        //    have (the angular cutouts, a priority 1 principle) was correctly left out.
+        assert!(SYNTH_SYSTEM.contains("what each principle with priority 1 requires, also when only some families have that feature"));
+        assert!(!SYNTH_SYSTEM.contains("the look that every family shares"));
+        let shape = crate::spec::output_shape()["prompts"]["midjourney"]["language"].as_str().unwrap().to_string();
+        assert!(!shape.contains("every family shares"), "{shape}");
+        // 3. "tool colours" and "scattered small holes" were shortened items of "prompts.negative".
+        assert!(SYNTH_SYSTEM.contains("take an item from \"dont\" or from \"prompts.negative\" only when one or two words still say the same thing"));
+        // A language is due again, so it gets a prompt from the new instruction.
+        assert_eq!(PIPELINE_VERSION, "6");
     }
 }
 

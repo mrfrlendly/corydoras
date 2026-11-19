@@ -63,7 +63,7 @@ pub fn output_shape() -> Value {
             "negative": "Comma-separated negative prompt fragments.",
             "families": {"blade-field": "Prompt fragments for this family only."},
             "midjourney": {
-                "language": "Short phrases for the look that every family shares. No object name, no parameters.",
+                "language": "Short phrases for a typical object of the whole language. No object name, no parameters.",
                 "no": "Comma-separated nouns to leave out.",
                 "families": {"blade-field": "A complete description for this family only."}
             }

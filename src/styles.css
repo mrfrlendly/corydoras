@@ -4049,3 +4049,30 @@ textarea:focus-visible,
   outline-width: calc(2px * var(--inv-z, 1));
   outline-offset: calc(2px * var(--inv-z, 1));
 }
+
+/* Settings › Phone: the QR code beside the link. The code keeps its white quiet zone in dark mode. */
+.phone-link {
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+.phone-qr {
+  width: 180px;
+  flex: none;
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  background: #fff;
+}
+.phone-qr svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+.phone-link-text {
+  flex: 1 1 260px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}

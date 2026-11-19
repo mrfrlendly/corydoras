@@ -19,6 +19,35 @@ pub struct AppConfig {
     /// The local bridge that the browser extension talks to.
     #[serde(default)]
     pub bridge: BridgeConfig,
+    /// The phone link: a page on the Wi-Fi for adding inventory items from a phone.
+    #[serde(default)]
+    pub phone: PhoneConfig,
+}
+
+/// The port of the phone link when nothing else is set.
+pub const DEFAULT_PHONE_PORT: u16 = 47822;
+
+/// The phone link listens on the Wi-Fi and answers only requests that carry the token,
+/// except for the page itself. It is off until you turn it on.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct PhoneConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_phone_port")]
+    pub port: u16,
+    /// The secret that the phone page sends with each request.
+    #[serde(default)]
+    pub token: String,
+}
+
+fn default_phone_port() -> u16 {
+    DEFAULT_PHONE_PORT
+}
+
+impl Default for PhoneConfig {
+    fn default() -> Self {
+        PhoneConfig { enabled: false, port: DEFAULT_PHONE_PORT, token: String::new() }
+    }
 }
 
 /// The port of the bridge when nothing else is set.
@@ -126,4 +155,18 @@ impl AppConfig {
 pub fn resolve_library_path(cli: Option<PathBuf>) -> Option<PathBuf> {
     cli.or_else(|| std::env::var_os("CORYDORAS_LIBRARY").map(PathBuf::from))
         .or_else(|| AppConfig::load().library_path)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_old_config_gets_the_phone_defaults() {
+        let cfg: AppConfig = serde_json::from_str("{}").unwrap();
+        assert!(!cfg.phone.enabled);
+        assert_eq!(cfg.phone.port, 47822);
+        assert_eq!(cfg.phone.port, DEFAULT_PHONE_PORT);
+        assert!(cfg.phone.token.is_empty());
+    }
 }

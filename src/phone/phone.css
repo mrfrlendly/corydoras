@@ -1,0 +1,204 @@
+/* The phone page. Colours follow the desktop tokens in src/styles.css. */
+:root {
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --bg: #efede8;
+  --panel: #f8f7f4;
+  --panel-2: #e7e4de;
+  --ink: #1d1d1b;
+  --ink-2: #5f5e59;
+  --rule: #d8d4cc;
+  --accent-fill: #c8440f;
+  --accent-ink: #ffffff;
+  --ok: #3d7249;
+  --err: #b3392a;
+  --err-fill: #c2412d;
+  --radius: 12px;
+  --sans: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', sans-serif;
+  color-scheme: light dark;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #141413;
+    --panel: #1c1c1a;
+    --panel-2: #262623;
+    --ink: #ecebe6;
+    --ink-2: #a9a79f;
+    --rule: #33322e;
+    --ok: #5aa468;
+    --err: #ef6f5a;
+  }
+}
+
+/* No gray flash on tap, no font inflation in landscape, no pull-to-refresh over a review. */
+html {
+  -webkit-tap-highlight-color: transparent;
+  -webkit-text-size-adjust: 100%;
+  overscroll-behavior: none;
+  background: var(--bg);
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font: 16px/1.4 var(--sans);
+}
+
+* { box-sizing: border-box; }
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.phone {
+  min-height: 100dvh;
+  max-width: 560px;
+  margin: 0 auto;
+  padding: calc(12px + env(safe-area-inset-top, 0px)) calc(16px + env(safe-area-inset-right, 0px))
+    calc(24px + env(safe-area-inset-bottom, 0px)) calc(16px + env(safe-area-inset-left, 0px));
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* Room for the save bar. */
+.phone.with-bar { padding-bottom: calc(120px + env(safe-area-inset-bottom, 0px)); }
+
+.top h1 { font-size: 22px; margin: 4px 0 0; }
+.library { margin: 2px 0 0; color: var(--ink-2); }
+
+h2 { font-size: 18px; margin: 0; }
+
+.panel, .card {
+  background: var(--panel);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.panel p, .card p { margin: 0; }
+
+.muted, .hint { color: var(--ink-2); }
+.hint { font-size: 14px; }
+.error { color: var(--err); margin: 0; }
+.done { font-size: 18px; color: var(--ok); }
+
+.photo {
+  width: 100%;
+  max-height: 40dvh;
+  object-fit: contain;
+  border-radius: var(--radius);
+  background: var(--panel-2);
+}
+
+.card-title {
+  font-size: 17px;
+  overflow-wrap: anywhere;
+}
+
+.field { display: flex; flex-direction: column; gap: 4px; }
+.field > span { font-size: 14px; color: var(--ink-2); }
+
+/* 16 px or more, or iOS zooms into the field and stays zoomed. */
+input {
+  font: 16px var(--sans);
+  color: var(--ink);
+  background: var(--bg);
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  padding: 10px 12px;
+  min-height: 44px;
+  width: 100%;
+}
+input:read-only { color: var(--ink-2); }
+input:focus-visible { outline: 2px solid var(--accent-fill); outline-offset: 1px; }
+
+.pair { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+
+.specs {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.specs li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--panel-2);
+}
+.specs li > div { display: flex; flex-direction: column; min-width: 0; }
+.spec-value { overflow-wrap: anywhere; }
+.spec-source { font-size: 13px; color: var(--ink-2); }
+
+.actions { display: flex; gap: 10px; flex-wrap: wrap; }
+.actions .btn { flex: 1 1 auto; }
+.grow { flex: 2 1 auto; }
+
+/* Controls: instant press feedback, no double-tap delay, no text selection on long press. */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 48px;
+  padding: 0 18px;
+  border-radius: 10px;
+  border: 1px solid var(--rule);
+  background: var(--panel-2);
+  color: var(--ink);
+  font: 600 16px var(--sans);
+  cursor: pointer;
+  touch-action: manipulation;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  transition: transform 120ms var(--ease-out), opacity 120ms;
+}
+.btn:active { transform: scale(0.97); }
+.btn.small { min-height: 36px; padding: 0 12px; font-size: 15px; }
+.btn.primary { background: var(--accent-fill); border-color: var(--accent-fill); color: var(--accent-ink); }
+.btn.danger { background: var(--err-fill); border-color: var(--err-fill); color: #fff; }
+.btn.quiet { background: transparent; border-color: transparent; color: var(--ink-2); align-self: flex-start; }
+.btn:disabled, .btn.disabled { opacity: 0.45; pointer-events: none; }
+/* A file input inside a label button keeps its keyboard focus visible on the label. */
+label.btn:focus-within { outline: 2px solid var(--accent-fill); outline-offset: 2px; }
+
+@media (hover: hover) and (pointer: fine) {
+  .btn:hover { filter: brightness(0.97); }
+}
+
+.bar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  padding: 12px calc(16px + env(safe-area-inset-right, 0px)) calc(12px + env(safe-area-inset-bottom, 0px))
+    calc(16px + env(safe-area-inset-left, 0px));
+  background: color-mix(in srgb, var(--bg) 92%, transparent);
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
+  border-top: 1px solid var(--rule);
+}
+.bar > * { max-width: 528px; margin: 0 auto; }
+.bar-error { margin: 0 auto 10px; }
+.confirm { display: flex; flex-direction: column; gap: 10px; }
+.confirm p { margin: 0; }
+
+@media (prefers-reduced-motion: reduce) {
+  .btn { transition: none; }
+  .btn:active { transform: none; }
+}

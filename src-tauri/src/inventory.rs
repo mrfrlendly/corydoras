@@ -11,14 +11,15 @@ use corydoras_core::{
 use std::sync::{atomic::Ordering, Arc};
 use tauri::State;
 
-fn current_library(state: &State<'_, AppState>) -> CmdResult<Arc<Library>> {
+fn current_library(state: &AppState) -> CmdResult<Arc<Library>> {
     if state.moving.load(Ordering::SeqCst) {
         return Err("Wait for the library move to finish.".into());
     }
     lib(state)
 }
 
-fn enabled_library(state: &State<'_, AppState>) -> CmdResult<Arc<Library>> {
+/// The open library, when no move runs and the workshop module is on.
+pub(crate) fn enabled_library(state: &AppState) -> CmdResult<Arc<Library>> {
     let library = current_library(state)?;
     if !library.inventory_enabled().map_err(e2s)? {
         return Err(
@@ -90,6 +91,8 @@ fn unpack_frame<T: serde::de::DeserializeOwned>(bytes: &[u8]) -> CmdResult<(T, &
 
 // One photo is decoded and saved at a time.
 static DECODER: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(1);
+/// One label is read at a time, from the Mac or from the phone.
+pub(crate) static READER: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(1);
 
 #[tauri::command]
 pub(super) async fn save_inventory_photo(
@@ -128,7 +131,15 @@ pub(super) async fn save_inventory_batch(
     let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else {
         return Err("Select the label photo.".into());
     };
-    let (form, photo): (BatchForm, _) = unpack_frame(bytes)?;
+    save_batch_frame(library, bytes.clone()).await
+}
+
+/// Saves a framed batch (4-byte length, JSON `{drafts}`, photo bytes). The Mac app and the phone use it.
+pub(crate) async fn save_batch_frame(
+    library: Arc<Library>,
+    frame: Vec<u8>,
+) -> CmdResult<Vec<InventoryItem>> {
+    let (form, photo): (BatchForm, _) = unpack_frame(&frame)?;
     let slot = DECODER
         .try_acquire()
         .map_err(|_| "Wait for the current photo to finish.")?;
@@ -167,16 +178,20 @@ pub(super) async fn read_inventory_label(
     let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else {
         return Err("Select a label photo.".into());
     };
-    if bytes.is_empty() || bytes.len() > inventory_label::MAX_LABEL_BYTES {
+    read_label(library, bytes.clone()).await
+}
+
+/// Reads a label photo with the analysis provider. The Mac app and the phone use it.
+pub(crate) async fn read_label(library: Arc<Library>, photo: Vec<u8>) -> CmdResult<Vec<InventoryDraft>> {
+    if photo.is_empty() || photo.len() > inventory_label::MAX_LABEL_BYTES {
         return Err("Select a nonempty photo of 12 MiB or less.".into());
     }
-    static READER: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(1);
     let _slot = READER
         .try_acquire()
         .map_err(|_| "Wait for the current label to finish.")?;
     let settings = library.settings().map_err(e2s)?;
     let cfg = AiConfig::effective(AppConfig::load().ai.as_ref(), &settings);
-    inventory_label::read_labels(&library, &cfg, bytes)
+    inventory_label::read_labels(&library, &cfg, &photo)
         .await
         .map_err(e2s)
 }

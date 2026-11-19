@@ -1,6 +1,6 @@
 import { Plus, X } from 'lucide-react';
-import type { Spec, SpecSource } from '../inventoryApi';
-import { addSpec, editSpec, removeSpec } from './workshopForm';
+import type { Spec } from '../inventoryApi';
+import { addSpec, editSpec, removeSpec, sourceLabel } from './workshopForm';
 
 const roles: [string, string][] = [
   ['thread', 'Thread'], ['pitch', 'Pitch'], ['length', 'Length'], ['outer_diameter', 'Outer diameter'],
@@ -9,13 +9,6 @@ const roles: [string, string][] = [
   ['nozzle_temp', 'Nozzle temperature'], ['bed_temp', 'Bed temperature'], ['drying', 'Drying'], ['other', 'Other'],
 ];
 const units = ['', 'mm', 'g', 'kg', '°C'];
-
-export const sourceLabel: Record<SpecSource, string> = {
-  label: 'Printed',
-  notation: 'Printed, role read from notation',
-  standard: 'Standard, not measured',
-  entered: 'Entered',
-};
 
 interface Props {
   specs: Spec[];

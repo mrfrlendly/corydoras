@@ -6,6 +6,7 @@ import ProvidersPanel from './ProvidersPanel';
 import StoragePanel from './StoragePanel';
 import CapturePanel from './CapturePanel';
 import BridgePanel from './BridgePanel';
+import PhonePanel from './PhonePanel';
 import { useToast } from './Toast';
 
 interface Props {
@@ -19,6 +20,7 @@ interface Props {
 const SECTIONS: [id: string, label: string][] = [
   ['settings-providers', 'Providers'],
   ['settings-modules', 'Modules'],
+  ['settings-phone', 'Phone'],
   ['settings-agents', 'Agents'],
   ['settings-pipeline', 'Pipeline'],
   ['settings-capture', 'Screen capture'],
@@ -105,7 +107,7 @@ export default function SettingsView({ info, onInfo, status, onChanged }: Props)
           <h1>Settings</h1>
           <p className="lang-desc muted">Most choices apply at once. A section with a Save button waits for it.</p>
           <nav className="page-jump" aria-label="Settings sections">
-            {SECTIONS.map(([id, label]) => (
+            {SECTIONS.filter(([id]) => id !== 'settings-phone' || info.inventory_enabled).map(([id, label]) => (
               <button key={id} className="link-btn" onClick={() => jump(id)}>
                 {label}
               </button>
@@ -128,6 +130,8 @@ export default function SettingsView({ info, onInfo, status, onChanged }: Props)
             Show a separate inventory tab for this library. Turn it off to hide the tab and keep your items.
           </p>
         </section>
+
+        <PhonePanel inventoryEnabled={info.inventory_enabled} />
 
         <section className="panel" id="settings-agents" tabIndex={-1}>
           <h3>

@@ -27,7 +27,9 @@ mod accounts;
 mod bridge;
 mod capture;
 mod features;
+mod http;
 mod inventory;
+mod phone;
 #[cfg(test)]
 mod ipc_tests;
 
@@ -56,6 +58,8 @@ struct AppState {
     bridge: bridge::BridgeState,
     /// The account sign-in that waits for the browser.
     sign_in: accounts::Pending,
+    /// The phone link on the Wi-Fi.
+    phone: phone::PhoneState,
 }
 
 type CmdResult<T> = Result<T, String>;
@@ -64,7 +68,7 @@ fn e2s<E: std::fmt::Display>(e: E) -> String {
     e.to_string()
 }
 
-fn lib(state: &State<'_, AppState>) -> CmdResult<Arc<Library>> {
+fn lib(state: &AppState) -> CmdResult<Arc<Library>> {
     state
         .lib
         .read()
@@ -1218,6 +1222,7 @@ fn main() {
             }
             capture::register_saved(app.handle());
             bridge::start(app.handle());
+            phone::start(app.handle());
             // New, renamed or removed languages change the capture menu.
             let h = app.handle().clone();
             app.listen_any("library-changed", move |_| capture::refresh_tray(&h));
@@ -1313,6 +1318,8 @@ fn main() {
             capture::follow_open_language,
             bridge::get_bridge,
             bridge::set_bridge,
+            phone::get_phone,
+            phone::set_phone,
             features::import_model_bytes,
             features::backfill_palettes,
             features::language_palette,

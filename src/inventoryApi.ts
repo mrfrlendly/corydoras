@@ -1,5 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import type { AppInfo } from './api';
+import { frameDrafts } from './inventoryFrame';
 
 export interface SupplierListing {
   title: string;
@@ -74,12 +75,7 @@ async function save(id: string | null, draft: InventoryDraft, change?: File | 'r
 /** Save the reviewed items of one photo in one request. Either all are saved or none. */
 async function saveBatch(drafts: InventoryDraft[], photo: File): Promise<InventoryItem[]> {
   if (!photo.size || photo.size > maxPhotoBytes) throw new Error('Select a nonempty photo of 12 MiB or less.');
-  const meta = new TextEncoder().encode(JSON.stringify({ drafts }));
-  const frame = new Uint8Array(4 + meta.length + photo.size);
-  new DataView(frame.buffer).setUint32(0, meta.length, false);
-  frame.set(meta, 4);
-  frame.set(new Uint8Array(await photo.arrayBuffer()), 4 + meta.length);
-  return invoke<InventoryItem[]>('save_inventory_batch', frame);
+  return invoke<InventoryItem[]>('save_inventory_batch', await frameDrafts(drafts, photo));
 }
 
 export const inventoryApi = {

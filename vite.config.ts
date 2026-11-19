@@ -14,5 +14,7 @@ export default defineConfig({
     target: 'safari15',
     outDir: 'dist',
     emptyOutDir: true,
+    // The desktop app, and the page that the phone link serves on the Wi-Fi.
+    rollupOptions: { input: { main: 'index.html', phone: 'phone.html' } },
   },
 });

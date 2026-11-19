@@ -17,6 +17,7 @@ use tauri::test::{mock_builder, mock_context, noop_assets, MockRuntime, INVOKE_K
 use tauri::WebviewWindow;
 
 mod inventory_photo;
+mod phone;
 
 const API_TS: &str = include_str!("../../src/api.ts");
 
@@ -134,6 +135,8 @@ fn app_with(lib: Arc<Library>) -> tauri::App<MockRuntime> {
             inventory::delete_inventory,
             inventory::read_inventory_label,
             inventory::search_inventory_listings,
+            crate::phone::get_phone,
+            crate::phone::set_phone,
             features::import_model_bytes,
             features::backfill_palettes,
             features::language_palette,
@@ -208,8 +211,19 @@ fn commands_take_what_the_frontend_sends() {
     cmd("delete_inventory", json!({"id":added["id"]})).unwrap();
     assert_eq!(cmd("list_inventory", json!({})).unwrap(), json!([]));
 
+    // The Mac and the phone share one label reader: a second read waits for none and spends nothing.
+    let held = inventory::READER.try_acquire().unwrap();
+    let png = base64::engine::general_purpose::STANDARD.decode(PNG).unwrap();
+    assert_eq!(
+        send(&w, "read_inventory_label", InvokeBody::Raw(png), Default::default()).unwrap_err(),
+        "Wait for the current label to finish."
+    );
+    drop(held);
+
     inventory_photo::reviewed_record(&w, &lib);
     inventory_photo::batch_record(&w, &lib);
+    phone::phone_link(&app, &w, &lib);
+    phone::bridge_still_answers(&app);
 
     let lang = lib.create_language("Soft shell", "").unwrap();
     assert_eq!(lib.save_manual_spec(&lang.id, &spec([2.0, 4.0]), "test").unwrap(), 1);

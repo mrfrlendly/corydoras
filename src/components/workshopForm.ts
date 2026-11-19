@@ -1,8 +1,16 @@
-import type { InventoryDraft, InventoryItem, Spec } from '../inventoryApi';
+import type { InventoryDraft, InventoryItem, Spec, SpecSource } from '../inventoryApi';
 
 export type WorkshopForm = Omit<InventoryDraft, 'quantity' | 'pack_quantity'> & {
   quantity: string;
   pack_quantity: string;
+};
+
+/** Where a spec came from, in the words the Mac and the phone show. */
+export const sourceLabel: Record<SpecSource, string> = {
+  label: 'Printed',
+  notation: 'Printed, role read from notation',
+  standard: 'Standard, not measured',
+  entered: 'Entered',
 };
 
 export const LABEL_CATEGORIES = [
@@ -69,6 +77,14 @@ export function withSpecs(form: WorkshopForm, specs: Spec[]): WorkshopForm {
 
 export function removeSpec(specs: Spec[], index: number): Spec[] {
   return specs.filter((_, i) => i !== index);
+}
+
+/** Removes one spec on the phone. When the last spec goes, its generated Dimensions text goes too, so a removed
+ *  wrong value is not saved as text; text the designer typed stays. */
+export function removeSpecRow(form: WorkshopForm, index: number): WorkshopForm {
+  const generated = form.specs.length > 0 && form.dimensions === specSummary(form.specs);
+  const next = withSpecs(form, removeSpec(form.specs, index));
+  return next.specs.length === 0 && generated ? { ...next, dimensions: '' } : next;
 }
 
 export function reviewLabel(form: WorkshopForm, label: InventoryDraft): WorkshopForm {

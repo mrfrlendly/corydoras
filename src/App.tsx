@@ -77,6 +77,9 @@ function Shell() {
           run: () => setView({ kind: 'language', id: e.payload.language_id }),
         }),
       ),
+      listen<{ count: number; library: string }>('phone-added', (e) =>
+        toast.info(e.payload.count === 1 ? '1 item added from your phone.' : `${e.payload.count} items added from your phone.`),
+      ),
       listen('open-settings', () => setView({ kind: 'settings' })),
     ];
     return () => {
@@ -207,7 +210,7 @@ function Shell() {
         )}
         {view.kind === 'inventory' && info.inventory_enabled && (
           <Suspense fallback={<p className="muted" role="status">Opening workshop inventory…</p>}>
-            <WorkshopInventory key={info.library_path} />
+            <WorkshopInventory key={info.library_path} tick={tick} />
           </Suspense>
         )}
         {view.kind === 'settings' && <SettingsView info={info} onInfo={setInfo} status={status} onChanged={bump} />}

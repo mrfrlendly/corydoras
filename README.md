@@ -124,6 +124,10 @@ Design agents use this inventory to confirm parts, materials, and tools. The MCP
 
 The comparison uses the last recorded count of whole items. For filament, this means spools. For hardware sold in packs, one item is one piece. It cannot confirm the remaining mass of filament, length of tape, or contents of a kit. A lower count indicates a shortage. An unknown count or a missing match leaves availability unconfirmed. Supplier listings and package counts do not confirm stock. When the module is off, the tools return `disabled` and withhold inventory records.
 
+### Add items from your phone
+
+Open **Settings → Phone** and select **Let my phone add inventory items over Wi-Fi**, then scan the QR code with your phone's camera. The page that opens takes a label photo, sends it to the Mac to be read, and shows one card per item to check before you save. You can remove a spec that was read wrongly; edit values on the Mac. The Mac must be awake, with Corydoras open, on the same Wi-Fi as the phone. The page uses plain HTTP, so use it on a network you trust; only a phone that scanned the current code can read labels or save. **New token** disconnects every phone that scanned the old code. The panel also gives a link by this Mac's `.local` name, which keeps working when the Wi-Fi address changes; some phones cannot open it.
+
 ## Screen capture
 
 The fish in the menu bar captures part of the screen into a language. The keyboard shortcut does the same, from any app; the default is **⌃⌥⌘C** (Control-Option-Command-C).

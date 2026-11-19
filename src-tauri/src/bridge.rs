@@ -11,18 +11,17 @@
 //!   POST /v1/items   {language?, image_url, page_url?, title?}  -> adds an image
 //!   POST /v1/sources {language?, url}                           -> adds a page as a source
 
-use crate::{capture, AppState, CmdResult};
+use crate::{capture, http, AppState, CmdResult};
 use corydoras_core::{analysis, config::AppConfig, provider, sources, Library};
 use serde::Serialize;
 use serde_json::{json, Value};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use tauri::{AppHandle, Emitter, Manager};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tauri::{AppHandle, Emitter, Manager, Runtime};
+use tokio::io::AsyncWriteExt;
 
 /// Largest request body: an image sent as a data URL.
 const MAX_BODY: usize = 30 * 1024 * 1024;
-const MAX_HEADERS: usize = 32 * 1024;
 
 #[derive(Default)]
 pub struct BridgeState {
@@ -41,7 +40,7 @@ pub struct BridgeView {
     pub error: Option<String>,
 }
 
-fn new_token() -> String {
+pub(crate) fn new_token() -> String {
     format!("{}{}", uuid::Uuid::new_v4().simple(), uuid::Uuid::new_v4().simple())
 }
 
@@ -88,70 +87,19 @@ pub fn start(app: &AppHandle) {
         loop {
             tokio::select! {
                 _ = rx.changed() => break,
-                accepted = listener.accept() => {
-                    if let Ok((stream, _)) = accepted {
+                accepted = listener.accept() => match accepted {
+                    Ok((stream, _)) => {
                         let (app3, token) = (app2.clone(), token.clone());
                         tauri::async_runtime::spawn(async move {
                             let _ = tokio::time::timeout(Duration::from_secs(120), serve(stream, app3, token)).await;
                         });
                     }
+                    // Out of open files, for example: wait instead of spinning.
+                    Err(_) => tokio::time::sleep(Duration::from_millis(100)).await,
                 }
             }
         }
     });
-}
-
-struct Request {
-    method: String,
-    path: String,
-    token: String,
-    origin: String,
-    body: Vec<u8>,
-}
-
-async fn read_request(stream: &mut tokio::net::TcpStream) -> Option<Request> {
-    let mut buf: Vec<u8> = Vec::new();
-    let mut chunk = [0u8; 8192];
-    let head_end = loop {
-        if let Some(i) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
-            break i;
-        }
-        if buf.len() > MAX_HEADERS {
-            return None;
-        }
-        let n = tokio::time::timeout(Duration::from_secs(10), stream.read(&mut chunk)).await.ok()?.ok()?;
-        if n == 0 {
-            return None;
-        }
-        buf.extend_from_slice(&chunk[..n]);
-    };
-    let head = String::from_utf8_lossy(&buf[..head_end]).into_owned();
-    let mut lines = head.split("\r\n");
-    let mut first = lines.next()?.split_whitespace();
-    let (method, path) = (first.next()?.to_string(), first.next()?.to_string());
-    let (mut token, mut origin, mut length) = (String::new(), String::new(), 0usize);
-    for line in lines {
-        let Some((k, v)) = line.split_once(':') else { continue };
-        match k.trim().to_lowercase().as_str() {
-            "authorization" => token = v.trim().strip_prefix("Bearer ").unwrap_or("").trim().to_string(),
-            "origin" => origin = v.trim().to_string(),
-            "content-length" => length = v.trim().parse().unwrap_or(0),
-            _ => {}
-        }
-    }
-    if length > MAX_BODY {
-        return None;
-    }
-    let mut body = buf[head_end + 4..].to_vec();
-    while body.len() < length {
-        let n = tokio::time::timeout(Duration::from_secs(30), stream.read(&mut chunk)).await.ok()?.ok()?;
-        if n == 0 {
-            break;
-        }
-        body.extend_from_slice(&chunk[..n]);
-    }
-    body.truncate(length);
-    Some(Request { method, path, token, origin, body })
 }
 
 /// Only an extension may read the answer in a browser. A web page gets no permission.
@@ -178,24 +126,28 @@ fn response(status: u16, body: &Value, origin: &str) -> Vec<u8> {
     format!("HTTP/1.1 {status} {reason}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nCache-Control: no-store\r\n{cors}Connection: close\r\n\r\n{text}", text.len()).into_bytes()
 }
 
-fn same(a: &str, b: &str) -> bool {
-    // Compare every byte, so the time does not tell where two tokens differ.
-    a.len() == b.len() && a.bytes().zip(b.bytes()).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
-}
-
-async fn serve(mut stream: tokio::net::TcpStream, app: AppHandle, token: Arc<String>) {
-    let Some(req) = read_request(&mut stream).await else {
-        let _ = stream.write_all(&response(400, &json!({"error": "The request is not readable or too large."}), "")).await;
+/// Answers one request on `stream` and closes it.
+pub(crate) async fn serve<R: Runtime>(mut stream: tokio::net::TcpStream, app: AppHandle<R>, token: Arc<String>) {
+    let unreadable = |origin: &str| response(400, &json!({"error": "The request is not readable or too large."}), origin);
+    let Some((head, already)) = http::read_head(&mut stream).await else {
+        let _ = stream.write_all(&unreadable("")).await;
         return;
     };
-    let out = if req.method == "OPTIONS" {
-        response(204, &json!({}), &req.origin)
-    } else if !same(&req.token, &token) {
-        response(401, &json!({"error": "The token is missing or wrong. Copy it from Corydoras › Settings › Browser extension."}), &req.origin)
+    let out = if head.method == "OPTIONS" {
+        response(204, &json!({}), &head.origin)
+    } else if !http::same_token(&head.bearer, &token) {
+        response(401, &json!({"error": "The token is missing or wrong. Copy it from Corydoras › Settings › Browser extension."}), &head.origin)
     } else {
-        match route(&app, &req).await {
-            Ok(v) => response(200, &v, &req.origin),
-            Err((status, e)) => response(status, &json!({"error": e}), &req.origin),
+        let length = if head.method == "POST" { head.content_length } else { Some(head.content_length.unwrap_or(0)) };
+        match length.filter(|n| *n <= MAX_BODY) {
+            None => unreadable(&head.origin),
+            Some(length) => match http::read_body(&mut stream, already, length).await {
+                None => unreadable(&head.origin),
+                Some(body) => match route(&app, &head.method, &head.path, &body).await {
+                    Ok(v) => response(200, &v, &head.origin),
+                    Err((status, e)) => response(status, &json!({"error": e}), &head.origin),
+                },
+            },
         }
     };
     let _ = stream.write_all(&out).await;
@@ -204,7 +156,7 @@ async fn serve(mut stream: tokio::net::TcpStream, app: AppHandle, token: Arc<Str
 
 type Routed = Result<Value, (u16, String)>;
 
-fn library(app: &AppHandle) -> Result<Arc<Library>, (u16, String)> {
+fn library<R: Runtime>(app: &AppHandle<R>) -> Result<Arc<Library>, (u16, String)> {
     crate::lib(&app.state::<AppState>()).map_err(|e| (400, e))
 }
 
@@ -216,10 +168,10 @@ fn language_of(lib: &Library, body: &Value) -> Result<corydoras_core::models::La
     }
 }
 
-async fn route(app: &AppHandle, req: &Request) -> Routed {
-    let path = req.path.split('?').next().unwrap_or("");
+async fn route<R: Runtime>(app: &AppHandle<R>, method: &str, path: &str, body: &[u8]) -> Routed {
+    let path = path.split('?').next().unwrap_or("");
     let bad = |e: String| (400u16, e);
-    match (req.method.as_str(), path) {
+    match (method, path) {
         ("GET", "/v1/languages") => {
             let lib = library(app)?;
             let target = capture::target_language(&lib, &AppConfig::load().capture).map(|l| l.id);
@@ -232,7 +184,7 @@ async fn route(app: &AppHandle, req: &Request) -> Routed {
             }))
         }
         ("POST", "/v1/items") => {
-            let body: Value = serde_json::from_slice(&req.body).map_err(|_| bad("The body must be JSON.".into()))?;
+            let body: Value = serde_json::from_slice(body).map_err(|_| bad("The body must be JSON.".into()))?;
             let lib = library(app)?;
             let lang = language_of(&lib, &body)?;
             let image = body.get("image_url").and_then(|v| v.as_str()).map(str::trim).filter(|s| !s.is_empty()).ok_or_else(|| bad("\"image_url\" is necessary.".into()))?;
@@ -258,7 +210,7 @@ async fn route(app: &AppHandle, req: &Request) -> Routed {
             Ok(json!({"ok": true, "language": lang.name, "item": item.id, "duplicate": before}))
         }
         ("POST", "/v1/sources") => {
-            let body: Value = serde_json::from_slice(&req.body).map_err(|_| bad("The body must be JSON.".into()))?;
+            let body: Value = serde_json::from_slice(body).map_err(|_| bad("The body must be JSON.".into()))?;
             let lib = library(app)?;
             let lang = language_of(&lib, &body)?;
             let url = body.get("url").and_then(|v| v.as_str()).map(str::trim).filter(|s| s.starts_with("http")).ok_or_else(|| bad("\"url\" must be an http or https link.".into()))?.to_string();

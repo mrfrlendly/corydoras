@@ -870,6 +870,18 @@ export interface BoardHit {
   snippets: string[];
 }
 
+/** The phone link: a page on the Wi-Fi for adding inventory items from a phone. */
+export interface PhoneView {
+  enabled: boolean;
+  port: number;
+  running: boolean;
+  error: string | null;
+  /** The address with the token, for the QR code. Only while running and on a network. */
+  url: string | null;
+  local_url: string | null;
+  qr_svg: string | null;
+}
+
 export interface BridgeView {
   enabled: boolean;
   port: number;
@@ -1041,6 +1053,9 @@ export const api = {
   usageInsight: (languageId: string, days: number) => invoke<UsageInsight>('usage_insight', { languageId, days }),
   previewBoard: (url: string) => invoke<BoardPreview>('preview_board', { url }),
   importBoard: (languageId: string, url: string) => invoke<BoardImportSummary>('import_board', { languageId, url }),
+  getPhone: () => invoke<PhoneView>('get_phone'),
+  setPhone: (enabled: boolean, port: number, newTokenNow: boolean) =>
+    invoke<PhoneView>('set_phone', { enabled, port, newTokenNow }),
   getBridge: () => invoke<BridgeView>('get_bridge'),
   setBridge: (enabled: boolean, port: number, newTokenNow: boolean) =>
     invoke<BridgeView>('set_bridge', { enabled, port, newTokenNow }),

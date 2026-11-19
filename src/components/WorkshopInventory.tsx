@@ -17,7 +17,8 @@ function readSort(): ListSort {
   catch { return defaultListSort; }
 }
 
-export default function WorkshopInventory() {
+/** `tick` changes when the library changes elsewhere (for example a save from the phone): the list reloads, an open editor stays. */
+export default function WorkshopInventory({ tick = 0 }: { tick?: number }) {
   const toast = useToast();
   const [items, setItems] = useState<InventoryItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -43,6 +44,17 @@ export default function WorkshopInventory() {
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
   }, [retry]);
+
+  // A quiet reload: no loading state, and the editor or review stays as it is.
+  const firstTick = useRef(tick);
+  useEffect(() => {
+    if (tick === firstTick.current) return;
+    let active = true;
+    inventoryApi.list()
+      .then(result => { if (active) setItems(result); })
+      .catch(() => { /* the list on screen stays; Retry is there if the next load fails */ });
+    return () => { active = false; };
+  }, [tick]);
 
   const categories = useMemo(() => [...new Set(items.map(i => i.category))].sort((a, b) => a.localeCompare(b)), [items]);
   const effectiveCategory = categories.includes(category) ? category : '';

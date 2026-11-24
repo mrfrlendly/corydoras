@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { blankForm, editForm, matchingItems, reviewLabel, saveDraft } from '../src/components/workshopForm.ts';
+import { blankForm, duplicateForm, editForm, matchingItems, parsePrice, priceText, reviewLabel, saveDraft } from '../src/components/workshopForm.ts';
 
 test('review preserves manual changes and treats a package count separately from stock', () => {
   const form = { ...blankForm(), brand: 'Brand from the user', quantity: '0' };
@@ -144,4 +144,108 @@ test('adding the first spec keeps the typed Dimensions text in the notes', async
   const two = withSpecs(one, [...one.specs, spec('length', '5.7', 'mm', 'entered')]);
   assert.equal(two.notes, one.notes);
   assert.equal(withSpecs({ ...blankForm(), dimensions: '' }, [spec('length', '5', 'mm', 'entered')]).notes, '');
+});
+
+test('a price is typed in dollars and saved as whole cents', () => {
+  assert.equal(parsePrice(''), null);
+  assert.equal(parsePrice('  '), null);
+  assert.equal(parsePrice('9.99'), 999);
+  assert.equal(parsePrice('$9.99'), 999);
+  assert.equal(parsePrice('$ 9.99'), 999);
+  assert.equal(parsePrice('1,234.50'), 123450);
+  assert.equal(parsePrice('12'), 1200);
+  assert.equal(parsePrice('0'), 0);
+  assert.equal(parsePrice('0.5'), 50);
+  assert.equal(parsePrice('.5'), 50);
+  assert.equal(parsePrice('19.90'), 1990);
+  // 1.15 * 100 and 0.29 * 100 lose cents in floating point; the text is converted without them.
+  assert.equal(parsePrice('1.15'), 115);
+  assert.equal(parsePrice('0.29'), 29);
+  assert.equal(parsePrice('4.35'), 435);
+  for (const bad of ['abc', '9.99x', '1.2.3', '1,23', '12,34.5', '9.', '.', '$', '$$5', '1e3']) {
+    assert.throws(() => parsePrice(bad), /price in dollars/, bad);
+  }
+  assert.throws(() => parsePrice('-1'), /0 or more/);
+  assert.throws(() => parsePrice('$-1.00'), /0 or more/);
+  assert.throws(() => parsePrice('9.999'), /at most two decimals/);
+  assert.throws(() => parsePrice('99999999999'), /or less/);
+});
+
+test('price text for editing round-trips cents', () => {
+  assert.equal(priceText(null), '');
+  assert.equal(priceText(undefined), '');
+  assert.equal(priceText(999), '9.99');
+  assert.equal(priceText(0), '0.00');
+  assert.equal(priceText(5), '0.05');
+  assert.equal(priceText(123450), '1234.50');
+  for (const cents of [0, 5, 115, 999, 123450, 1_000_000_000_000]) assert.equal(parsePrice(priceText(cents)), cents);
+});
+
+test('the price survives the form, a save, a label review and an old stored form', () => {
+  const draft = saveDraft({ ...blankForm(), name: 'PLA', price: '$24.99' });
+  assert.equal(draft.price_cents, 2499);
+  assert.equal('price' in draft, false);
+  assert.equal(editForm(draft).price, '24.99');
+  assert.equal(saveDraft({ ...blankForm(), name: 'x' }).price_cents, null);
+  assert.throws(() => saveDraft({ ...blankForm(), name: 'x', price: '9.999' }), /two decimals/);
+  // A card stored by an older phone session has no price field.
+  const old = { ...blankForm(), name: 'x' };
+  delete old.price;
+  assert.equal(saveDraft(old).price_cents, null);
+  const label = { ...saveDraft({ ...blankForm(), name: 'PLA' }), price_cents: 1250 };
+  assert.equal(reviewLabel(blankForm(), label).price, '12.50');
+  assert.equal(reviewLabel({ ...blankForm(), price: '3.00' }, label).price, '3.00');
+  assert.equal(reviewLabel(blankForm(), { ...label, price_cents: null }).price, '');
+});
+
+test('duplicating an item keeps its fields, clears the count and copies no photo', () => {
+  const spec = { role: 'thread', name: '', value: 'M3', unit: '', tolerance: '', source: 'label', evidence: 'M3' };
+  const supplier = { title: 'Shop', url: 'https://shop.example.com/m3', details: '' };
+  const item = { ...saveDraft({ ...blankForm(), name: 'M3 insert', category: 'Fasteners', brand: 'Acme', part_number: 'I-3',
+    colour: 'brass', quantity: '40', pack_quantity: '50', price: '9.99', notes: 'for PLA', specs: [spec], supplier }),
+    id: 'abc', photo_key: 'key-1' };
+  const copy = duplicateForm(item);
+  assert.equal(copy.quantity, '');
+  assert.equal(copy.name, 'M3 insert');
+  assert.deepEqual({ ...copy, quantity: '40' }, editForm(item));
+  assert.equal(copy.price, '9.99');
+  assert.equal('photo_key' in copy, false);
+  assert.equal('id' in copy, false);
+  assert.notEqual(copy.specs[0], item.specs[0]);
+  assert.notEqual(copy.supplier, item.supplier);
+  assert.equal(saveDraft(copy).quantity, null);
+});
+
+test('the list can filter to items without a price or without a count', () => {
+  const base = saveDraft({ ...blankForm(), name: 'Part' });
+  const items = [
+    { ...base, id: 'a', price_cents: 100, quantity: 2 },
+    { ...base, id: 'b', price_cents: null, quantity: 2 },
+    { ...base, id: 'c', price_cents: 100, quantity: null },
+    { ...base, id: 'd', price_cents: 0, quantity: 0 },
+    { ...base, id: 'e', price_cents: null, quantity: null, category: 'Tools' },
+  ];
+  const ids = (...args) => matchingItems(items, ...args).map(x => x.id);
+  assert.deepEqual(ids('', '', { noPrice: true }), ['b', 'e']);
+  assert.deepEqual(ids('', '', { noCount: true }), ['c', 'e']);
+  assert.deepEqual(ids('', '', { noPrice: true, noCount: true }), ['e']);
+  assert.deepEqual(ids('', 'Tools', { noPrice: true }), ['e']);
+  assert.deepEqual(ids('', '', {}), ['a', 'b', 'c', 'd', 'e']);
+  assert.deepEqual(ids('', ''), ['a', 'b', 'c', 'd', 'e']);
+});
+
+test('the category filter treats letter case as one category, as the library does', () => {
+  const base = saveDraft({ ...blankForm(), name: 'Part' });
+  const items = [
+    { ...base, id: 'a', category: 'Bolts' },
+    { ...base, id: 'b', category: 'bolts' },
+    { ...base, id: 'c', category: 'Tape' },
+  ];
+  const ids = category => matchingItems(items, '', category).map(x => x.id);
+  assert.deepEqual(ids('Bolts'), ['a', 'b']);
+  assert.deepEqual(ids('BOLTS'), ['a', 'b']);
+  assert.deepEqual(ids('bolts'), ['a', 'b']);
+  assert.deepEqual(ids('Tape'), ['c']);
+  assert.deepEqual(ids('Nuts'), []);
+  assert.deepEqual(ids(''), ['a', 'b', 'c']);
 });

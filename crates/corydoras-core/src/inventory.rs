@@ -15,7 +15,11 @@ const SHORT_FIELD_LIMIT: usize = 512;
 /// The most items one photo may add at once.
 pub const MAX_BATCH: usize = 40;
 // The desktop form sends JSON numbers through JavaScript.
-const MAX_QUANTITY: i64 = (1 << 53) - 1;
+pub(crate) const MAX_QUANTITY: i64 = (1 << 53) - 1;
+/// The largest price of one pack, in cents: ten billion in whole units.
+pub const MAX_PRICE_CENTS: i64 = 1_000_000_000_000;
+/// The units of a measured pack: grams, millilitres and metres. A blank unit counts pieces.
+pub const MEASURE_UNITS: &[&str] = &["g", "mL", "m"];
 
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 pub struct SupplierListing {
@@ -37,6 +41,14 @@ pub struct InventoryDraft {
     pub quantity: Option<i64>,
     /// The number of units per package, as printed on the label.
     pub pack_quantity: Option<i64>,
+    /// The retail price of one pack as bought, in cents of the library currency.
+    pub price_cents: Option<i64>,
+    /// The unit of a measured pack: "" (counted pieces, the default), "g", "mL" or "m".
+    pub measure_unit: String,
+    /// The amount in one full pack, in `measure_unit`, for example 1000 for a 1 kg spool.
+    pub measure_full: Option<i64>,
+    /// The amount in the one opened pack, in `measure_unit`. `quantity` includes that pack.
+    pub measure_left: Option<i64>,
     pub notes: String,
     /// Structured dimensions with their source. When present they generate `dimensions` on save.
     pub specs: Vec<Spec>,
@@ -155,6 +167,13 @@ impl InventoryDraft {
                 "Enter a whole count from 0 to {MAX_QUANTITY}."
             );
         }
+        if let Some(price) = self.price_cents {
+            ensure!(
+                (0..=MAX_PRICE_CENTS).contains(&price),
+                "Enter a price from 0 to 10,000,000,000."
+            );
+        }
+        let (measure_unit, measure_full, measure_left) = self.normalized_measure()?;
         Ok(Self {
             name,
             category: if category.is_empty() {
@@ -168,6 +187,10 @@ impl InventoryDraft {
             dimensions: field(&self.dimensions, "The dimensions", 2048)?,
             quantity: self.quantity,
             pack_quantity: self.pack_quantity,
+            price_cents: self.price_cents,
+            measure_unit,
+            measure_full,
+            measure_left,
             notes: field(&self.notes, "The notes", 8192)?,
             specs: inventory_specs::normalized(&self.specs)?,
             supplier: self
@@ -176,6 +199,62 @@ impl InventoryDraft {
                 .map(SupplierListing::normalized)
                 .transpose()?,
         })
+    }
+}
+
+impl InventoryDraft {
+    /// Checks the measured pack. A count of zero leaves no opened pack, so it clears the amount left.
+    fn normalized_measure(&self) -> Result<(String, Option<i64>, Option<i64>)> {
+        let unit = self.measure_unit.as_str();
+        ensure!(
+            unit.is_empty() || MEASURE_UNITS.contains(&unit),
+            "Choose g, mL or m as the unit of a measured pack, or leave the unit blank to count pieces."
+        );
+        let (full, left) = (self.measure_full, self.measure_left);
+        if let Some(full) = full {
+            ensure!(
+                (1..=MAX_QUANTITY).contains(&full),
+                "Enter a full pack amount as a whole number from 1 to {MAX_QUANTITY}."
+            );
+        }
+        if let Some(left) = left {
+            ensure!(
+                (0..=MAX_QUANTITY).contains(&left),
+                "Enter the amount left as a whole number from 0 to {MAX_QUANTITY}."
+            );
+        }
+        ensure!(
+            !unit.is_empty() || (full.is_none() && left.is_none()),
+            "Choose a unit before you enter a full pack amount or an amount left."
+        );
+        ensure!(
+            left.is_none() || full.is_some(),
+            "Enter the full pack amount before the amount left in the opened pack."
+        );
+        if let (Some(full), Some(left)) = (full, left) {
+            ensure!(
+                left <= full,
+                "The amount left in the opened pack cannot be more than the full pack."
+            );
+        }
+        let left = if self.quantity == Some(0) { None } else { left };
+        Ok((unit.to_owned(), full, left))
+    }
+
+    /// The whole amount on hand in `measure_unit`, as far as the record says. A pack count of zero
+    /// is zero. Otherwise the opened pack counts only what is left in it. None when there is no
+    /// unit, no full pack amount or no count, because then the amount is unknown.
+    pub fn total_amount(&self) -> Option<i64> {
+        let full = self
+            .measure_full
+            .filter(|_| !self.measure_unit.is_empty())?;
+        let packs = self.quantity?;
+        let total = match (packs, self.measure_left) {
+            (0, _) => Some(0),
+            (packs, Some(left)) => (packs - 1).checked_mul(full)?.checked_add(left),
+            (packs, None) => packs.checked_mul(full),
+        };
+        total.filter(|total| (0..=MAX_QUANTITY).contains(total))
     }
 }
 
@@ -200,6 +279,10 @@ pub(crate) fn inventory_row(row: &Row<'_>) -> rusqlite::Result<InventoryItem> {
             dimensions: row.get(5)?,
             quantity: row.get(6)?,
             pack_quantity: row.get(7)?,
+            price_cents: row.get(15)?,
+            measure_unit: row.get(16)?,
+            measure_full: row.get(17)?,
+            measure_left: row.get(18)?,
             notes: row.get(8)?,
             specs: serde_json::from_str(&row.get::<_, String>(14)?).map_err(|e| {
                 rusqlite::Error::FromSqlConversionFailure(
@@ -212,6 +295,12 @@ pub(crate) fn inventory_row(row: &Row<'_>) -> rusqlite::Result<InventoryItem> {
         },
     })
 }
+
+/// Every column of an item in the order that `inventory_row` reads them.
+pub(crate) const SELECT_ITEMS: &str = "SELECT id, name, category, brand, part_number, dimensions,
+        quantity, pack_quantity, notes, supplier_url, supplier_title, supplier_details, colour,
+        photo_key, specs, price_cents, measure_unit, measure_full, measure_left
+        FROM workshop_inventory";
 
 pub(crate) fn inventory_enabled(conn: &Connection) -> Result<bool> {
     Ok(conn.query_row(
@@ -237,11 +326,7 @@ impl Library {
 
     pub fn list_inventory(&self) -> Result<Vec<InventoryItem>> {
         let conn = self.c();
-        let mut stmt = conn.prepare(
-            "SELECT id, name, category, brand, part_number, dimensions, quantity, pack_quantity,
-                    notes, supplier_url, supplier_title, supplier_details, colour, photo_key, specs
-             FROM workshop_inventory ORDER BY name COLLATE NOCASE, id",
-        )?;
+        let mut stmt = conn.prepare(&format!("{SELECT_ITEMS} ORDER BY name COLLATE NOCASE, id"))?;
         let items = stmt
             .query_map([], inventory_row)?
             .collect::<rusqlite::Result<_>>()?;
@@ -283,11 +368,13 @@ impl Library {
             "UPDATE workshop_inventory SET name=?2, category=?3, brand=?4, part_number=?5,
                  dimensions=?6, quantity=?7, pack_quantity=?8, notes=?9, supplier_url=?10,
                  supplier_title=?11, supplier_details=?12, colour=?13, specs=?16,
+                 price_cents=?17, measure_unit=?18, measure_full=?19, measure_left=?20,
                  photo_key=CASE WHEN ?15 THEN photo_key ELSE ?14 END WHERE id=?1 RETURNING photo_key"
         } else {
             "INSERT INTO workshop_inventory (id,name,category,brand,part_number,dimensions,
-                 quantity,pack_quantity,notes,supplier_url,supplier_title,supplier_details,colour,photo_key,specs)
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,CASE WHEN ?15 THEN NULL ELSE ?14 END,?16)
+                 quantity,pack_quantity,notes,supplier_url,supplier_title,supplier_details,colour,photo_key,specs,
+                 price_cents,measure_unit,measure_full,measure_left)
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,CASE WHEN ?15 THEN NULL ELSE ?14 END,?16,?17,?18,?19,?20)
              RETURNING photo_key"
         };
         let photo_key = tx
@@ -310,6 +397,10 @@ impl Library {
                     key,
                     matches!(change, InventoryPhotoChange::Keep),
                     specs,
+                    draft.price_cents,
+                    draft.measure_unit,
+                    draft.measure_full,
+                    draft.measure_left,
                 ],
                 |row| row.get(0),
             )
@@ -354,8 +445,8 @@ impl Library {
             tx.execute(
                 "INSERT INTO workshop_inventory (id,name,category,brand,part_number,dimensions,
                      quantity,pack_quantity,notes,supplier_url,supplier_title,supplier_details,
-                     colour,photo_key,specs)
-                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15)",
+                     colour,photo_key,specs,price_cents,measure_unit,measure_full,measure_left)
+                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19)",
                 params![
                     id,
                     draft.name,
@@ -372,6 +463,10 @@ impl Library {
                     draft.colour,
                     photo.key,
                     serde_json::to_string(&draft.specs)?,
+                    draft.price_cents,
+                    draft.measure_unit,
+                    draft.measure_full,
+                    draft.measure_left,
                 ],
             )?;
             items.push(InventoryItem {

@@ -1,11 +1,16 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
-import { Camera, Trash2 } from 'lucide-react';
+import { Camera, Copy, Trash2 } from 'lucide-react';
 import { errText } from '../api';
-import { inventoryApi, type InventoryDraft, type InventoryItem } from '../inventoryApi';
+import { inventoryApi, type InventoryDraft, type InventoryItem, type MeasureUnit } from '../inventoryApi';
 import { useConfirmRow } from './useConfirmRow';
 import WorkshopSpecsTable from './WorkshopSpecsTable';
 import WorkshopSupplier, { type SearchState } from './WorkshopSupplier';
-import { blankForm, editForm, LABEL_CATEGORIES, reviewLabel, saveDraft, specSummary, validateItemPhoto, withSpecs, type WorkshopForm } from './workshopForm';
+import { pieceHint } from './workshopActions.ts';
+import { formatAmount } from './workshopColumns.ts';
+import {
+  blankForm, chooseUnit, editForm, formTotalAmount, fullFromSpecs, LABEL_CATEGORIES, measureUnitOptions, reviewLabel, saveDraft,
+  specSummary, validateItemPhoto, withSpecs, type WorkshopForm,
+} from './workshopForm';
 import './workshopPhotoEditor.css';
 
 interface Props {
@@ -16,6 +21,14 @@ interface Props {
   onCancel: () => void;
   /** A photo that shows several items goes to the review list with the drafts already read. */
   onReviewMany: (file: File, drafts: InventoryDraft[]) => void;
+  /** Three-letter currency code of the library, for the price label. */
+  currency: string;
+  /** Start a new item from this one (Duplicate item). Only offered when an item is open. */
+  onDuplicate?: (item: InventoryItem) => void;
+  /** A new item that starts with these values, for a copy. */
+  initialForm?: WorkshopForm;
+  /** The name of the item that `initialForm` was copied from. */
+  copyOf?: string;
 }
 
 const identifierFields = new Set(['name', 'brand', 'part_number']);
@@ -64,8 +77,8 @@ function usePhotoPreview(key: string | null, change: PhotoChange) {
   return preview;
 }
 
-export default function WorkshopItemEditor({ item, categories, onSaved, onRemoved, onCancel, onReviewMany }: Props) {
-  const [form, setForm] = useState<WorkshopForm>(() => item ? editForm(item) : blankForm());
+export default function WorkshopItemEditor({ item, categories, onSaved, onRemoved, onCancel, onReviewMany, currency, onDuplicate, initialForm, copyOf }: Props) {
+  const [form, setForm] = useState<WorkshopForm>(() => item ? editForm(item) : initialForm ?? blankForm());
   const [busy, setBusy] = useState<'idle' | 'attach' | 'photo' | 'save' | 'delete'>('idle');
   const [autoSearch, setAutoSearch] = useState(true);
   const [manualLink, setManualLink] = useState(false);
@@ -85,6 +98,10 @@ export default function WorkshopItemEditor({ item, categories, onSaved, onRemove
   const searchRequest = useRef(0);
   const saving = busy === 'save' || busy === 'delete';
   const options = [...new Set([...LABEL_CATEGORIES, ...categories])];
+  const perPiece = pieceHint(form.price, form.pack_quantity, currency, { unit: form.measure_unit ?? '', full: form.measure_full ?? '' });
+  const unit = form.measure_unit ?? '';
+  const total = unit ? formTotalAmount(form) : null;
+  const labelFull = unit ? fullFromSpecs(form.specs, unit) : null;
   const query = [form.brand, form.name, form.part_number].map(s => s.trim()).filter(Boolean).join(' ');
 
   useEffect(() => {
@@ -178,6 +195,7 @@ export default function WorkshopItemEditor({ item, categories, onSaved, onRemove
       <h2 ref={heading} tabIndex={-1}>{item ? 'Edit item' : 'Add item'}</h2>
       <button type="button" className="btn small" disabled={saving} onClick={onCancel}>Cancel</button>
     </div>
+    {copyOf && !item && <p className="small muted workshop-copy-note">Copy of {copyOf}. The count and photo are not copied.</p>}
     <section className="panel workshop-photo workshop-editor-photo" aria-labelledby="item-photo-heading">
       <h3 id="item-photo-heading"><Camera size={16} aria-hidden="true" /> Item photo</h3>
       <div className="workshop-editor-photo-row">
@@ -229,6 +247,44 @@ export default function WorkshopItemEditor({ item, categories, onSaved, onRemove
               <input type="text" inputMode="numeric" pattern="[0-9]+" title="Enter a whole number." maxLength={16}
                 placeholder="Unknown" value={form[key]} onChange={e => update(key, e.target.value)} />
             </label>)}
+          <div className="workshop-price">
+            <label className="field"><span>Price per pack ({currency})</span>
+              <input type="text" inputMode="decimal" maxLength={20} placeholder="Unknown" value={form.price}
+                aria-describedby={perPiece ? 'item-price-piece' : undefined}
+                onChange={e => update('price', e.target.value)} />
+            </label>
+            {perPiece && <span className="small muted" id="item-price-piece">{perPiece}</span>}
+          </div>
+          <fieldset className="workshop-measure workshop-wide">
+            <legend>Measured pack</legend>
+            <div className="workshop-measure-row">
+              <label className="field"><span>Unit</span>
+                <select className="select" value={unit} onChange={e => setForm(previous => chooseUnit(previous, e.target.value as MeasureUnit))}>
+                  {measureUnitOptions.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+                </select>
+              </label>
+              {unit && <>
+                <div className="workshop-measure-full">
+                  <label className="field"><span>Full pack ({unit})</span>
+                    <input type="text" inputMode="numeric" pattern="[0-9]+" title="Enter a whole number." maxLength={16}
+                      placeholder="e.g. 1000" value={form.measure_full} onChange={e => update('measure_full', e.target.value)} />
+                  </label>
+                  {labelFull !== null && form.measure_full.trim() !== String(labelFull) && <button type="button"
+                    className="link-btn small" onClick={() => update('measure_full', String(labelFull))}>
+                    Use label weight ({formatAmount(labelFull, unit)})</button>}
+                </div>
+                <label className="field"><span>Left in the opened pack ({unit})</span>
+                  <input type="text" inputMode="numeric" pattern="[0-9]+" title="Enter a whole number." maxLength={16}
+                    placeholder="Not recorded" value={form.measure_left} onChange={e => update('measure_left', e.target.value)} />
+                </label>
+              </>}
+            </div>
+            {unit ? <>
+              <p className="small muted">On hand counts whole packs including the opened one.</p>
+              <p className="small workshop-measure-total" aria-live="polite">
+                {total !== null ? `Total about ${formatAmount(total, unit)}` : ''}</p>
+            </> : <p className="small muted">Choose a unit for filament, liquids or cable that is used from a pack.</p>}
+          </fieldset>
           <label className="field workshop-wide"><span>Notes</span><textarea rows={2} maxLength={8192} value={form.notes}
             onChange={e => update('notes', e.target.value)} /></label>
         </div>
@@ -248,6 +304,8 @@ export default function WorkshopItemEditor({ item, categories, onSaved, onRemove
       </div>
     </div>}
     <div className="workshop-actions">
+      {item && onDuplicate && !confirmDelete && <button type="button" className="btn small" disabled={busy !== 'idle'}
+        onClick={() => onDuplicate(item)}><Copy size={13} aria-hidden="true" /> Duplicate item</button>}
       {item && !confirmDelete && <button type="button" ref={trigger} className="btn small ghost-danger" disabled={busy !== 'idle'}
         onClick={() => setConfirmDelete(true)}><Trash2 size={13} aria-hidden="true" /> Delete item</button>}
       <button type="submit" className="btn primary" disabled={busy !== 'idle' || confirmDelete || manualLink}>Save item</button>

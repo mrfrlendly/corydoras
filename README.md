@@ -124,6 +124,20 @@ Design agents use this inventory to confirm parts, materials, and tools. The MCP
 
 The comparison uses the last recorded count of whole items. For filament, this means spools. For hardware sold in packs, one item is one piece. It cannot confirm the remaining mass of filament, length of tape, or contents of a kit. A lower count indicates a shortage. An unknown count or a missing match leaves availability unconfirmed. Supplier listings and package counts do not confirm stock. When the module is off, the tools return `disabled` and withhold inventory records.
 
+### Columns, categories and price
+
+Each category view has a **Columns** button, and so does **All categories**. Use it to choose which columns show and in what order. A view starts on **Auto**, which shows only the columns that have a value for at least one item in that view. Your choices are stored in the library, so they travel with it. A hidden column only changes the view. Search and the MCP tools still see every field.
+
+Manage categories to create, rename, or merge them, and to set each category's columns. Merging is case-insensitive: "bolts" joins "Bolts" and keeps its name. A category can be deleted only when no item uses it. The library uses one currency, CAD by default. To change it, open Manage categories and edit "Prices are in".
+
+An item's price is the retail price of one pack as bought. Unit price is the price divided by **Per pack**, or the price itself when there is no pack count. Stock value is the count on hand times the unit price. Items without a price are counted as unpriced in the totals. They are never treated as zero.
+
+A pack that you use up, such as a filament spool, is one **On hand** plus a **Measured pack**: choose a unit (g, mL or m), enter the full pack, and enter what is left in the opened pack. On hand counts whole packs including the opened one, so 3 spools with 250 g left in the opened one is about 2,250 g. The **Open pack** column shows the amount with a gauge; click it to change it, Enter saves, Escape cancels. Stepping On hand down assumes the opened pack was used up and clears its remaining amount (stepping up keeps it). For a measured item the unit price is per gram (or mL, or m) and the stock value uses the total amount. Counted parts need no measured pack: 25 magnets per pack with 6 left is On hand 6 and Per pack 25.
+
+Agents see price, currency, and unit price through the MCP tools. Price never confirms stock.
+
+On the list, **-** and **+** change the count on hand by one. **Duplicate item** makes a copy of an item. Press **/** to search and **n** to add an item.
+
 ### Add items from your phone
 
 Open **Settings → Phone** and select **Let my phone add inventory items over Wi-Fi**, then scan the QR code with your phone's camera. The page that opens takes a label photo, sends it to the Mac to be read, and shows one card per item to check before you save. You can remove a spec that was read wrongly; edit values on the Mac. The Mac must be awake, with Corydoras open, on the same Wi-Fi as the phone. The page uses plain HTTP, so use it on a network you trust; only a phone that scanned the current code can read labels or save. **New token** disconnects every phone that scanned the old code. The panel also gives a link by this Mac's `.local` name, which keeps working when the Wi-Fi address changes; some phones cannot open it.

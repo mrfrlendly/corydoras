@@ -4,6 +4,7 @@ use corydoras_core::{
     ai::AiConfig,
     config::AppConfig,
     inventory::{InventoryDraft, InventoryItem, SupplierListing},
+    inventory_categories::{CategoryInfo, ViewSettings},
     inventory_label,
     inventory_media::InventoryPhotoChange,
     inventory_search, Library,
@@ -206,5 +207,84 @@ pub(super) async fn search_inventory_listings(
     enabled_library(&state)?;
     inventory_search::search_listings(&name, &brand, &part_number)
         .await
+        .map_err(e2s)
+}
+
+#[tauri::command]
+pub(super) fn list_inventory_categories(state: State<'_, AppState>) -> CmdResult<Vec<CategoryInfo>> {
+    enabled_library(&state)?.list_categories().map_err(e2s)
+}
+
+#[tauri::command]
+pub(super) fn create_inventory_category(state: State<'_, AppState>, name: String) -> CmdResult<()> {
+    enabled_library(&state)?.create_category(&name).map_err(e2s)
+}
+
+/// Renames a category on every item. When `to` exists this merges. Returns the number of items changed.
+#[tauri::command]
+pub(super) fn rename_inventory_category(
+    state: State<'_, AppState>,
+    from: String,
+    to: String,
+) -> CmdResult<i64> {
+    enabled_library(&state)?
+        .rename_category(&from, &to)
+        .map_err(e2s)
+}
+
+#[tauri::command]
+pub(super) fn delete_inventory_category(state: State<'_, AppState>, name: String) -> CmdResult<()> {
+    enabled_library(&state)?.delete_category(&name).map_err(e2s)
+}
+
+#[tauri::command]
+pub(super) fn set_inventory_category_columns(
+    state: State<'_, AppState>,
+    name: String,
+    columns: Option<Vec<String>>,
+) -> CmdResult<()> {
+    enabled_library(&state)?
+        .set_category_columns(&name, columns)
+        .map_err(e2s)
+}
+
+#[tauri::command]
+pub(super) fn get_inventory_view_settings(state: State<'_, AppState>) -> CmdResult<ViewSettings> {
+    enabled_library(&state)?.view_settings().map_err(e2s)
+}
+
+#[tauri::command]
+pub(super) fn set_inventory_all_columns(
+    state: State<'_, AppState>,
+    columns: Option<Vec<String>>,
+) -> CmdResult<()> {
+    enabled_library(&state)?.set_all_columns(columns).map_err(e2s)
+}
+
+#[tauri::command]
+pub(super) fn set_inventory_currency(state: State<'_, AppState>, code: String) -> CmdResult<()> {
+    enabled_library(&state)?.set_currency(&code).map_err(e2s)
+}
+
+#[tauri::command]
+pub(super) fn set_inventory_quantity(
+    state: State<'_, AppState>,
+    id: String,
+    quantity: i64,
+) -> CmdResult<InventoryItem> {
+    enabled_library(&state)?
+        .set_inventory_quantity(&id, quantity)
+        .map_err(e2s)
+}
+
+/// Records how much is left in the one opened pack, or clears it with null.
+#[tauri::command]
+pub(super) fn set_inventory_open_amount(
+    state: State<'_, AppState>,
+    id: String,
+    left: Option<i64>,
+) -> CmdResult<InventoryItem> {
+    enabled_library(&state)?
+        .set_open_amount(&id, left)
         .map_err(e2s)
 }

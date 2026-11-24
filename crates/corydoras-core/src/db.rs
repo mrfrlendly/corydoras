@@ -117,7 +117,18 @@ CREATE TABLE IF NOT EXISTS workshop_inventory (
     supplier_details TEXT NOT NULL,
     colour           TEXT NOT NULL DEFAULT '',
     photo_key        TEXT REFERENCES workshop_photos(key),
-    specs            TEXT NOT NULL DEFAULT '[]'
+    specs            TEXT NOT NULL DEFAULT '[]',
+    price_cents      INTEGER CHECK (price_cents >= 0),
+    measure_unit     TEXT NOT NULL DEFAULT '',
+    measure_full     INTEGER CHECK (measure_full >= 1),
+    measure_left     INTEGER CHECK (measure_left >= 0)
+);
+
+-- Category settings of the workshop inventory. The item text stays the identity;
+-- this table holds the column choice and categories that have no items yet.
+CREATE TABLE IF NOT EXISTS workshop_categories (
+    name    TEXT PRIMARY KEY COLLATE NOCASE,
+    columns TEXT
 );
 
 CREATE TABLE IF NOT EXISTS usage (
@@ -270,6 +281,10 @@ pub fn migrate(conn: &Connection) -> Result<()> {
         ("workshop_inventory", "colour", "ALTER TABLE workshop_inventory ADD COLUMN colour TEXT NOT NULL DEFAULT ''"),
         ("workshop_inventory", "photo_key", "ALTER TABLE workshop_inventory ADD COLUMN photo_key TEXT REFERENCES workshop_photos(key)"),
         ("workshop_inventory", "specs", "ALTER TABLE workshop_inventory ADD COLUMN specs TEXT NOT NULL DEFAULT '[]'"),
+        ("workshop_inventory", "price_cents", "ALTER TABLE workshop_inventory ADD COLUMN price_cents INTEGER CHECK (price_cents >= 0)"),
+        ("workshop_inventory", "measure_unit", "ALTER TABLE workshop_inventory ADD COLUMN measure_unit TEXT NOT NULL DEFAULT ''"),
+        ("workshop_inventory", "measure_full", "ALTER TABLE workshop_inventory ADD COLUMN measure_full INTEGER CHECK (measure_full >= 1)"),
+        ("workshop_inventory", "measure_left", "ALTER TABLE workshop_inventory ADD COLUMN measure_left INTEGER CHECK (measure_left >= 0)"),
         ("versions", "schema", "ALTER TABLE versions ADD COLUMN schema INTEGER NOT NULL DEFAULT 1"),
         ("versions", "warnings", "ALTER TABLE versions ADD COLUMN warnings TEXT NOT NULL DEFAULT '[]'"),
         ("projects", "process_id", "ALTER TABLE projects ADD COLUMN process_id TEXT"),

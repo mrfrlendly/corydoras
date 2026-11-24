@@ -16,6 +16,7 @@ use tauri::ipc::InvokeBody;
 use tauri::test::{mock_builder, mock_context, noop_assets, MockRuntime, INVOKE_KEY};
 use tauri::WebviewWindow;
 
+mod inventory_categories;
 mod inventory_photo;
 mod phone;
 
@@ -26,9 +27,14 @@ const PNG: &str = "iVBORw0KGgoAAAANSUhEUgAAADAAAAAgCAIAAADbtmxLAAAAMUlEQVR42u3OQ
 
 /// The argument names that api.ts sends with a command: `invoke<T>('cmd', { a, b })`.
 fn api_args(cmd: &str) -> Vec<String> {
+    args_in(API_TS, cmd)
+}
+
+/// The same for any TypeScript source, for example `src/inventoryApi.ts`.
+fn args_in(source: &str, cmd: &str) -> Vec<String> {
     let needle = format!("('{cmd}'");
-    let at = API_TS.find(&needle).unwrap_or_else(|| panic!("api.ts does not call {cmd}"));
-    let rest = API_TS[at + needle.len()..].trim_start();
+    let at = source.find(&needle).unwrap_or_else(|| panic!("the TypeScript source does not call {cmd}"));
+    let rest = source[at + needle.len()..].trim_start();
     if !rest.starts_with(',') {
         return Vec::new();
     }
@@ -135,6 +141,16 @@ fn app_with(lib: Arc<Library>) -> tauri::App<MockRuntime> {
             inventory::delete_inventory,
             inventory::read_inventory_label,
             inventory::search_inventory_listings,
+            inventory::list_inventory_categories,
+            inventory::create_inventory_category,
+            inventory::rename_inventory_category,
+            inventory::delete_inventory_category,
+            inventory::set_inventory_category_columns,
+            inventory::get_inventory_view_settings,
+            inventory::set_inventory_all_columns,
+            inventory::set_inventory_currency,
+            inventory::set_inventory_quantity,
+            inventory::set_inventory_open_amount,
             crate::phone::get_phone,
             crate::phone::set_phone,
             features::import_model_bytes,

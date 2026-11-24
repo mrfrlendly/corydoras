@@ -1,9 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { sortItems, parseListSort, nextListSort, swatchColours } from '../src/components/workshopList.ts';
+import { sortItems, parseListSort, nextListSort, swatchColours, effectiveSort, listColumns } from '../src/components/workshopList.ts';
 
 const item = (id, name, values = {}) =>
-  ({ id, name, category: 'Fasteners', colour: '', quantity: null, pack_quantity: null, ...values });
+  ({ id, name, category: 'Fasteners', colour: '', quantity: null, pack_quantity: null, price_cents: null, ...values });
 const order = (items, field, direction) => sortItems(items, { field, direction }).map(i => i.id);
 
 test('the default order is natural, with stable tie breaks and no input changes', () => {
@@ -48,4 +48,57 @@ test('swatches use known colour names or literal hex values and keep compound co
   for (const text of ['', 'Misty', 'Blue / unknown', 'url(https://example.com)', 'var(--bg)', 'inherit', '__proto__']) {
     assert.deepEqual(swatchColours(text), [], text);
   }
+});
+
+test('the list can sort by price, unit price, stock value and supplier, with missing values last', () => {
+  const items = [
+    item('a', 'No price', { quantity: 5 }),
+    item('b', 'Pricey', { price_cents: 2000, pack_quantity: 1, quantity: 1 }),
+    item('c', 'Cheap pack', { price_cents: 999, pack_quantity: 45, quantity: 90, supplier: { title: 'Zed', url: '', details: '' } }),
+    item('d', 'Free', { price_cents: 0, quantity: 3, supplier: { title: 'Acme', url: '', details: '' } }),
+  ];
+  assert.deepEqual(order(items, 'price', 'asc'), ['d', 'c', 'b', 'a']);
+  assert.deepEqual(order(items, 'price', 'desc'), ['b', 'c', 'd', 'a']);
+  assert.deepEqual(order(items, 'unit_price', 'asc'), ['d', 'c', 'b', 'a']);
+  // Stock value: Free 0, Cheap pack 90 x 22.2 = 1998, Pricey 2000; No price has no value and stays last.
+  assert.deepEqual(order(items, 'stock_value', 'asc'), ['d', 'c', 'b', 'a']);
+  assert.deepEqual(order(items, 'stock_value', 'desc'), ['b', 'c', 'd', 'a']);
+  assert.deepEqual(order(items, 'supplier', 'asc'), ['d', 'c', 'a', 'b']);
+});
+
+test('a saved sort may name any column and rejects unknown ones', () => {
+  assert.deepEqual(parseListSort('price:desc'), { field: 'price', direction: 'desc' });
+  assert.deepEqual(parseListSort('stock_value:asc'), { field: 'stock_value', direction: 'asc' });
+  for (const value of ['toString:asc', 'constructor:desc', 'price_cents:asc']) {
+    assert.deepEqual(parseListSort(value), { field: 'name', direction: 'asc' });
+  }
+});
+
+test('a sort on a hidden column displays by name and leaves the preference alone', () => {
+  const stored = { field: 'price', direction: 'desc' };
+  assert.deepEqual(effectiveSort(stored, ['colour', 'quantity']), { field: 'name', direction: 'asc' });
+  assert.deepEqual(stored, { field: 'price', direction: 'desc' });
+  assert.equal(effectiveSort(stored, ['quantity', 'price']), stored);
+  const byName = { field: 'name', direction: 'desc' };
+  assert.equal(effectiveSort(byName, []), byName);
+});
+
+test('the fixed list columns keep their labels', () => {
+  assert.deepEqual(listColumns.map(c => [c.field, c.label]), [['name', 'Item'], ['category', 'Category'],
+    ['colour', 'Colour'], ['quantity', 'On hand'], ['pack_quantity', 'Per pack']]);
+});
+
+test('unit price sorts measured items after unmeasured ones in both directions, missing prices last', () => {
+  const spool = { measure_unit: 'g', measure_full: 1000, measure_left: null };
+  const items = [
+    item('a', 'Filament', { price_cents: 3000, quantity: 1, ...spool }),
+    item('b', 'Pricey', { price_cents: 2000, pack_quantity: 1, quantity: 1 }),
+    item('c', 'No price', { quantity: 1 }),
+    item('d', 'Cheap pack', { price_cents: 999, pack_quantity: 45, quantity: 1 }),
+    item('e', 'Cheap resin', { price_cents: 100, quantity: 1, ...spool, measure_unit: 'mL' }),
+    item('f', 'Unpriced spool', { quantity: 1, ...spool }),
+  ];
+  // Filament is 3 cents per g, Cheap resin 0.1 cent per mL: lower than any piece price, yet they come after the pieces.
+  assert.deepEqual(order(items, 'unit_price', 'asc'), ['d', 'b', 'e', 'a', 'c', 'f']);
+  assert.deepEqual(order(items, 'unit_price', 'desc'), ['b', 'd', 'a', 'e', 'c', 'f']);
 });

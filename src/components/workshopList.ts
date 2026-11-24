@@ -1,33 +1,34 @@
 import type { InventoryItem } from '../inventoryApi';
+import { columnDefs, isColumnKey, type ColumnKey } from './workshopColumns.ts';
 
-export const listColumns = [
-  { field: 'name', label: 'Item' },
-  { field: 'category', label: 'Category' },
-  { field: 'colour', label: 'Colour' },
-  { field: 'quantity', label: 'On hand' },
-  { field: 'pack_quantity', label: 'Per pack' },
-] as const;
+/** The five columns of the fixed list layout. Each column's label comes from the column definitions. */
+export const listColumns = (['name', 'category', 'colour', 'quantity', 'pack_quantity'] as const)
+  .map(field => ({ field, label: columnDefs[field].label }));
 
-export type SortField = (typeof listColumns)[number]['field'];
+export type SortField = ColumnKey;
 export type ListSort = { field: SortField; direction: 'asc' | 'desc' };
 export const defaultListSort: ListSort = { field: 'name', direction: 'asc' };
 const natural = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
 
 export function parseListSort(value: string | null): ListSort {
   const parts = value?.split(':') ?? [];
-  const column = listColumns.find(({ field }) => field === parts[0]);
   const direction = parts[1];
-  if (parts.length !== 2 || !column || (direction !== 'desc' && direction !== 'asc')) return defaultListSort;
-  return { field: column.field, direction };
+  if (parts.length !== 2 || !isColumnKey(parts[0]) || !columnDefs[parts[0]].sortable
+    || (direction !== 'desc' && direction !== 'asc')) return defaultListSort;
+  return { field: parts[0], direction };
 }
 
 export function nextListSort(current: ListSort, field: SortField): ListSort {
   return { field, direction: current.field === field && current.direction === 'asc' ? 'desc' : 'asc' };
 }
 
+/** The sort to display. A sort on a hidden column falls back to name ascending; the stored preference is not touched. */
+export function effectiveSort(sort: ListSort, visibleIds: readonly string[]): ListSort {
+  return sort.field === 'name' || visibleIds.includes(sort.field) ? sort : defaultListSort;
+}
+
 function sortableValue(item: InventoryItem, field: SortField): string | number | null {
-  const value = item[field];
-  return typeof value === 'string' ? value.trim() || null : value ?? null;
+  return columnDefs[field].sortValue(item);
 }
 
 export function sortItems(items: readonly InventoryItem[], sort: ListSort): InventoryItem[] {
@@ -35,6 +36,11 @@ export function sortItems(items: readonly InventoryItem[], sort: ListSort): Inve
     const left = sortableValue(a, sort.field);
     const right = sortableValue(b, sort.field);
     if ((left === null) !== (right === null)) return left === null ? 1 : -1;
+    const group = columnDefs[sort.field].sortGroup;
+    if (group && left !== null) {
+      const byGroup = group(a) - group(b);
+      if (byGroup) return byGroup;
+    }
     let order = 0;
     if (typeof left === 'number' && typeof right === 'number') order = left - right;
     if (typeof left === 'string' && typeof right === 'string') order = natural.compare(left, right);

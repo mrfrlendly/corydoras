@@ -195,3 +195,120 @@ fn lookup_follows_the_selected_library_unless_the_client_pins_a_path() {
     assert_eq!(search_id(&mut pinned), old_id);
     assert_eq!(search_id(&mut cli), new_id);
 }
+
+#[test]
+fn records_carry_price_currency_and_unit_price_and_price_is_not_stock() {
+    let root = tempfile::tempdir().unwrap();
+    let lib = Library::open(root.path()).unwrap();
+    lib.set_inventory_enabled(true).unwrap();
+    let priced = lib
+        .save_inventory(
+            None,
+            &InventoryDraft {
+                name: "Machine screw M3x8".into(),
+                category: "Fasteners".into(),
+                quantity: Some(0),
+                pack_quantity: Some(100),
+                price_cents: Some(2220),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    let bare = lib
+        .save_inventory(
+            None,
+            &InventoryDraft {
+                name: "Blue PETG spool".into(),
+                ..stock()
+            },
+        )
+        .unwrap();
+    let (mut agent, _) = Client::connect(root.path());
+    let listing = agent.request("tools/list", json!({}));
+    for name in [SEARCH, DETAIL] {
+        let tool = listing["tools"].as_array().unwrap().iter().find(|t| t["name"] == name).unwrap();
+        let text = tool["description"].as_str().unwrap().to_owned();
+        for phrase in ["price_cents", "one pack as bought", "may be missing", "never confirms stock"] {
+            assert!(text.contains(phrase), "{name}: {phrase}");
+        }
+    }
+    let detail = payload(&agent.call(DETAIL, json!({"id": priced.id, "required_quantity": 1})));
+    let record = &detail["item"];
+    assert_eq!(record["price_cents"], 2220);
+    assert_eq!(record["currency"], "CAD");
+    assert_eq!(record["unit_price"], "0.222");
+    assert_eq!(record["stock_state"], "out_of_stock");
+    assert_eq!(detail["quantity_check"]["status"], "insufficient");
+
+    let found = payload(&agent.call(SEARCH, json!({"query": "M3"})));
+    assert_eq!(found["items"][0]["unit_price"], "0.222");
+    let missing = payload(&agent.call(DETAIL, json!({"id": bare.id})));
+    assert!(missing["item"]["price_cents"].is_null());
+    assert!(missing["item"]["unit_price"].is_null());
+    assert_eq!(missing["item"]["currency"], "CAD");
+
+    lib.set_currency("USD").unwrap();
+    let again = payload(&agent.call(DETAIL, json!({"id": priced.id})));
+    assert_eq!(again["item"]["currency"], "USD");
+    assert_eq!(again["item"]["price_cents"], 2220);
+}
+
+#[test]
+fn a_measured_spool_reports_its_total_and_answers_amount_requirements() {
+    let root = tempfile::tempdir().unwrap();
+    let lib = Library::open(root.path()).unwrap();
+    lib.set_inventory_enabled(true).unwrap();
+    let spool = |name: &str, quantity, left| InventoryDraft {
+        name: name.into(),
+        quantity: Some(quantity),
+        price_cents: Some(2499),
+        measure_unit: "g".into(),
+        measure_full: Some(1000),
+        measure_left: left,
+        ..stock()
+    };
+    let one = lib.save_inventory(None, &spool("Blue PETG spool", 1, Some(100))).unwrap();
+    let three = lib.save_inventory(None, &spool("Red PETG spool", 3, Some(250))).unwrap();
+    let counted = lib.save_inventory(None, &stock()).unwrap();
+    let (mut agent, _) = Client::connect(root.path());
+
+    let detail = payload(&agent.call(
+        DETAIL,
+        json!({"id": one.id, "required_quantity": 100, "required_unit": "g"}),
+    ));
+    let record = &detail["item"];
+    assert_eq!(
+        (&record["measure_unit"], &record["measure_full"], &record["measure_left"], &record["total_amount"]),
+        (&json!("g"), &json!(1000), &json!(100), &json!(100))
+    );
+    assert_eq!(record["unit_price"], "0.025");
+    assert_eq!(record["quantity"], 1);
+    assert_eq!(record["quantity_unit"], "item");
+    let check = &detail["quantity_check"];
+    assert_eq!(check["status"], "sufficient");
+    assert!(check["note"].as_str().unwrap().contains("not verified by weight"));
+    // One more gram than recorded is a shortage.
+    let short = payload(&agent.call(DETAIL, json!({"id": one.id, "required_quantity": 101, "required_unit": "g"})));
+    assert_eq!(short["quantity_check"]["status"], "insufficient");
+    // 3 spools with 250 g left in the opened one: 2 x 1000 + 250.
+    let more = payload(&agent.call(DETAIL, json!({"id": three.id, "required_quantity": 2250, "required_unit": "g"})));
+    assert_eq!(more["item"]["total_amount"], 2250);
+    assert_eq!(more["quantity_check"]["status"], "sufficient");
+    // The spool count keeps answering in items, in the old shape.
+    let items = payload(&agent.call(DETAIL, json!({"id": one.id, "required_quantity": 2})));
+    assert_eq!(items["quantity_check"], json!({"required_quantity": 2, "status": "insufficient"}));
+    // An item with no measured pack has no total, so a mass requirement is unconfirmed.
+    let unknown = payload(&agent.call(DETAIL, json!({"id": counted.id, "required_quantity": 1, "required_unit": "g"})));
+    assert!(unknown["item"]["total_amount"].is_null());
+    assert_eq!(unknown["quantity_check"]["status"], "unknown");
+    // Another unit, or an unknown one, is not compared.
+    let other = payload(&agent.call(DETAIL, json!({"id": one.id, "required_quantity": 1, "required_unit": "mL"})));
+    assert_eq!(other["quantity_check"]["status"], "unknown");
+    let refused = agent.request("tools/call", json!({"name": DETAIL, "arguments": {"id": one.id, "required_quantity": 1, "required_unit": "kg"}}));
+    assert_eq!(refused["isError"], true);
+
+    // Search carries the same fields.
+    let found = payload(&agent.call(SEARCH, json!({"query": "Red"})));
+    assert_eq!(found["items"][0]["total_amount"], 2250);
+    assert_eq!(found["items"][0]["measure_left"], 250);
+}

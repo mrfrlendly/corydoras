@@ -15,7 +15,9 @@ fn fixture() -> Result<(TempDir, Library, String)> {
         dimensions: "Thread M3; length 8mm".into(), quantity: Some(5), pack_quantity: Some(100),
         notes: "Material: Brass (label)\nLocation: Drawer 8\nParent kit: Ring terminal M5 (archived)\nAmazon (similar product): Green M12 screw https://example.com/needle".into(),
         specs: vec![],
-        supplier: Some(SupplierListing {title:"Box of screws".into(),url:"https://example.com/needle".into(),details:"Supplier says green".into()})
+        supplier: Some(SupplierListing {title:"Box of screws".into(),url:"https://example.com/needle".into(),details:"Supplier says green".into()}),
+        price_cents: None,
+        ..InventoryDraft::default()
     };
     let id = lib.save_inventory(None, &screw)?.id;
     lib.c().execute(
@@ -250,5 +252,196 @@ fn an_older_library_returns_empty_specs_without_a_write() -> Result<()> {
     lib.c().execute_batch("ALTER TABLE workshop_inventory DROP COLUMN specs; PRAGMA query_only=ON")?;
     assert_eq!(search(&lib, "m3", 1, 0)?["items"][0]["specs"], json!([]));
     assert_eq!(item(&lib, IMPORT_ID, None)?["item"]["specs"], json!([]));
+    Ok(())
+}
+
+#[test]
+fn unit_price_divides_the_pack_price_and_trims_zeros() {
+    for (price, pack, expected) in [
+        (Some(2220), Some(100), Some("0.222")),
+        (Some(500), Some(1), Some("5.00")),
+        (Some(500), None, Some("5.00")),
+        (Some(500), Some(0), Some("5.00")),
+        (Some(500), Some(-3), Some("5.00")),
+        (Some(1999), Some(3), Some("6.6633")),
+        (Some(1), Some(3), Some("0.0033")),
+        (Some(0), Some(10), Some("0.00")),
+        (Some(1_000_000_000_000), Some(1), Some("10000000000.00")),
+        (None, Some(10), None),
+    ] {
+        assert_eq!(unit_price(price, pack).as_deref(), expected, "{price:?} / {pack:?}");
+    }
+}
+
+#[test]
+fn records_carry_price_currency_and_unit_price() -> Result<()> {
+    let (_dir, lib, zero_id) = fixture()?;
+    lib.c().execute("UPDATE workshop_inventory SET price_cents=2220 WHERE id=?1", [IMPORT_ID])?;
+    let detail = item(&lib, IMPORT_ID, Some(1))?;
+    assert_eq!(detail["item"]["price_cents"], 2220);
+    assert_eq!(detail["item"]["currency"], "CAD");
+    assert_eq!(detail["item"]["unit_price"], "0.222");
+    assert_eq!(detail["quantity_check"]["status"], "sufficient");
+    let hit = &search(&lib, "m3", 1, 0)?["items"][0];
+    assert_eq!((&hit["price_cents"], &hit["currency"], &hit["unit_price"]), (&json!(2220), &json!("CAD"), &json!("0.222")));
+    // A record without a price says so with nulls, and a price never counts as stock.
+    let bare = item(&lib, &zero_id, Some(1))?;
+    assert!(bare["item"]["price_cents"].is_null() && bare["item"]["unit_price"].is_null());
+    assert_eq!(bare["item"]["currency"], "CAD");
+    assert_eq!(bare["item"]["stock_state"], "out_of_stock");
+    assert_eq!(bare["quantity_check"]["status"], "insufficient");
+    lib.set_currency("USD")?;
+    assert_eq!(item(&lib, IMPORT_ID, None)?["item"]["currency"], "USD");
+    assert_eq!(search(&lib, "m3", 1, 0)?["items"][0]["currency"], "USD");
+    lib.c().execute("UPDATE settings SET value='usd' WHERE key='workshop_currency'", [])?;
+    assert_eq!(item(&lib, IMPORT_ID, None)?["item"]["currency"], "CAD");
+    Ok(())
+}
+
+#[test]
+fn an_older_library_returns_null_prices_without_a_write() -> Result<()> {
+    let (_dir, lib, _) = fixture()?;
+    lib.c().execute_batch("ALTER TABLE workshop_inventory DROP COLUMN price_cents; PRAGMA query_only=ON")?;
+    let hit = &search(&lib, "m3", 1, 0)?["items"][0];
+    assert!(hit["price_cents"].is_null() && hit["unit_price"].is_null());
+    assert_eq!(hit["currency"], "CAD");
+    assert!(item(&lib, IMPORT_ID, None)?["item"]["price_cents"].is_null());
+    Ok(())
+}
+
+fn measured(lib: &Library, unit: &str, full: i64, left: Option<i64>, quantity: Option<i64>) -> Result<String> {
+    Ok(lib
+        .save_inventory(
+            None,
+            &InventoryDraft {
+                name: "PETG spool".into(),
+                category: "Filament".into(),
+                quantity,
+                price_cents: Some(2499),
+                measure_unit: unit.into(),
+                measure_full: Some(full),
+                measure_left: left,
+                ..InventoryDraft::default()
+            },
+        )?
+        .id)
+}
+
+#[test]
+fn records_carry_the_measured_pack_and_its_total_amount() -> Result<()> {
+    let (_dir, lib, _) = fixture()?;
+    let cases = [
+        // (quantity, left, total)
+        (Some(1), Some(100), json!(100)),
+        (Some(3), Some(250), json!(2250)),
+        (Some(3), None, json!(3000)),
+        (Some(0), None, json!(0)),
+        (None, Some(100), Value::Null),
+    ];
+    for (quantity, left, total) in cases {
+        let id = measured(&lib, "g", 1000, left, quantity)?;
+        let record = &item(&lib, &id, None)?["item"];
+        assert_eq!(record["measure_unit"], "g");
+        assert_eq!(record["measure_full"], 1000);
+        assert_eq!(record["measure_left"], json!(left.filter(|_| quantity != Some(0))));
+        assert_eq!(record["total_amount"], total, "{quantity:?} {left:?}");
+        // The price is per gram once a full pack amount exists: 24.99 / 1000 g, to four places.
+        assert_eq!(record["unit_price"], "0.025");
+        let hit = search(&lib, "", 50, 0)?["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|v| v["id"] == json!(id))
+            .cloned()
+            .unwrap();
+        assert_eq!(hit["total_amount"], total);
+    }
+    // An item without a measured pack says so with an empty unit and nulls, and keeps the piece price.
+    let plain = item(&lib, IMPORT_ID, None)?;
+    let record = &plain["item"];
+    assert_eq!(record["measure_unit"], "");
+    assert!(record["measure_full"].is_null() && record["measure_left"].is_null());
+    assert!(record["total_amount"].is_null());
+    Ok(())
+}
+
+#[test]
+fn the_price_of_a_measured_pack_is_per_unit_and_ignores_the_pack_count() {
+    let mut draft = InventoryDraft {
+        pack_quantity: Some(4),
+        price_cents: Some(2400),
+        ..InventoryDraft::default()
+    };
+    assert_eq!(unit_price(draft.price_cents, price_divisor(&draft)).as_deref(), Some("6.00"));
+    draft.measure_unit = "g".into();
+    draft.measure_full = Some(1000);
+    assert_eq!(unit_price(draft.price_cents, price_divisor(&draft)).as_deref(), Some("0.024"));
+    assert_eq!(price_divisor(&draft), Some(1000));
+    // A unit with no full pack amount falls back to the pack count.
+    draft.measure_full = None;
+    assert_eq!(price_divisor(&draft), Some(4));
+}
+
+#[test]
+fn a_required_amount_is_compared_with_the_recorded_total() -> Result<()> {
+    let (_dir, lib, zero_id) = fixture()?;
+    let one = measured(&lib, "g", 1000, Some(100), Some(1))?;
+    let three = measured(&lib, "g", 1000, Some(250), Some(3))?;
+    let check = |id: &str, required, unit: &str| -> Result<Value> {
+        Ok(item_in_unit(&lib, id, Some(required), unit)?["quantity_check"].clone())
+    };
+    // 1 spool with 100 g left holds 100 g.
+    let pass = check(&one, 100, "g")?;
+    assert_eq!(pass["status"], "sufficient");
+    assert_eq!((&pass["total_amount"], &pass["required_unit"]), (&json!(100), &json!("g")));
+    assert!(pass["note"].as_str().unwrap().contains("not verified by weight"));
+    let short = check(&one, 101, "g")?;
+    assert_eq!(short["status"], "insufficient");
+    assert!(short["note"].as_str().unwrap().contains("shortage"));
+    // 3 spools with 250 g left in the opened one hold 2250 g.
+    assert_eq!(check(&three, 2250, "g")?["status"], "sufficient");
+    assert_eq!(check(&three, 2251, "g")?["status"], "insufficient");
+    // The spool count still answers in items, in the old shape.
+    assert_eq!(
+        item_in_unit(&lib, &three, Some(3), "item")?["quantity_check"],
+        json!({"required_quantity":3,"status":"sufficient"})
+    );
+    assert_eq!(item(&lib, &three, Some(4))?["quantity_check"]["status"], "insufficient");
+    // Unknown totals are unconfirmed: no count, no open amount recorded is fine (whole packs), a
+    // missing count is not, and neither is another unit or an item without a measured pack.
+    let unknown = measured(&lib, "g", 1000, Some(100), None)?;
+    let none = check(&unknown, 1, "g")?;
+    assert_eq!((&none["status"], &none["total_amount"]), (&json!("unknown"), &Value::Null));
+    assert_eq!(check(&one, 1, "mL")?["status"], "unknown");
+    assert!(check(&one, 1, "mL")?["note"].as_str().unwrap().contains("in g, not in mL"));
+    assert_eq!(check(&zero_id, 1, "g")?["status"], "unknown");
+    assert!(check(&zero_id, 1, "g")?["note"].as_str().unwrap().contains("as a count"));
+    let empty = measured(&lib, "g", 1000, None, Some(0))?;
+    assert_eq!(check(&empty, 1, "g")?["status"], "insufficient");
+    // No requirement, no check. An unknown unit is refused.
+    assert!(item_in_unit(&lib, &one, None, "g")?["quantity_check"].is_null());
+    for unit in ["kg", "mm", "", "G", "kit_contents"] {
+        assert!(item_in_unit(&lib, &one, Some(1), unit).is_err(), "{unit}");
+    }
+    Ok(())
+}
+
+#[test]
+fn an_older_library_without_the_measure_columns_reads_without_a_write() -> Result<()> {
+    let (_dir, lib, _) = fixture()?;
+    lib.c().execute_batch(
+        "ALTER TABLE workshop_inventory DROP COLUMN measure_unit;
+         ALTER TABLE workshop_inventory DROP COLUMN measure_full;
+         ALTER TABLE workshop_inventory DROP COLUMN measure_left;
+         PRAGMA query_only=ON",
+    )?;
+    let hit = &search(&lib, "m3", 1, 0)?["items"][0];
+    assert_eq!(hit["measure_unit"], "");
+    assert!(hit["measure_full"].is_null() && hit["measure_left"].is_null() && hit["total_amount"].is_null());
+    let detail = item_in_unit(&lib, IMPORT_ID, Some(1), "g")?;
+    assert_eq!(detail["item"]["quantity"], 5);
+    assert_eq!(detail["quantity_check"]["status"], "unknown");
+    assert_eq!(detail["item"]["unit_price"], Value::Null);
+    assert_eq!(item(&lib, IMPORT_ID, Some(5))?["quantity_check"]["status"], "sufficient");
     Ok(())
 }

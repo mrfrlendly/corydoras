@@ -47,6 +47,10 @@ export default function PhoneReview({ cards, categories, disabled, onChange, onD
               <input type="text" inputMode="numeric" pattern="[0-9]*" maxLength={16} placeholder="Unknown" enterKeyHint="done"
                 disabled={disabled} value={form[key]} onChange={e => set({ [key]: e.target.value })} />
             </label>)}
+          <label className="field"><span>Price per pack</span>
+            <input {...asPrinted} type="text" inputMode="decimal" maxLength={16} placeholder="Unknown" enterKeyHint="done"
+              disabled={disabled} value={form.price} onChange={e => set({ price: e.target.value })} />
+          </label>
         </div>
         <button type="button" className="btn" disabled={disabled || !form.pack_quantity.trim()} onClick={() => {
           try {

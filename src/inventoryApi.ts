@@ -2,6 +2,9 @@ import { invoke } from '@tauri-apps/api/core';
 import type { AppInfo } from './api';
 import { frameDrafts } from './inventoryFrame';
 
+export const measureUnits = ['', 'g', 'mL', 'm'] as const;
+export type MeasureUnit = (typeof measureUnits)[number];
+
 export interface SupplierListing {
   title: string;
   url: string;
@@ -30,6 +33,14 @@ export interface InventoryDraft {
   dimensions: string;
   quantity: number | null;
   pack_quantity: number | null;
+  /** Retail price of one pack as bought, in whole cents of the library currency. */
+  price_cents: number | null;
+  /** Unit of a measured pack: '' (counted pieces), 'g', 'mL' or 'm'. */
+  measure_unit: MeasureUnit;
+  /** Amount in one full pack, in measure_unit, for example 1000 for a 1 kg spool. */
+  measure_full: number | null;
+  /** Amount left in the one opened pack. Whole packs, the open one included, are counted by `quantity`. */
+  measure_left: number | null;
   notes: string;
   specs: Spec[];
   supplier: SupplierListing | null;
@@ -38,6 +49,25 @@ export interface InventoryDraft {
 export interface InventoryItem extends InventoryDraft {
   id: string;
   photo_key: string | null;
+}
+
+/** Column ids of the list. The Item column is implicit. Mirrors COLUMN_IDS in corydoras-core. */
+export const columnIds = ['category', 'brand', 'part_number', 'colour', 'dimensions', 'quantity', 'pack_quantity',
+  'open_amount', 'price', 'unit_price', 'stock_value', 'notes', 'supplier'] as const;
+export type ColumnId = (typeof columnIds)[number];
+/** null means Auto: show only the columns that have a value in the view. */
+export type ColumnConfig = ColumnId[] | null;
+
+export interface CategoryInfo {
+  name: string;
+  count: number;
+  columns: ColumnConfig;
+}
+
+export interface ViewSettings {
+  /** Three uppercase letters, for example CAD. */
+  currency: string;
+  all_columns: ColumnConfig;
 }
 
 const maxPhotoBytes = 12 * 1024 * 1024;
@@ -96,4 +126,18 @@ export const inventoryApi = {
     return invoke<InventoryDraft[]>('read_inventory_label', new Uint8Array(await file.arrayBuffer()));
   },
   saveBatch,
+  categories: () => invoke<CategoryInfo[]>('list_inventory_categories'),
+  createCategory: (name: string) => invoke<void>('create_inventory_category', { name }),
+  /** Renames a category on every item. When `to` exists this merges. Returns the number of items changed. */
+  renameCategory: (from: string, to: string) => invoke<number>('rename_inventory_category', { from, to }),
+  /** Fails while any item uses the category. */
+  deleteCategory: (name: string) => invoke<void>('delete_inventory_category', { name }),
+  setCategoryColumns: (name: string, columns: ColumnConfig) =>
+    invoke<void>('set_inventory_category_columns', { name, columns }),
+  viewSettings: () => invoke<ViewSettings>('get_inventory_view_settings'),
+  setAllColumns: (columns: ColumnConfig) => invoke<void>('set_inventory_all_columns', { columns }),
+  setCurrency: (code: string) => invoke<void>('set_inventory_currency', { code }),
+  /** Records what is left in the opened pack. null clears it. */
+  setOpenAmount: (id: string, left: number | null) => invoke<InventoryItem>('set_inventory_open_amount', { id, left }),
+  setQuantity: (id: string, quantity: number) => invoke<InventoryItem>('set_inventory_quantity', { id, quantity }),
 };

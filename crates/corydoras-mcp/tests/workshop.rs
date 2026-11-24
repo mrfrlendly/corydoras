@@ -254,6 +254,47 @@ fn records_carry_price_currency_and_unit_price_and_price_is_not_stock() {
 }
 
 #[test]
+fn a_price_taken_from_a_listing_is_marked_as_an_estimate() {
+    let root = tempfile::tempdir().unwrap();
+    let lib = Library::open(root.path()).unwrap();
+    lib.set_inventory_enabled(true).unwrap();
+    let save = |name: &str, price: Option<i64>, source: &str| {
+        lib.save_inventory(
+            None,
+            &InventoryDraft {
+                name: name.into(),
+                price_cents: price,
+                price_source: source.into(),
+                ..stock()
+            },
+        )
+        .unwrap()
+    };
+    let estimate = save("Estimated spool", Some(2499), "listing:www.canadabolts.ca");
+    let entered = save("Entered spool", Some(1999), "");
+    let bare = save("Unpriced spool", None, "listing:www.canadabolts.ca");
+    let (mut agent, _) = Client::connect(root.path());
+    let listing = agent.request("tools/list", json!({}));
+    for name in [SEARCH, DETAIL] {
+        let tool = listing["tools"].as_array().unwrap().iter().find(|t| t["name"] == name).unwrap();
+        assert!(tool["description"].as_str().unwrap().contains("price_is_estimate"), "{name}");
+    }
+    for (id, expected) in [(&estimate.id, true), (&entered.id, false), (&bare.id, false)] {
+        let detail = payload(&agent.call(DETAIL, json!({"id": id})));
+        assert_eq!(detail["item"]["price_is_estimate"], expected, "{id}");
+    }
+    let found = payload(&agent.call(SEARCH, json!({"query": "spool"})));
+    let flag = |name: &str| {
+        found["items"].as_array().unwrap().iter().find(|i| i["name"] == name).unwrap()["price_is_estimate"].clone()
+    };
+    assert_eq!((flag("Estimated spool"), flag("Entered spool")), (json!(true), json!(false)));
+    // An estimate never counts as stock, and the price stays what the record holds.
+    let detail = payload(&agent.call(DETAIL, json!({"id": estimate.id, "required_quantity": 5})));
+    assert_eq!(detail["item"]["price_cents"], 2499);
+    assert_eq!(detail["quantity_check"]["status"], "insufficient");
+}
+
+#[test]
 fn a_measured_spool_reports_its_total_and_answers_amount_requirements() {
     let root = tempfile::tempdir().unwrap();
     let lib = Library::open(root.path()).unwrap();

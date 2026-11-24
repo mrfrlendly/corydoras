@@ -54,7 +54,7 @@ test('a measured item is priced per unit and its stock value follows the total a
   assert.equal(stockValueCents(item('a', { price_cents: 999, pack_quantity: 45, quantity: 90 })), 1998);
   assert.equal(stockValueCents(item('a', { price_cents: 999, pack_quantity: 25, quantity: 6, measure_full: 1000 })), 240);
   assert.deepEqual(viewTotals([spool('a', { price_cents: 3000 }), item('b', { price_cents: 500, quantity: 2 })]),
-    { count: 2, withoutCount: 0, unpriced: 0, stockValueCents: 1300 });
+    { count: 2, withoutCount: 0, unpriced: 0, stockValueCents: 1300, estimatedPrices: 0 });
 });
 
 test('amounts read as 1,100 g and 100 of 1000 g', () => {

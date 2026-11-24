@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Boxes, Camera, Plus, Search, Tags } from 'lucide-react';
+import { Boxes, Camera, Plus, Search, Sparkles, Tags } from 'lucide-react';
 import { errText } from '../api';
 import {
   inventoryApi, type CategoryInfo, type ColumnConfig, type InventoryDraft, type InventoryItem, type ViewSettings,
@@ -9,6 +9,7 @@ import WorkshopCategories from './WorkshopCategories';
 import WorkshopColumnPicker from './WorkshopColumnPicker';
 import WorkshopItemEditor from './WorkshopItemEditor';
 import WorkshopPhotoReview from './WorkshopPhotoReview';
+import WorkshopSuggestions from './WorkshopSuggestions';
 import { categoryChips, shortcutFor, stepQuantityItem } from './workshopActions';
 import { categoryKey, duplicateForm, matchingItems, type WorkshopForm } from './workshopForm';
 import WorkshopInventoryTable from './WorkshopInventoryTable';
@@ -45,6 +46,9 @@ export default function WorkshopInventory({ tick = 0 }: { tick?: number }) {
   // A copy of an item (Duplicate item): the editor opens as a new item with these values.
   const [copy, setCopy] = useState<{ form: WorkshopForm; of: string; seed: number } | null>(null);
   const [manage, setManage] = useState(false);
+  const [suggest, setSuggest] = useState(false);
+  // The number of suggestions, known after the first load of the Review suggestions screen.
+  const [suggestionCount, setSuggestionCount] = useState<number | null>(null);
   const [stepping, setStepping] = useState<ReadonlySet<string>>(() => new Set());
   const [stepNote, setStepNote] = useState('');
   const [review, setReview] = useState<{ file: File; drafts: InventoryDraft[] } | 'new' | null>(null);
@@ -58,6 +62,7 @@ export default function WorkshopInventory({ tick = 0 }: { tick?: number }) {
   const [viewSettings, setViewSettings] = useState<ViewSettings>(defaultView);
   const addButton = useRef<HTMLButtonElement>(null);
   const manageButton = useRef<HTMLButtonElement>(null);
+  const suggestButton = useRef<HTMLButtonElement>(null);
   const searchInput = useRef<HTMLInputElement>(null);
   const stepLock = useRef(new Set<string>());
   const returnTo = useRef<string | null>(null);
@@ -165,7 +170,7 @@ export default function WorkshopInventory({ tick = 0 }: { tick?: number }) {
     if (name) {
       setCategoryInfos(previous => previous.some(info => sameName(info.name, name))
         ? previous.map(info => sameName(info.name, name) ? { ...info, columns: next } : info)
-        : [...previous, { name, count: 0, columns: next }]);
+        : [...previous, { name, count: 0, columns: next, keywords: [] }]);
     } else setViewSettings(previous => ({ ...previous, all_columns: next }));
   }
 
@@ -259,7 +264,7 @@ export default function WorkshopInventory({ tick = 0 }: { tick?: number }) {
   }
 
   // Keyboard shortcuts of the list: / searches and n adds an item.
-  const listBlocked = editor !== null || review !== null || manage;
+  const listBlocked = editor !== null || review !== null || manage || suggest;
   const canAdd = !loading && !error;
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
@@ -306,6 +311,14 @@ export default function WorkshopInventory({ tick = 0 }: { tick?: number }) {
     (manageButton.current ?? addButton.current)?.focus();
   }, [manage]);
 
+  const wasSuggesting = useRef(false);
+  useLayoutEffect(() => {
+    if (suggest) { wasSuggesting.current = true; return; }
+    if (!wasSuggesting.current) return;
+    wasSuggesting.current = false;
+    (suggestButton.current ?? manageButton.current ?? addButton.current)?.focus();
+  }, [suggest]);
+
   function closeEditor(focusId: string | null) {
     focusAfterClose.current = focusId;
     setEditor(null);
@@ -346,7 +359,7 @@ export default function WorkshopInventory({ tick = 0 }: { tick?: number }) {
         <div className="lang-title">
           <h1>Workshop inventory</h1>
         </div>
-        {!editor && !review && !manage && <div className="row">
+        {!editor && !review && !manage && !suggest && <div className="row">
           <button className="btn" disabled={loading || !!error} onClick={() => setReview('new')}>
             <Camera size={15} aria-hidden="true" /> Add from photo
           </button>
@@ -358,8 +371,11 @@ export default function WorkshopInventory({ tick = 0 }: { tick?: number }) {
         </div>}
       </header>
       <div className="settings-body workshop-body">
-        {manage ? <WorkshopCategories rows={chips.map(chip => ({
-            ...chip, columns: categoryInfos.find(info => sameName(info.name, chip.name))?.columns ?? null }))}
+        {suggest ? <WorkshopSuggestions onChanged={reloadAll} onCount={setSuggestionCount}
+          onDone={() => setSuggest(false)} /> : manage ? <WorkshopCategories rows={chips.map(chip => {
+            const info = categoryInfos.find(other => sameName(other.name, chip.name));
+            return { ...chip, columns: info?.columns ?? null, keywords: info?.keywords ?? [] };
+          })}
           items={items} currency={currency} onColumns={(name, next) => changeColumns(next, name)} onChanged={reloadAll}
           onRenamed={(from, to) => { if (sameName(category, from)) chooseCategory(to); }}
           onDone={() => setManage(false)} /> : review ? <WorkshopPhotoReview categories={categories} initial={review === 'new' ? null : review}
@@ -403,6 +419,9 @@ export default function WorkshopInventory({ tick = 0 }: { tick?: number }) {
                   <button type="button" className="btn small" ref={manageButton} onClick={() => setManage(true)}>
                     <Tags size={14} aria-hidden="true" /> Manage categories
                   </button>
+                  <button type="button" className="btn small" ref={suggestButton} onClick={() => setSuggest(true)}>
+                    <Sparkles size={14} aria-hidden="true" /> {suggestionCount === null ? 'Review suggestions' : `Review suggestions (${suggestionCount})`}
+                  </button>
                   <div className="workshop-flags">
                     <button type="button" className="btn small workshop-toggle" aria-pressed={noPrice}
                       onClick={() => setNoPrice(value => !value)}>No price</button>
@@ -429,7 +448,7 @@ export default function WorkshopInventory({ tick = 0 }: { tick?: number }) {
                         totals.withoutCount ? `${totals.withoutCount} with no count` : '',
                         totals.unpriced ? `${totals.unpriced} with no price` : ''].filter(Boolean).join(' · ')}</p>
                       {totals.unpriced < totals.count && <p className="workshop-footer-value">
-                        Stock value <strong>{formatMoney(totals.stockValueCents, currency)}</strong> (priced items only)
+                        Stock value <strong>{formatMoney(totals.stockValueCents, currency)}</strong> (priced items only){totals.estimatedPrices > 0 && ` · ${totals.estimatedPrices} estimated`}
                       </p>}
                     </footer>
                   </>

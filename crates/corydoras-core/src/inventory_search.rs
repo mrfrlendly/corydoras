@@ -1,10 +1,14 @@
 //! Product suggestions and details from public supplier catalogues. Shopify documents
 //! both endpoints at https://shopify.dev/docs/api/ajax/reference .
 
-use crate::inventory::SupplierListing;
+use crate::inventory::{SupplierListing, MAX_PRICE_CENTS};
 use anyhow::{bail, ensure, Result};
 use reqwest::{redirect, Client, RequestBuilder};
-use serde::{de::DeserializeOwned, Deserialize};
+use serde::{de::DeserializeOwned, Deserialize, Deserializer};
+use serde_json::Value;
+use std::collections::HashMap;
+use std::fmt;
+use std::sync::Mutex;
 use std::time::Duration;
 
 const STORES: [&str; 3] = [
@@ -15,6 +19,10 @@ const STORES: [&str; 3] = [
 const MAX_BYTES: usize = 512 * 1024;
 const MAX_PRODUCTS: usize = 2;
 const STORE_TIMEOUT: Duration = Duration::from_secs(14);
+
+/// Currencies read from stores in this process, by store base URL. Only successful reads
+/// are kept, so a failure is retried on the next search.
+static CURRENCIES: Mutex<Option<HashMap<String, String>>> = Mutex::new(None);
 
 /// Returns candidates for review. The caller chooses which supplier details to keep.
 pub async fn search_listings(
@@ -33,7 +41,7 @@ pub async fn search_listings(
     let search = async |store| {
         tokio::time::timeout(
             STORE_TIMEOUT,
-            search_store(&client, store, &terms, part_number.trim()),
+            search_store_with_currency(&client, store, &terms, part_number.trim(), &CURRENCIES),
         )
         .await?
     };
@@ -45,16 +53,73 @@ pub async fn search_listings(
 fn combine<const N: usize>(
     responses: [Result<Vec<SupplierListing>>; N],
 ) -> Result<Vec<SupplierListing>> {
-    let incomplete = responses.iter().any(Result::is_err);
-    let results: Vec<_> = responses
-        .into_iter()
-        .filter_map(Result::ok)
-        .flatten()
-        .collect();
-    if results.is_empty() && incomplete {
-        bail!("One or more supplier catalogues did not respond with usable results. Try again or enter a listing manually.");
+    let mut limited: Vec<String> = Vec::new();
+    let mut other_failure = false;
+    let mut results = Vec::new();
+    for response in responses {
+        match response {
+            Ok(listings) => results.extend(listings),
+            Err(e) => match e.downcast_ref::<RateLimited>() {
+                Some(r) => limited.push(r.host.clone()),
+                None => other_failure = true,
+            },
+        }
     }
-    Ok(results)
+    if !results.is_empty() || (limited.is_empty() && !other_failure) {
+        return Ok(results);
+    }
+    let mut message = String::new();
+    if !limited.is_empty() {
+        message = format!(
+            "{} {} limiting requests right now. Try again in a minute.",
+            limited.join(", "),
+            if limited.len() == 1 { "is" } else { "are" }
+        );
+    }
+    if other_failure {
+        if !message.is_empty() {
+            message.push(' ');
+        }
+        message.push_str("One or more supplier catalogues did not respond with usable results. Try again or enter a listing manually.");
+    }
+    bail!(message)
+}
+
+/// A store answered 429 or 503. The search of that store stops at once.
+#[derive(Debug)]
+struct RateLimited {
+    host: String,
+    /// Seconds from the Retry-After header, only to report.
+    retry_after: Option<u64>,
+}
+
+impl fmt::Display for RateLimited {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{} is limiting requests right now. ", self.host)?;
+        match self.retry_after {
+            Some(secs) if secs > 90 => {
+                write!(f, "Try again in about {} minutes.", secs.div_ceil(60))
+            }
+            _ => write!(f, "Try again in a minute."),
+        }
+    }
+}
+
+impl std::error::Error for RateLimited {}
+
+fn retry_after_seconds(header: &str) -> Option<u64> {
+    header.trim().parse().ok()
+}
+
+/// Names the store in a rate limit error raised deeper down; other errors pass through.
+fn name_store(error: anyhow::Error, base: &str) -> anyhow::Error {
+    match error.downcast::<RateLimited>() {
+        Ok(mut limited) => {
+            limited.host = base.split_once("://").map_or(base, |(_, h)| h).to_owned();
+            limited.into()
+        }
+        Err(error) => error,
+    }
 }
 
 fn queries(name: &str, brand: &str, part_number: &str) -> Result<Vec<String>> {
@@ -119,10 +184,112 @@ struct Variant {
     id: u64,
     title: String,
     sku: Option<String>,
+    /// Cents. Missing, odd or out-of-range prices are None, never an error.
+    #[serde(default, deserialize_with = "lenient_price")]
+    price: Option<i64>,
+}
+
+#[derive(Deserialize)]
+struct StoreMeta {
+    #[serde(default)]
+    currency: Option<String>,
+}
+
+fn lenient_price<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<i64>, D::Error> {
+    Ok(parse_price(&Value::deserialize(deserializer)?))
+}
+
+/// Shopify's `.js` endpoint gives integer cents. A string such as "12.99" is dollars.
+/// Anything else, zero, a negative price or one above MAX_PRICE_CENTS is not a price.
+fn parse_price(value: &Value) -> Option<i64> {
+    let cents = match value {
+        Value::Number(n) => n.as_i64()?,
+        Value::String(s) => dollars_to_cents(s)?,
+        _ => return None,
+    };
+    (1..=MAX_PRICE_CENTS).contains(&cents).then_some(cents)
+}
+
+/// Exact decimal parse: digits, optionally a point and one or two more digits.
+fn dollars_to_cents(text: &str) -> Option<i64> {
+    let (whole, fraction) = text.trim().split_once('.').unwrap_or((text.trim(), ""));
+    let digits = |s: &str| s.bytes().all(|b| b.is_ascii_digit());
+    if whole.is_empty() || fraction.len() > 2 || !digits(whole) || !digits(fraction) {
+        return None;
+    }
+    let fraction = format!("{fraction:0<2}");
+    whole
+        .parse::<i64>()
+        .ok()?
+        .checked_mul(100)?
+        .checked_add(fraction.parse().ok()?)
+}
+
+/// A currency is three uppercase ASCII letters; anything else is left unknown.
+fn valid_currency(code: &str) -> Option<&str> {
+    (code.len() == 3 && code.bytes().all(|b| b.is_ascii_uppercase())).then_some(code)
+}
+
+/// The store's currency from its `/meta.json`: from the cache, else read and cached. "" when it
+/// cannot be read (not cached, so the next search tries again). Never a guess. An error only
+/// when the store limits requests.
+async fn store_currency(
+    client: &Client,
+    base: &str,
+    cache: &Mutex<Option<HashMap<String, String>>>,
+) -> Result<String> {
+    let lock = || cache.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(code) = lock().as_ref().and_then(|m| m.get(base)) {
+        return Ok(code.clone());
+    }
+    match read_json::<StoreMeta>(client.get(format!("{base}/meta.json"))).await {
+        Ok(StoreMeta {
+            currency: Some(code),
+        }) if valid_currency(&code).is_some() => {
+            lock()
+                .get_or_insert_with(HashMap::new)
+                .insert(base.to_owned(), code.clone());
+            Ok(code)
+        }
+        Err(e) if e.is::<RateLimited>() => Err(e),
+        _ => Ok(String::new()),
+    }
+}
+
+/// Reads the store's currency, then searches the store. A store that limits requests stops at
+/// its first 429 or 503, and a failed currency read does not fail the search.
+async fn search_store_with_currency(
+    client: &Client,
+    base: &str,
+    terms: &[String],
+    part: &str,
+    cache: &Mutex<Option<HashMap<String, String>>>,
+) -> Result<Vec<SupplierListing>> {
+    let currency = store_currency(client, base, cache)
+        .await
+        .map_err(|e| name_store(e, base))?;
+    let mut listings = search_store(client, base, terms, part)
+        .await
+        .map_err(|e| name_store(e, base))?;
+    for listing in &mut listings {
+        listing.currency.clone_from(&currency);
+    }
+    Ok(listings)
 }
 
 async fn read_json<T: DeserializeOwned>(request: RequestBuilder) -> Result<T> {
     let mut response = request.send().await?;
+    if matches!(response.status().as_u16(), 429 | 503) {
+        return Err(RateLimited {
+            host: String::new(),
+            retry_after: response
+                .headers()
+                .get(reqwest::header::RETRY_AFTER)
+                .and_then(|v| v.to_str().ok())
+                .and_then(retry_after_seconds),
+        }
+        .into());
+    }
     ensure!(response.status().is_success(), "Supplier request failed.");
     ensure!(
         response.content_length().unwrap_or(0) <= MAX_BYTES as u64,
@@ -165,6 +332,7 @@ async fn search_store(
                         listings.extend(product.listings(&url, part));
                     }
                 }
+                Err(e) if e.is::<RateLimited>() => return Err(e),
                 _ => incomplete = true,
             }
         }
@@ -264,6 +432,15 @@ impl Product {
             .collect()
     }
 
+    /// The price shared by every variant, for a listing that names no variant.
+    fn common_price(&self) -> Option<i64> {
+        let first = self.variants.first()?.price?;
+        self.variants
+            .iter()
+            .all(|v| v.price == Some(first))
+            .then_some(first)
+    }
+
     fn listing(&self, url: &str, variant: Option<&Variant>, description: &str) -> SupplierListing {
         let option = variant
             .map(|v| v.title.trim())
@@ -298,6 +475,13 @@ impl Product {
             title,
             url,
             details: compact(&details.join(" · "), 650),
+            price_cents: match variant {
+                Some(v) => v.price,
+                None => self.common_price(),
+            }
+            .filter(|price| *price > 0),
+            // The store's currency is set by the search of that store.
+            currency: String::new(),
         }
     }
 }

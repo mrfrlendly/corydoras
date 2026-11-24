@@ -1,16 +1,22 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { Camera, Copy, Trash2 } from 'lucide-react';
 import { errText } from '../api';
-import { inventoryApi, type InventoryDraft, type InventoryItem, type MeasureUnit } from '../inventoryApi';
+import { inventoryApi, type InventoryDraft, type InventoryItem, type MeasureUnit, type SupplierListing } from '../inventoryApi';
 import { useConfirmRow } from './useConfirmRow';
+import { useToast } from './Toast';
+import WorkshopColourBadge from './WorkshopColourBadge';
 import WorkshopSpecsTable from './WorkshopSpecsTable';
 import WorkshopSupplier, { type SearchState } from './WorkshopSupplier';
 import { pieceHint } from './workshopActions.ts';
 import { formatAmount } from './workshopColumns.ts';
 import {
-  blankForm, chooseUnit, editForm, formTotalAmount, fullFromSpecs, LABEL_CATEGORIES, measureUnitOptions, reviewLabel, saveDraft,
-  specSummary, validateItemPhoto, withSpecs, type WorkshopForm,
+  blankForm, chooseUnit, editForm, estimateLabel, formTotalAmount, fullFromSpecs, isEstimate, LABEL_CATEGORIES, measureUnitOptions,
+  reviewLabel, saveDraft, specSummary, validateItemPhoto, withPrice, withSpecs, type WorkshopForm,
 } from './workshopForm';
+import {
+  categoryForSave, fieldInput, fillFromSuggestions, intakeBase, listingPrice, noAuto, ownedFields, priceFill, shouldAutoFill, unambiguousListingPrice,
+  type AutoField, type AutoFilled, type ListingPrice, type Note,
+} from './workshopIntake.ts';
 import './workshopPhotoEditor.css';
 
 interface Props {
@@ -77,7 +83,11 @@ function usePhotoPreview(key: string | null, change: PhotoChange) {
   return preview;
 }
 
+/** Wait this long after the last keystroke before asking for category and colour suggestions. */
+const suggestDelayMs = 600;
+
 export default function WorkshopItemEditor({ item, categories, onSaved, onRemoved, onCancel, onReviewMany, currency, onDuplicate, initialForm, copyOf }: Props) {
+  const toast = useToast();
   const [form, setForm] = useState<WorkshopForm>(() => item ? editForm(item) : initialForm ?? blankForm());
   const [busy, setBusy] = useState<'idle' | 'attach' | 'photo' | 'save' | 'delete'>('idle');
   const [autoSearch, setAutoSearch] = useState(true);
@@ -96,12 +106,24 @@ export default function WorkshopItemEditor({ item, categories, onSaved, onRemove
   const heading = useRef<HTMLHeadingElement>(null);
   const mounted = useRef(false);
   const searchRequest = useRef(0);
+  // Category and colour fill-ins of a new item. A field the designer typed in, or an automatic fill they undid, is never filled again.
+  const touched = useRef<Record<AutoField, boolean>>({ category: false, colour: false });
+  const [categoryNote, setCategoryNote] = useState<Note | null>(null);
+  const [colourNote, setColourNote] = useState<Note | null>(null);
+  // What the last automatic fill put in each field. While a field still holds it, a later suggestion may replace it.
+  const auto = useRef<AutoFilled>(noAuto);
+  const formNow = useRef(form);
+  formNow.current = form;
+  const suggestRequest = useRef(0);
+  const lastAsked = useRef('');
+  const suggestFailed = useRef(false);
   const saving = busy === 'save' || busy === 'delete';
   const options = [...new Set([...LABEL_CATEGORIES, ...categories])];
   const perPiece = pieceHint(form.price, form.pack_quantity, currency, { unit: form.measure_unit ?? '', full: form.measure_full ?? '' });
   const unit = form.measure_unit ?? '';
   const total = unit ? formTotalAmount(form) : null;
   const labelFull = unit ? fullFromSpecs(form.specs, unit) : null;
+  const estimated = isEstimate(form) && (form.price ?? '').trim() !== '';
   const query = [form.brand, form.name, form.part_number].map(s => s.trim()).filter(Boolean).join(' ');
 
   useEffect(() => {
@@ -110,7 +132,84 @@ export default function WorkshopItemEditor({ item, categories, onSaved, onRemove
     return () => { mounted.current = false; };
   }, []);
 
+  // A pause in typing the name, brand or notes of a new item asks for a category and a colour. Name's blur asks at once.
+  useEffect(() => {
+    if (item) return;
+    const timer = window.setTimeout(() => void suggest(), suggestDelayMs);
+    return () => window.clearTimeout(timer);
+  }, [form.name, form.brand, form.notes]);
+
+  /** Fills an empty colour and a generic category of a new item from the words of the form (and of a chosen listing). */
+  async function suggest(listing?: SupplierListing | null) {
+    if (item) return;
+    // An automatic fill that the designer has not touched counts as empty, so that new words can change it.
+    const current = intakeBase(formNow.current, auto.current, touched.current);
+    const own = ownedFields(formNow.current, auto.current, touched.current);
+    if (!own.category && !own.colour && !shouldAutoFill('category', current.category, touched.current.category, categories)
+      && !shouldAutoFill('colour', current.colour, touched.current.colour, categories)) return;
+    const input = fieldInput({ ...current, dimensions: current.specs.length ? specSummary(current.specs) : current.dimensions }, listing);
+    if (!input.name) return;
+    const asked = JSON.stringify(input);
+    if (asked === lastAsked.current) return;
+    lastAsked.current = asked;
+    const request = ++suggestRequest.current;
+    try {
+      const result = await inventoryApi.suggestFields(input);
+      if (!mounted.current || request !== suggestRequest.current) return;
+      const filled = fillFromSuggestions(formNow.current, result, touched.current, categories, auto.current);
+      auto.current = filled.auto;
+      if (filled.categoryNote !== undefined) setCategoryNote(filled.categoryNote);
+      if (filled.colourNote !== undefined) setColourNote(filled.colourNote);
+      const { patch } = filled;
+      if (patch.category === undefined && patch.colour === undefined) return;
+      setForm(previous => ({ ...previous, ...patch }));
+    } catch (e) {
+      // Suggestions are a help. A failure never blocks the form; say so once.
+      lastAsked.current = '';
+      if (mounted.current && !suggestFailed.current) {
+        suggestFailed.current = true;
+        toast.error(`Could not suggest a category or colour. ${errText(e).replace(/[.!?]?\s*$/, '.')} You can still save this item.`);
+      }
+    }
+  }
+
+  function undoCategory() {
+    if (!categoryNote) return;
+    const { previous } = categoryNote;
+    touched.current.category = true;
+    auto.current = { ...auto.current, category: null };
+    setCategoryNote(null);
+    setForm(current => ({ ...current, category: previous }));
+    document.getElementById('item-category')?.focus();
+  }
+
+  function undoColour() {
+    if (!colourNote) return;
+    const { previous } = colourNote;
+    touched.current.colour = true;
+    auto.current = { ...auto.current, colour: null };
+    setColourNote(null);
+    setForm(current => ({ ...current, colour: previous }));
+    document.getElementById('item-colour')?.focus();
+  }
+
+  /** The estimate that a listing gives, when the price is empty. */
+  function fillPrice(fill: ListingPrice | null) {
+    if (!fill) return;
+    setForm(previous => priceFill(previous, fill) ? { ...previous, ...fill } : previous);
+  }
+
+  function chooseListing(listing: SupplierListing | null) {
+    update('supplier', listing);
+    if (!listing) return;
+    fillPrice(listingPrice(listing, currency));
+    void suggest(listing);
+  }
+
   function update<K extends keyof WorkshopForm>(key: K, value: WorkshopForm[K]) {
+    if (key === 'category' || key === 'colour') touched.current[key as AutoField] = true;
+    if (key === 'category') setCategoryNote(null);
+    if (key === 'colour') setColourNote(null);
     setForm(previous => ({ ...previous, [key]: value }));
     if (identifierFields.has(key)) {
       searchRequest.current += 1;
@@ -124,7 +223,11 @@ export default function WorkshopItemEditor({ item, categories, onSaved, onRemove
     const current = () => mounted.current && request === searchRequest.current;
     try {
       const results = await inventoryApi.search(source.name, source.brand, source.part_number);
-      if (current()) setSearchState({ status: 'done', results });
+      if (current()) {
+        setSearchState({ status: 'done', results });
+        // Only the clear case fills: one price for the first product, in the library currency.
+        fillPrice(unambiguousListingPrice(results, currency));
+      }
     } catch (e) {
       if (current()) setSearchState({ status: 'error', error: errText(e) });
     }
@@ -167,7 +270,8 @@ export default function WorkshopItemEditor({ item, categories, onSaved, onRemove
     setError('');
     setBusy('save');
     try {
-      const saved = await inventoryApi.save(item?.id ?? null, saveDraft(form), photoChange);
+      const draft = saveDraft(form);
+      const saved = await inventoryApi.save(item?.id ?? null, { ...draft, category: categoryForSave(form, touched.current.category) }, photoChange);
       if (mounted.current) onSaved(saved);
     } catch (e) {
       if (mounted.current) setError(errText(e));
@@ -233,14 +337,28 @@ export default function WorkshopItemEditor({ item, categories, onSaved, onRemove
       <section className="panel" aria-labelledby="item-details-heading">
         <h3 id="item-details-heading">Item details</h3>
         <div className="workshop-grid">
-          {fields.map(([key, title, max, placeholder]) => <label key={key} className="field">
-            <span>{title}</span>
-            <input required={key === 'name'} list={key === 'category' ? 'workshop-category-options' : undefined}
+          {fields.map(([key, title, max, placeholder]) => {
+            const input = <input id={key === 'category' ? 'item-category' : key === 'colour' ? 'item-colour' : undefined} required={key === 'name'}
+              list={key === 'category' ? 'workshop-category-options' : undefined}
               maxLength={max} placeholder={placeholder} onChange={e => update(key, e.target.value)}
+              onBlur={key === 'name' ? () => void suggest() : undefined}
               readOnly={key === 'dimensions' && form.specs.length > 0}
-              value={key === 'dimensions' && form.specs.length > 0 ? specSummary(form.specs) : form[key]} />
-            {key === 'dimensions' && form.specs.length > 0 && <span className="small muted">Generated from the specs below.</span>}
-          </label>)}
+              value={key === 'dimensions' && form.specs.length > 0 ? specSummary(form.specs) : form[key]} />;
+            const field = <label key={key} className="field">
+              <span>{title}</span>
+              {key === 'colour' ? <span className="workshop-input-badge">{input}<WorkshopColourBadge text={form.colour} /></span> : input}
+              {key === 'dimensions' && form.specs.length > 0 && <span className="small muted">Generated from the specs below.</span>}
+            </label>;
+            // The note and its Undo button sit beside the label, not in it, so that a click on Undo does not focus the field.
+            const note = key === 'category' ? categoryNote : key === 'colour' ? colourNote : null;
+            // Always wrapped, so that the input keeps its place (and focus) when a note appears or goes.
+            return key === 'category' || key === 'colour' ? <div key={key} className="workshop-field-cell">
+              {field}
+              {note && <p className="small muted workshop-autofill" role="status">
+                {note.text} <button type="button" className="link-btn small" onClick={key === 'category' ? undoCategory : undoColour}>Undo</button>
+              </p>}
+            </div> : field;
+          })}
           <datalist id="workshop-category-options">{options.map(option => <option key={option} value={option} />)}</datalist>
           {([['quantity', 'Quantity on hand'], ['pack_quantity', 'Quantity per pack']] as const).map(([key, title]) =>
             <label className="field" key={key}><span>{title}</span>
@@ -250,10 +368,12 @@ export default function WorkshopItemEditor({ item, categories, onSaved, onRemove
           <div className="workshop-price">
             <label className="field"><span>Price per pack ({currency})</span>
               <input type="text" inputMode="decimal" maxLength={20} placeholder="Unknown" value={form.price}
-                aria-describedby={perPiece ? 'item-price-piece' : undefined}
-                onChange={e => update('price', e.target.value)} />
+                aria-describedby={[perPiece ? 'item-price-piece' : '', estimated ? 'item-price-estimate' : ''].filter(Boolean).join(' ') || undefined}
+                onChange={e => setForm(previous => withPrice(previous, e.target.value))} />
             </label>
             {perPiece && <span className="small muted" id="item-price-piece">{perPiece}</span>}
+            {estimated && <span className="small muted" id="item-price-estimate" role="status">
+              {estimateLabel(form.price_source)}. Change it if you paid less, and check the pack size.</span>}
           </div>
           <fieldset className="workshop-measure workshop-wide">
             <legend>Measured pack</legend>
@@ -293,7 +413,7 @@ export default function WorkshopItemEditor({ item, categories, onSaved, onRemove
       </section>
       <WorkshopSupplier selected={form.supplier} query={query} canSearch={!!(form.name.trim() || form.part_number.trim())}
         manual={manualLink} setManual={setManualLink} state={searchState}
-        onSearch={() => void search(form)} onSelect={listing => update('supplier', listing)} />
+        onSearch={() => void search(form)} onSelect={chooseListing} currency={currency} />
     </fieldset>
     {error && <p className="error-text" role="alert">{error}</p>}
     {confirmDelete && <div className="panel workshop-confirm">

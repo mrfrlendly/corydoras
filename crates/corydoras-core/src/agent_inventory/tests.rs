@@ -15,7 +15,7 @@ fn fixture() -> Result<(TempDir, Library, String)> {
         dimensions: "Thread M3; length 8mm".into(), quantity: Some(5), pack_quantity: Some(100),
         notes: "Material: Brass (label)\nLocation: Drawer 8\nParent kit: Ring terminal M5 (archived)\nAmazon (similar product): Green M12 screw https://example.com/needle".into(),
         specs: vec![],
-        supplier: Some(SupplierListing {title:"Box of screws".into(),url:"https://example.com/needle".into(),details:"Supplier says green".into()}),
+        supplier: Some(SupplierListing {title:"Box of screws".into(),url:"https://example.com/needle".into(),details:"Supplier says green".into(),..Default::default()}),
         price_cents: None,
         ..InventoryDraft::default()
     };
@@ -306,6 +306,21 @@ fn an_older_library_returns_null_prices_without_a_write() -> Result<()> {
     assert!(hit["price_cents"].is_null() && hit["unit_price"].is_null());
     assert_eq!(hit["currency"], "CAD");
     assert!(item(&lib, IMPORT_ID, None)?["item"]["price_cents"].is_null());
+    Ok(())
+}
+
+#[test]
+fn an_older_library_has_no_estimates_and_the_flag_follows_the_price_source() -> Result<()> {
+    let (_dir, lib, _) = fixture()?;
+    assert_eq!(item(&lib, IMPORT_ID, None)?["item"]["price_is_estimate"], false);
+    lib.c().execute("UPDATE workshop_inventory SET price_cents=500, price_source='listing:a.example.com' WHERE id=?1", [IMPORT_ID])?;
+    assert_eq!(item(&lib, IMPORT_ID, None)?["item"]["price_is_estimate"], true);
+    assert_eq!(search(&lib, "m3", 1, 0)?["items"][0]["price_is_estimate"], true);
+    lib.c().execute_batch("ALTER TABLE workshop_inventory DROP COLUMN price_source; PRAGMA query_only=ON")?;
+    let hit = &search(&lib, "m3", 1, 0)?["items"][0];
+    assert_eq!(hit["price_is_estimate"], false);
+    assert_eq!(hit["price_cents"], 500);
+    assert_eq!(item(&lib, IMPORT_ID, None)?["item"]["price_is_estimate"], false);
     Ok(())
 }
 

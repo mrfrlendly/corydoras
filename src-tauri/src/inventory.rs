@@ -5,6 +5,7 @@ use corydoras_core::{
     config::AppConfig,
     inventory::{InventoryDraft, InventoryItem, SupplierListing},
     inventory_categories::{CategoryInfo, ViewSettings},
+    inventory_intake::{FieldInput, FieldSuggestions, ItemSuggestion, SuggestionChange},
     inventory_label,
     inventory_media::InventoryPhotoChange,
     inventory_search, Library,
@@ -286,5 +287,43 @@ pub(super) fn set_inventory_open_amount(
 ) -> CmdResult<InventoryItem> {
     enabled_library(&state)?
         .set_open_amount(&id, left)
+        .map_err(e2s)
+}
+
+/// Suggests a category and a colour for an item that is being added or edited. Nothing is saved.
+#[tauri::command]
+pub(super) fn suggest_inventory_fields(
+    state: State<'_, AppState>,
+    input: FieldInput,
+) -> CmdResult<FieldSuggestions> {
+    enabled_library(&state)?.suggest_fields(&input).map_err(e2s)
+}
+
+/// The proposed category and colour changes of the items in the library. Nothing is saved.
+#[tauri::command]
+pub(super) fn review_inventory_suggestions(
+    state: State<'_, AppState>,
+) -> CmdResult<Vec<ItemSuggestion>> {
+    enabled_library(&state)?.review_suggestions().map_err(e2s)
+}
+
+/// Applies the ticked suggestions in one transaction. Returns the number of items changed.
+#[tauri::command]
+pub(super) fn apply_inventory_suggestions(
+    state: State<'_, AppState>,
+    changes: Vec<SuggestionChange>,
+) -> CmdResult<i64> {
+    enabled_library(&state)?.apply_suggestions(&changes).map_err(e2s)
+}
+
+/// Sets the extra words that put an item into a category. An empty list clears them.
+#[tauri::command]
+pub(super) fn set_inventory_category_keywords(
+    state: State<'_, AppState>,
+    name: String,
+    keywords: Vec<String>,
+) -> CmdResult<()> {
+    enabled_library(&state)?
+        .set_category_keywords(&name, keywords)
         .map_err(e2s)
 }

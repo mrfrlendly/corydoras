@@ -3,8 +3,10 @@ import { ArrowDown, ArrowUp, ChevronsUpDown, Minus, Plus } from 'lucide-react';
 import type { ColumnId, InventoryItem } from '../inventoryApi';
 import WorkshopThumbnail from './WorkshopThumbnail';
 import {
-  captionFields, columnDefs, formatMoney, formatUnitPrice, fractionLeft, isMeasured, openPackText, stockValueCents, unitPriceCents,
+  captionFields, columnDefs, formatMoney, formatUnitPrice, fractionLeft, isEstimatedPrice, isMeasured, openPackText, stockValueCents,
+  unitPriceCents,
 } from './workshopColumns';
+import { estimateLabel } from './workshopForm';
 import { canDecrease, checkOpenAmount } from './workshopActions';
 import { swatchColours, type ListSort, type SortField } from './workshopList';
 
@@ -55,6 +57,12 @@ function plain(text: string | null | undefined): ReactNode {
 
 function money(cents: number | null, currency: string, format: typeof formatMoney, label: string): ReactNode {
   return cents === null ? <Missing label={label} /> : format(cents, currency);
+}
+
+/** A price that is an estimate from a supplier listing carries a small "est." tag. */
+function estimated(item: InventoryItem, value: ReactNode): ReactNode {
+  if (!isEstimatedPrice(item)) return value;
+  return <>{value}<span className="workshop-estimate" title={estimateLabel(item.price_source)}>est.</span></>;
 }
 
 /** On hand with - and + buttons. The buttons stay focusable when they are off, so that focus is not lost at 0 or while saving. */
@@ -155,8 +163,8 @@ function OpenAmount({ item, pending, onSave }: { item: InventoryItem; pending: b
 function cell(column: ColumnId, item: InventoryItem, currency: string, control: ReactNode): ReactNode {
   switch (column) {
     case 'category': return plain(item.category);
-    case 'brand': return plain(item.brand);
-    case 'part_number': return plain(item.part_number);
+    case 'brand': return <Clipped text={item.brand} />;
+    case 'part_number': return <Clipped text={item.part_number} />;
     case 'colour': return <Colour text={item.colour} />;
     case 'dimensions': return <Clipped text={item.dimensions} />;
     case 'notes': return <Clipped text={item.notes} />;
@@ -165,22 +173,40 @@ function cell(column: ColumnId, item: InventoryItem, currency: string, control: 
     case 'open_amount': return control;
     case 'pack_quantity': return item.pack_quantity === null || item.pack_quantity === undefined
       ? <Missing label="Unknown" /> : item.pack_quantity.toLocaleString();
-    case 'price': return money(item.price_cents ?? null, currency, formatMoney, 'No price');
+    case 'price': return estimated(item, money(item.price_cents ?? null, currency, formatMoney, 'No price'));
     case 'unit_price': {
       // A measured item is priced per unit of its measure, so the unit is part of the text: $0.03/g.
       const text = money(unitPriceCents(item), currency, formatUnitPrice, 'No price');
-      return unitPriceCents(item) !== null && isMeasured(item) ? <>{text}/{item.measure_unit}</> : text;
+      return estimated(item, unitPriceCents(item) !== null && isMeasured(item) ? <>{text}/{item.measure_unit}</> : text);
     }
-    case 'stock_value': return money(stockValueCents(item), currency, formatMoney, 'Unknown');
+    case 'stock_value': return stockValueCents(item) === null ? <Missing label="Unknown" />
+      : estimated(item, money(stockValueCents(item), currency, formatMoney, 'Unknown'));
   }
 }
 
-/** Column widths: Item takes a share that shrinks as columns are added, number columns are narrow, the rest share what is left. */
-function widthOf(id: ColumnId | 'name', count: number): string | undefined {
+/** The least width of the Item column, in pixels. */
+const itemMinWidth = 220;
+/** The least width of each text column, in pixels. A table with many columns scrolls sideways instead of squeezing them. */
+const textMinWidth: Partial<Record<ColumnId, number>> = {
+  category: 120, colour: 140, dimensions: 150, brand: 120, part_number: 120, notes: 160, supplier: 140,
+};
+
+/** The width of a column other than Item, in pixels: the number columns are narrow and the text columns have a minimum. */
+function pixelWidth(id: ColumnId): number {
+  if (id === 'quantity') return 148;
+  if (id === 'open_amount') return 170;
+  return columnDefs[id].numeric ? 104 : textMinWidth[id] ?? 120;
+}
+
+/** Column widths: Item takes a share that shrinks as columns are added (never under 220 px); every other column has a fixed width. */
+function widthOf(id: ColumnId | 'name', count: number): string {
   if (id === 'name') return count <= 2 ? '46%' : count <= 4 ? '38%' : '30%';
-  if (id === 'quantity') return '148px';
-  if (id === 'open_amount') return '170px';
-  return columnDefs[id].numeric ? '104px' : undefined;
+  return `${pixelWidth(id)}px`;
+}
+
+/** The table is at least as wide as its columns' minimums; a narrower window scrolls the table sideways. */
+function tableMinWidth(columns: readonly ColumnId[]): number {
+  return Math.max(540, itemMinWidth + columns.reduce((sum, id) => sum + pixelWidth(id), 0));
 }
 
 export default function WorkshopInventoryTable({ tableRef, items, columns, currency, sort, onSort, onOpen, onStep, stepping, onOpenAmount }: Props) {
@@ -188,7 +214,7 @@ export default function WorkshopInventoryTable({ tableRef, items, columns, curre
   const caption = captionFields(columns);
   return <div className="workshop-table">
     <table ref={tableRef} aria-label="Workshop inventory items"
-      style={{ minWidth: Math.max(540, 250 + columns.length * 118) }}>
+      style={{ minWidth: tableMinWidth(columns) }}>
       <colgroup>{all.map(id => <col key={id} style={{ width: widthOf(id, all.length) }} />)}</colgroup>
       <thead><tr>{all.map(id => {
         const { label, numeric } = columnDefs[id];

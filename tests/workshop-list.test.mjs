@@ -42,12 +42,28 @@ test('the saved sort has a safe default and each column can reverse', () => {
 
 test('swatches use known colour names or literal hex values and keep compound colours distinct', () => {
   assert.deepEqual(swatchColours(' BLUE / Black '), ['blue','black']);
-  assert.deepEqual(swatchColours('dark grey'), ['darkgray']);
+  // Single words keep their CSS colour name; a phrase is computed by the engine, so Dark Grey is darker than grey.
+  assert.deepEqual(swatchColours('grey'), ['gray']);
+  assert.deepEqual(swatchColours('dark grey'), ['#5a5b5d']);
+  assert.deepEqual(swatchColours('Dark Gray'), ['#5a5b5d']);
+  assert.deepEqual(swatchColours('darkgrey'), ['darkgray']);
+  assert.deepEqual(swatchColours('Light Blue'), ['#75ade4']);
+  assert.deepEqual(swatchColours('Olive Green / Black'), ['#6b8e23', 'black']);
   assert.deepEqual(swatchColours('#a0B1C2'), ['#a0b1c2']);
   assert.deepEqual(swatchColours('Clear'), ['transparent']);
-  for (const text of ['', 'Misty', 'Blue / unknown', 'url(https://example.com)', 'var(--bg)', 'inherit', '__proto__']) {
+  for (const text of ['', 'Misty Grey', 'Blue / unknown', 'url(https://example.com)', 'var(--bg)', 'inherit', '__proto__']) {
     assert.deepEqual(swatchColours(text), [], text);
   }
+});
+
+test('shades and prefixed words get a badge from the shared dictionary', () => {
+  // "Misty" alone was a documented limitation (no swatch); it is a shade of blue now.
+  assert.deepEqual(swatchColours('Misty'), ['#9db8cc']);
+  assert.deepEqual(swatchColours('Titan Grey'), ['#8d9094']);
+  assert.deepEqual(swatchColours('Dark Brown'), ['#4c352e']);
+  assert.deepEqual(swatchColours('Misty Blue / Black'), ['#9db8cc', 'black']);
+  assert.deepEqual(swatchColours('Translucent'), ['transparent']);
+  assert.deepEqual(swatchColours('Prairie Rose'), ['#e08aa3']);
 });
 
 test('the list can sort by price, unit price, stock value and supplier, with missing values last', () => {

@@ -1,0 +1,273 @@
+{
+  "_about": "Colour words for the workshop inventory. Rust (colour suggestions) and TypeScript (list badges) both read this file. base: a colour word and its badge colour. aliases: another spelling of a base word. modifiers: a word that lightens or darkens the badge colour (mix with white or black, 0 to 1). shades: a named shade, with the base colour it counts as and its own badge colour. extract_alone: whether a shade word on its own (no base colour next to it) may be taken from a product name as its colour; the badge still shows for any colour text the designer typed. compounds: a two-word colour name whose words are both colour words, with its own badge colour (checked before any other reading; the stored text is the phrase as written). extract_skip: words that are colours for a badge but are never taken from a product name (aqua means water in ingredient lists).",
+  "base": {
+    "black": "#1f1f1f",
+    "white": "#f4f4f2",
+    "grey": "#808285",
+    "silver": "#c2c4c7",
+    "red": "#d32f2f",
+    "orange": "#f57c00",
+    "yellow": "#fbc02d",
+    "green": "#388e3c",
+    "blue": "#1976d2",
+    "purple": "#7b1fa2",
+    "pink": "#ec7fa5",
+    "brown": "#6d4c41",
+    "beige": "#d9c7a3",
+    "gold": "#c9a227",
+    "teal": "#00897b",
+    "cyan": "#00acc1",
+    "magenta": "#c2185b",
+    "navy": "#1a237e",
+    "olive": "#808000",
+    "maroon": "#7f1d1d",
+    "bronze": "#a97142",
+    "copper": "#b87333",
+    "ivory": "#f8f5e6",
+    "tan": "#d2b48c",
+    "lime": "#9acd32",
+    "turquoise": "#30d5c8",
+    "violet": "#8a2be2",
+    "indigo": "#4b0082",
+    "coral": "#ff7f50",
+    "clear": "transparent"
+  },
+  "aliases": {
+    "gray": "grey",
+    "transparent": "clear",
+    "translucent": "clear",
+    "aqua": "cyan",
+    "lilac": "violet",
+    "lavender": "violet",
+    "burgundy": "maroon",
+    "cream": "ivory",
+    "crimson": "red",
+    "scarlet": "red"
+  },
+  "modifiers": {
+    "dark": {
+      "mix": "black",
+      "amount": 0.3
+    },
+    "deep": {
+      "mix": "black",
+      "amount": 0.2
+    },
+    "light": {
+      "mix": "white",
+      "amount": 0.4
+    },
+    "pale": {
+      "mix": "white",
+      "amount": 0.5
+    },
+    "pastel": {
+      "mix": "white",
+      "amount": 0.55
+    },
+    "bright": {
+      "mix": "white",
+      "amount": 0.1
+    },
+    "neon": {
+      "mix": "white",
+      "amount": 0.05
+    },
+    "matte": {
+      "mix": "white",
+      "amount": 0
+    },
+    "silk": {
+      "mix": "white",
+      "amount": 0
+    },
+    "glossy": {
+      "mix": "white",
+      "amount": 0
+    }
+  },
+  "shades": {
+    "titan": {
+      "base": "grey",
+      "hex": "#8d9094",
+      "extract_alone": false
+    },
+    "space": {
+      "base": "grey",
+      "hex": "#53565a",
+      "extract_alone": false
+    },
+    "charcoal": {
+      "base": "grey",
+      "hex": "#36454f",
+      "extract_alone": true
+    },
+    "graphite": {
+      "base": "grey",
+      "hex": "#41424a",
+      "extract_alone": false
+    },
+    "slate": {
+      "base": "grey",
+      "hex": "#5b6770",
+      "extract_alone": false
+    },
+    "gunmetal": {
+      "base": "grey",
+      "hex": "#4a4f55",
+      "extract_alone": true
+    },
+    "steel": {
+      "base": "grey",
+      "hex": "#8a9199",
+      "extract_alone": false
+    },
+    "ash": {
+      "base": "grey",
+      "hex": "#b2b4b2",
+      "extract_alone": false
+    },
+    "stone": {
+      "base": "grey",
+      "hex": "#a8a49c",
+      "extract_alone": false
+    },
+    "midnight": {
+      "base": "navy",
+      "hex": "#1b2340",
+      "extract_alone": true
+    },
+    "cobalt": {
+      "base": "blue",
+      "hex": "#0047ab",
+      "extract_alone": false
+    },
+    "azure": {
+      "base": "blue",
+      "hex": "#2f8fe0",
+      "extract_alone": true
+    },
+    "sapphire": {
+      "base": "blue",
+      "hex": "#1a4aa0",
+      "extract_alone": true
+    },
+    "royal": {
+      "base": "blue",
+      "hex": "#2b4fc4",
+      "extract_alone": false
+    },
+    "sky": {
+      "base": "blue",
+      "hex": "#6bb7ea",
+      "extract_alone": false
+    },
+    "ocean": {
+      "base": "blue",
+      "hex": "#2a6f97",
+      "extract_alone": false
+    },
+    "misty": {
+      "base": "blue",
+      "hex": "#9db8cc",
+      "extract_alone": false
+    },
+    "emerald": {
+      "base": "green",
+      "hex": "#2e9e63",
+      "extract_alone": true
+    },
+    "forest": {
+      "base": "green",
+      "hex": "#2d5a3d",
+      "extract_alone": false
+    },
+    "jade": {
+      "base": "green",
+      "hex": "#3fa57a",
+      "extract_alone": true
+    },
+    "mint": {
+      "base": "green",
+      "hex": "#8fd9b6",
+      "extract_alone": false
+    },
+    "sage": {
+      "base": "green",
+      "hex": "#9caf88",
+      "extract_alone": false
+    },
+    "khaki": {
+      "base": "beige",
+      "hex": "#b9ab7a",
+      "extract_alone": false
+    },
+    "sand": {
+      "base": "beige",
+      "hex": "#d8c69a",
+      "extract_alone": false
+    },
+    "rose": {
+      "base": "pink",
+      "hex": "#e08aa3",
+      "extract_alone": false
+    },
+    "prairie": {
+      "base": "pink",
+      "hex": "#d9a3a8",
+      "extract_alone": false
+    },
+    "peach": {
+      "base": "orange",
+      "hex": "#f4b183",
+      "extract_alone": false
+    },
+    "amber": {
+      "base": "orange",
+      "hex": "#e49b0f",
+      "extract_alone": false
+    },
+    "lemon": {
+      "base": "yellow",
+      "hex": "#f3e03b",
+      "extract_alone": false
+    },
+    "ruby": {
+      "base": "red",
+      "hex": "#a8112b",
+      "extract_alone": false
+    },
+    "wine": {
+      "base": "maroon",
+      "hex": "#6d1f2f",
+      "extract_alone": false
+    },
+    "galaxy": {
+      "base": "purple",
+      "hex": "#4b3a7a",
+      "extract_alone": false
+    },
+    "sunset": {
+      "base": "orange",
+      "hex": "#e8683a",
+      "extract_alone": false
+    }
+  },
+  "extract_skip": [
+    "aqua"
+  ],
+  "compounds": {
+    "olive green": "#6b8e23",
+    "navy blue": "#1a237e",
+    "lime green": "#6cc24a",
+    "army green": "#4b5320",
+    "hot pink": "#ff4f9a",
+    "baby blue": "#9ecbf0",
+    "rose gold": "#b76e79",
+    "blue green": "#2a9d8f",
+    "teal blue": "#2a7f9f",
+    "forest green": "#2d5a3d",
+    "sky blue": "#6bb7ea",
+    "royal blue": "#2b4fc4"
+  }
+}

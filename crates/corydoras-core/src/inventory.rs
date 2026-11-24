@@ -21,11 +21,18 @@ pub const MAX_PRICE_CENTS: i64 = 1_000_000_000_000;
 /// The units of a measured pack: grams, millilitres and metres. A blank unit counts pieces.
 pub const MEASURE_UNITS: &[&str] = &["g", "mL", "m"];
 
-#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
 pub struct SupplierListing {
     pub title: String,
     pub url: String,
     pub details: String,
+    /// The price of the listing in whole cents of `currency`, when the supplier gave one. This is a
+    /// transient search-result field: it is checked on save but never stored.
+    #[serde(default)]
+    pub price_cents: Option<i64>,
+    /// Three uppercase letters, or empty when unknown. Transient like `price_cents`.
+    #[serde(default)]
+    pub currency: String,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
@@ -43,6 +50,10 @@ pub struct InventoryDraft {
     pub pack_quantity: Option<i64>,
     /// The retail price of one pack as bought, in cents of the library currency.
     pub price_cents: Option<i64>,
+    /// "" when the designer entered the price, "listing:<host>" when it is an estimate taken from a
+    /// supplier listing. Rust cannot tell that a save changed an estimated price while the client
+    /// left the old mark: the editor clears the mark when the designer edits the price field.
+    pub price_source: String,
     /// The unit of a measured pack: "" (counted pieces, the default), "g", "mL" or "m".
     pub measure_unit: String,
     /// The amount in one full pack, in `measure_unit`, for example 1000 for a 1 kg spool.
@@ -132,6 +143,24 @@ impl SupplierListing {
             title,
             url: Self::validate_url(self.url.trim())?.to_string(),
             details: field(&self.details, "The supplier details", 8192)?,
+            // Checked, then dropped: the listing price is a search result, not part of the record.
+            price_cents: {
+                if let Some(price) = self.price_cents {
+                    ensure!(
+                        (0..=MAX_PRICE_CENTS).contains(&price),
+                        "Enter a listing price from 0 to 10,000,000,000."
+                    );
+                }
+                None
+            },
+            currency: {
+                let code = self.currency.trim();
+                ensure!(
+                    code.is_empty() || (code.len() == 3 && code.bytes().all(|b| b.is_ascii_uppercase())),
+                    "Enter the listing currency as three capital letters, or leave it empty."
+                );
+                String::new()
+            },
         })
     }
 }
@@ -141,6 +170,17 @@ pub(crate) fn normalized_colour(value: &str) -> Result<String> {
     ensure!(
         value.chars().count() <= 120 && !value.chars().any(char::is_control),
         "Enter a colour on one line with at most 120 characters."
+    );
+    Ok(value.to_owned())
+}
+
+fn normalized_price_source(value: &str) -> Result<String> {
+    let value = value.trim();
+    ensure!(
+        value.chars().count() <= 120
+            && !value.chars().any(char::is_control)
+            && (value.is_empty() || value.starts_with("listing:")),
+        "The price source is empty or starts with listing: and has at most 120 characters."
     );
     Ok(value.to_owned())
 }
@@ -173,6 +213,7 @@ impl InventoryDraft {
                 "Enter a price from 0 to 10,000,000,000."
             );
         }
+        let price_source = normalized_price_source(&self.price_source)?;
         let (measure_unit, measure_full, measure_left) = self.normalized_measure()?;
         Ok(Self {
             name,
@@ -188,6 +229,12 @@ impl InventoryDraft {
             quantity: self.quantity,
             pack_quantity: self.pack_quantity,
             price_cents: self.price_cents,
+            // An estimate needs a price.
+            price_source: if self.price_cents.is_some() {
+                price_source
+            } else {
+                String::new()
+            },
             measure_unit,
             measure_full,
             measure_left,
@@ -264,6 +311,7 @@ pub(crate) fn inventory_row(row: &Row<'_>) -> rusqlite::Result<InventoryItem> {
             url,
             title: row.get(10)?,
             details: row.get(11)?,
+            ..Default::default()
         }),
         None => None,
     };
@@ -292,6 +340,7 @@ pub(crate) fn inventory_row(row: &Row<'_>) -> rusqlite::Result<InventoryItem> {
                 )
             })?,
             supplier,
+            price_source: row.get(19)?,
         },
     })
 }
@@ -299,7 +348,7 @@ pub(crate) fn inventory_row(row: &Row<'_>) -> rusqlite::Result<InventoryItem> {
 /// Every column of an item in the order that `inventory_row` reads them.
 pub(crate) const SELECT_ITEMS: &str = "SELECT id, name, category, brand, part_number, dimensions,
         quantity, pack_quantity, notes, supplier_url, supplier_title, supplier_details, colour,
-        photo_key, specs, price_cents, measure_unit, measure_full, measure_left
+        photo_key, specs, price_cents, measure_unit, measure_full, measure_left, price_source
         FROM workshop_inventory";
 
 pub(crate) fn inventory_enabled(conn: &Connection) -> Result<bool> {
@@ -348,7 +397,12 @@ impl Library {
         draft: &InventoryDraft,
         change: InventoryPhotoChange<'_>,
     ) -> Result<InventoryItem> {
-        let draft = draft.normalized()?;
+        // An empty category is told apart from a typed "Other" before normalizing turns it into "Other".
+        let intake = id.is_none() && draft.category.trim().is_empty();
+        let mut draft = draft.normalized()?;
+        if intake {
+            self.intake_new_draft(&mut draft)?;
+        }
         let photo = match change {
             InventoryPhotoChange::Replace(bytes) => Some(prepare_photo(bytes)?),
             _ => None,
@@ -368,13 +422,13 @@ impl Library {
             "UPDATE workshop_inventory SET name=?2, category=?3, brand=?4, part_number=?5,
                  dimensions=?6, quantity=?7, pack_quantity=?8, notes=?9, supplier_url=?10,
                  supplier_title=?11, supplier_details=?12, colour=?13, specs=?16,
-                 price_cents=?17, measure_unit=?18, measure_full=?19, measure_left=?20,
+                 price_cents=?17, measure_unit=?18, measure_full=?19, measure_left=?20, price_source=?21,
                  photo_key=CASE WHEN ?15 THEN photo_key ELSE ?14 END WHERE id=?1 RETURNING photo_key"
         } else {
             "INSERT INTO workshop_inventory (id,name,category,brand,part_number,dimensions,
                  quantity,pack_quantity,notes,supplier_url,supplier_title,supplier_details,colour,photo_key,specs,
-                 price_cents,measure_unit,measure_full,measure_left)
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,CASE WHEN ?15 THEN NULL ELSE ?14 END,?16,?17,?18,?19,?20)
+                 price_cents,measure_unit,measure_full,measure_left,price_source)
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,CASE WHEN ?15 THEN NULL ELSE ?14 END,?16,?17,?18,?19,?20,?21)
              RETURNING photo_key"
         };
         let photo_key = tx
@@ -401,6 +455,7 @@ impl Library {
                     draft.measure_unit,
                     draft.measure_full,
                     draft.measure_left,
+                    draft.price_source,
                 ],
                 |row| row.get(0),
             )
@@ -425,15 +480,26 @@ impl Library {
             (1..=MAX_BATCH).contains(&drafts.len()),
             "Save between 1 and {MAX_BATCH} items at a time."
         );
-        let drafts = drafts
+        let mut drafts = drafts
             .iter()
             .enumerate()
             .map(|(i, draft)| {
                 draft
                     .normalized()
+                    .map(|normalized| (draft.category.trim().is_empty(), normalized))
                     .map_err(|e| anyhow!("Item {}: {e}", i + 1))
             })
             .collect::<Result<Vec<_>>>()?;
+        // Items that came without a category get the keyword rules, as a single new item does.
+        if drafts.iter().any(|(empty, _)| *empty) {
+            let rules = self.category_rules()?;
+            for (empty, draft) in &mut drafts {
+                if *empty {
+                    crate::inventory_intake::fill_new_draft(draft, &rules);
+                }
+            }
+        }
+        let drafts = drafts.into_iter().map(|(_, draft)| draft);
         let photo = prepare_photo(photo)?;
         let mut conn = self.c();
         let tx = conn.transaction()?;
@@ -445,8 +511,8 @@ impl Library {
             tx.execute(
                 "INSERT INTO workshop_inventory (id,name,category,brand,part_number,dimensions,
                      quantity,pack_quantity,notes,supplier_url,supplier_title,supplier_details,
-                     colour,photo_key,specs,price_cents,measure_unit,measure_full,measure_left)
-                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19)",
+                     colour,photo_key,specs,price_cents,measure_unit,measure_full,measure_left,price_source)
+                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20)",
                 params![
                     id,
                     draft.name,
@@ -467,6 +533,7 @@ impl Library {
                     draft.measure_unit,
                     draft.measure_full,
                     draft.measure_left,
+                    draft.price_source,
                 ],
             )?;
             items.push(InventoryItem {

@@ -8,12 +8,15 @@ import {
 } from './workshopActions';
 import { visibleColumns } from './workshopColumns';
 import { matchingItems } from './workshopForm';
+import { keywordsFromText, keywordsSummary, keywordsText } from './workshopIntake.ts';
 
 export interface CategoryRow {
   name: string;
   /** Items that use the category now. */
   count: number;
   columns: ColumnConfig;
+  /** Extra words that put an item in this category. */
+  keywords: string[];
 }
 
 interface Props {
@@ -31,7 +34,8 @@ interface Props {
   onDone: () => void;
 }
 
-type Edit = { kind: 'rename'; name: string; text: string } | { kind: 'merge'; name: string; into: string };
+type Edit = { kind: 'rename'; name: string; text: string } | { kind: 'merge'; name: string; into: string }
+  | { kind: 'words'; name: string; text: string };
 
 const deleteReason = 'Move or merge its items first.';
 const plural = (count: number) => `${count} ${count === 1 ? 'item' : 'items'}`;
@@ -137,6 +141,16 @@ export default function WorkshopCategories({ rows, items, currency, onColumns, o
     if (ok && mounted.current) setEdit(null);
   }
 
+  /** Saves the extra words of a category. The library checks them; its message stays on screen beside the field. */
+  async function saveWords(name: string, text: string) {
+    const words = keywordsFromText(text);
+    const ok = await run(async () => {
+      await inventoryApi.setCategoryKeywords(name, words);
+      return words.length ? `Words of ${name} saved.` : `Words of ${name} cleared.`;
+    }, { name, action: 'words' });
+    if (ok && mounted.current) setEdit(null);
+  }
+
   async function remove(name: string) {
     await run(async () => { await inventoryApi.deleteCategory(name); return `Category ${name} deleted.`; }, 'new');
   }
@@ -192,7 +206,7 @@ export default function WorkshopCategories({ rows, items, currency, onColumns, o
       <h2 ref={heading} tabIndex={-1}>Categories</h2>
       <button type="button" className="btn small" onClick={() => void finish()}>Done</button>
     </div>
-    {error && <p className="error-text" role="alert">{error}</p>}
+    {error && edit?.kind !== 'words' && <p className="error-text" role="alert">{error}</p>}
     <section className="panel">
       <form className="workshop-cat-new" onSubmit={add}>
         <label className="field"><span>New category</span>
@@ -211,10 +225,15 @@ export default function WorkshopCategories({ rows, items, currency, onColumns, o
             <div className="workshop-cat-line">
               <span className="workshop-cat-name">{row.name}</span>
               <span className="workshop-cat-count small muted">{plural(row.count)}</span>
+              {row.keywords.length > 0 && <span className="workshop-cat-words small muted" title={row.keywords.join(', ')}>
+                Words: {keywordsSummary(row.keywords)}</span>}
               <span className="workshop-cat-actions">
                 <WorkshopColumnPicker scopeLabel={row.name} config={row.columns} shown={categoryColumns(row)}
                   onChange={next => onColumns(row.name, next)} buttonLabel="Columns…"
                   buttonName={`Columns of ${row.name}`} align="right" />
+                <button type="button" className="btn small" data-category={row.name} data-action="words"
+                  aria-label={`Words of ${row.name}`} aria-expanded={editing?.kind === 'words'} disabled={busy}
+                  onClick={() => { setError(''); setEdit({ kind: 'words', name: row.name, text: keywordsText(row.keywords) }); }}>Words</button>
                 <button type="button" className="btn small" data-category={row.name} data-action="rename"
                   aria-label={`Rename ${row.name}`} disabled={busy}
                   onClick={() => { setError(''); setEdit({ kind: 'rename', name: row.name, text: row.name }); }}>Rename</button>
@@ -253,6 +272,35 @@ export default function WorkshopCategories({ rows, items, currency, onColumns, o
                   setError('');
                   focusAction(row.name, 'rename');
                 }}>Cancel</button>
+            </form>}
+            {editing?.kind === 'words' && <form className="workshop-cat-edit" onSubmit={event => {
+              event.preventDefault();
+              void saveWords(row.name, editing.text);
+            }}>
+              <label className="field"><span>Words for {row.name}, separated by commas</span>
+                <input type="text" autoFocus maxLength={1000} value={editing.text} readOnly={busy}
+                  autoCapitalize="off" autoCorrect="off" spellCheck={false} placeholder="e.g. superglue, cement"
+                  aria-describedby={`${reasonId}-words-${index}`}
+                  onChange={event => { setEdit({ ...editing, text: event.target.value }); setError(''); }}
+                  onKeyDown={event => {
+                    if (event.key !== 'Escape') return;
+                    event.preventDefault();
+                    event.stopPropagation();
+                    setEdit(null);
+                    setError('');
+                    focusAction(row.name, 'words');
+                  }} />
+              </label>
+              <button type="submit" className="btn small primary" disabled={busy}>Save words</button>
+              <button type="button" className="btn small" disabled={busy}
+                onClick={() => {
+                  setEdit(null);
+                  setError('');
+                  focusAction(row.name, 'words');
+                }}>Cancel</button>
+              <p className="workshop-cat-confirm small muted" id={`${reasonId}-words-${index}`}>
+                An item whose name, brand or notes has one of these words goes to {row.name} when it has no category yet or a broad one such as Other.</p>
+              {error && <p className="small error-text workshop-cat-error" role="alert">{error}</p>}
             </form>}
             {editing?.kind === 'merge' && <div className="workshop-cat-edit">
               <label className="field"><span>Merge {row.name} into</span>

@@ -2,12 +2,12 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   autoColumns, captionFields, columnDefs, formatMoney, formatUnitPrice, stockValueCents, unitPriceCents,
-  viewTotals, visibleColumns,
+  isEstimatedPrice, viewTotals, visibleColumns,
 } from '../src/components/workshopColumns.ts';
 
 const item = (id, values = {}) => ({
   id, name: id, category: 'Fasteners', brand: '', part_number: '', colour: '', dimensions: '', quantity: null,
-  pack_quantity: null, price_cents: null, measure_unit: '', measure_full: null, measure_left: null, notes: '', specs: [], supplier: null, photo_key: null, ...values,
+  pack_quantity: null, price_cents: null, price_source: '', measure_unit: '', measure_full: null, measure_left: null, notes: '', specs: [], supplier: null, photo_key: null, ...values,
 });
 const ids = ['category', 'brand', 'part_number', 'colour', 'dimensions', 'quantity', 'pack_quantity', 'open_amount', 'price',
   'unit_price', 'stock_value', 'notes', 'supplier'];
@@ -106,7 +106,7 @@ test('a stored config sets the columns and their order; null means Auto', () => 
 });
 
 test('totals count unpriced items and sum only items that have a price and a count', () => {
-  assert.deepEqual(viewTotals([]), { count: 0, withoutCount: 0, unpriced: 0, stockValueCents: 0 });
+  assert.deepEqual(viewTotals([]), { count: 0, withoutCount: 0, unpriced: 0, stockValueCents: 0, estimatedPrices: 0 });
   const items = [
     item('a', { price_cents: 999, pack_quantity: 45, quantity: 90 }),
     item('b', { price_cents: 500, quantity: 2 }),
@@ -115,7 +115,7 @@ test('totals count unpriced items and sum only items that have a price and a cou
     item('e'),
     item('f', { price_cents: 0, quantity: 0 }),
   ];
-  assert.deepEqual(viewTotals(items), { count: 6, withoutCount: 2, unpriced: 2, stockValueCents: 1998 + 1000 });
+  assert.deepEqual(viewTotals(items), { count: 6, withoutCount: 2, unpriced: 2, stockValueCents: 1998 + 1000, estimatedPrices: 0 });
 });
 
 test('the caption keeps brand and part number unless they have their own column', () => {
@@ -134,4 +134,22 @@ test('derived columns sort by their values and supplier by title', () => {
   assert.equal(columnDefs.supplier.sortValue(item('b')), null);
   assert.equal(columnDefs.brand.sortValue(item('b', { brand: '  ' })), null);
   assert.equal(columnDefs.price.sortValue(item('b')), null);
+});
+
+test('an estimated price needs a price and a source, and the totals count them', () => {
+  const listing = 'listing:canadabolts.ca';
+  assert.equal(isEstimatedPrice(item('a', { price_cents: 500, price_source: listing })), true);
+  assert.equal(isEstimatedPrice(item('a', { price_cents: 0, price_source: listing })), true);
+  assert.equal(isEstimatedPrice(item('a', { price_cents: 500, price_source: '' })), false);
+  assert.equal(isEstimatedPrice(item('a', { price_cents: 500, price_source: '  ' })), false);
+  assert.equal(isEstimatedPrice(item('a', { price_cents: null, price_source: listing })), false);
+  assert.equal(isEstimatedPrice({ price_cents: 500 }), false);
+  const items = [
+    item('a', { price_cents: 500, quantity: 2, price_source: listing }),
+    item('b', { price_cents: 700, quantity: 1 }),
+    item('c', { price_cents: null, price_source: listing }),
+    item('d', { price_cents: 100, quantity: 1, price_source: 'listing:3dprintingcanada.com' }),
+  ];
+  assert.equal(viewTotals(items).estimatedPrices, 2);
+  assert.equal(viewTotals(items).stockValueCents, 1000 + 700 + 100);
 });

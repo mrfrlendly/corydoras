@@ -1,5 +1,6 @@
 import type { InventoryItem } from '../inventoryApi';
 import { columnDefs, isColumnKey, type ColumnKey } from './workshopColumns.ts';
+import { colourSwatches } from './workshopColours.ts';
 
 /** The five columns of the fixed list layout. Each column's label comes from the column definitions. */
 export const listColumns = (['name', 'category', 'colour', 'quantity', 'pack_quantity'] as const)
@@ -50,19 +51,21 @@ export function sortItems(items: readonly InventoryItem[], sort: ListSort): Inve
   });
 }
 
-// Only assign a swatch when the stored text identifies a known colour.
+// The single words that earlier versions drew with a CSS colour name. They keep that look; every other colour text,
+// including every phrase ("Dark Grey", "Titan Grey", "Olive Green"), comes from the shared colour dictionary.
 const namedColours = new Set(('black white blue navy royalblue skyblue lightblue darkblue teal turquoise cyan aqua ' +
   'red darkred orange darkorange yellow gold brown saddlebrown green darkgreen lime olive purple violet ' +
   'magenta pink hotpink gray lightgray darkgray slategray silver ivory beige tan coral maroon indigo').split(' '));
 
+/** The swatch colours of a colour text, one for each "/" part, or [] when any part is not a known colour. */
 export function swatchColours(label: string): string[] {
   const names = label.trim().toLowerCase().split(/\s*\/\s*/);
   if (names.length > 3) return [];
   const colours = names.map(text => {
     if (text === 'clear' || text === 'transparent') return 'transparent';
-    const name = text.replaceAll(' ', '').replace(/grey$/, 'gray');
-    if (namedColours.has(name) || /^#(?:[a-f\d]{3}|[a-f\d]{6})$/.test(text)) return name;
-    return '';
+    const name = text.replace(/grey$/, 'gray');
+    if (!/\s/.test(text) && namedColours.has(name) || /^#(?:[a-f\d]{3}|[a-f\d]{6})$/.test(text)) return name;
+    return colourSwatches(text)[0] ?? '';
   });
   return colours.every(Boolean) ? colours : [];
 }

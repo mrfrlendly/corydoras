@@ -1,6 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { blankForm, duplicateForm, editForm, matchingItems, parsePrice, priceText, reviewLabel, saveDraft } from '../src/components/workshopForm.ts';
+import {
+  batchDrafts, blankForm, duplicateForm, editForm, estimateLabel, isEstimate, matchingItems, parsePrice, priceText, reviewLabel, saveDraft,
+  withPrice,
+} from '../src/components/workshopForm.ts';
 
 test('review preserves manual changes and treats a package count separately from stock', () => {
   const form = { ...blankForm(), brand: 'Brand from the user', quantity: '0' };
@@ -248,4 +251,89 @@ test('the category filter treats letter case as one category, as the library doe
   assert.deepEqual(ids('Tape'), ['c']);
   assert.deepEqual(ids('Nuts'), []);
   assert.deepEqual(ids(''), ['a', 'b', 'c']);
+});
+
+const listing = 'listing:canadabolts.ca';
+
+test('the price source is carried by the form, saved with the draft and defaults to the designer', () => {
+  assert.equal(blankForm().price_source, '');
+  const estimate = { ...blankForm(), name: 'M3 bolt', price: '4.50', price_source: listing };
+  const draft = saveDraft(estimate);
+  assert.equal(draft.price_cents, 450);
+  assert.equal(draft.price_source, listing);
+  assert.equal(editForm(draft).price_source, listing);
+  assert.equal(editForm(draft).price, '4.50');
+  assert.equal('price_source' in saveDraft({ ...blankForm(), name: 'x' }), true);
+  assert.equal(saveDraft({ ...blankForm(), name: 'x' }).price_source, '');
+  // A source with no price is not an estimate.
+  assert.equal(saveDraft({ ...estimate, price: '' }).price_source, '');
+  assert.deepEqual(batchDrafts([estimate, { ...estimate, price: '' }]).map(d => d.price_source), [listing, '']);
+});
+
+test('an older phone card or draft without a price source still loads and saves', () => {
+  const old = { ...blankForm(), name: 'x', price: '2.00' };
+  delete old.price_source;
+  assert.equal(saveDraft(old).price_source, '');
+  const draft = { ...saveDraft({ ...blankForm(), name: 'x' }) };
+  delete draft.price_source;
+  assert.equal(editForm(draft).price_source, '');
+  assert.equal(withPrice(old, '3.00').price_source, '');
+  assert.equal(isEstimate(old), false);
+});
+
+test('a duplicate keeps the estimate mark with the price', () => {
+  const item = { ...saveDraft({ ...blankForm(), name: 'Bolt', price: '4.50', price_source: listing, quantity: '3' }), id: 'a', photo_key: null };
+  const copy = duplicateForm(item);
+  assert.equal(copy.price_source, listing);
+  assert.equal(copy.price, '4.50');
+  assert.deepEqual({ ...copy, quantity: '3' }, editForm(item));
+});
+
+test('a label review keeps the mark of the price that stays', () => {
+  const label = { ...saveDraft({ ...blankForm(), name: 'PLA', price: '12.50', price_source: listing }) };
+  assert.equal(reviewLabel(blankForm(), label).price_source, listing);
+  assert.equal(reviewLabel({ ...blankForm(), price: '3.00' }, label).price_source, '');
+  const mine = { ...blankForm(), price: '3.00', price_source: 'listing:thepihut.com' };
+  assert.equal(reviewLabel(mine, label).price_source, 'listing:thepihut.com');
+  assert.equal(reviewLabel(blankForm(), { ...label, price_cents: null }).price_source, '');
+});
+
+test('typing a different price clears the estimate mark and the same price keeps it', () => {
+  const estimate = { ...blankForm(), name: 'Bolt', price: '24.90', price_source: listing };
+  assert.equal(withPrice(estimate, '24.90').price_source, listing);
+  // The same price in another spelling is no edit.
+  assert.equal(withPrice(estimate, '24.9').price_source, listing);
+  assert.equal(withPrice(estimate, '$24.90').price_source, listing);
+  assert.equal(withPrice(estimate, '24.99').price_source, '');
+  assert.equal(withPrice(estimate, '').price_source, '');
+  assert.equal(withPrice(estimate, '24.').price_source, '');
+  assert.equal(withPrice(estimate, '24.99').price, '24.99');
+  // Retyping the old price afterwards does not bring the mark back.
+  assert.equal(withPrice(withPrice(estimate, '24.99'), '24.90').price_source, '');
+  // A price the designer entered stays theirs.
+  assert.equal(withPrice({ ...blankForm(), price: '1.00' }, '2.00').price_source, '');
+  // The form is not changed in place.
+  assert.equal(estimate.price, '24.90');
+  assert.equal(estimate.price_source, listing);
+  assert.equal(saveDraft(withPrice(estimate, '30')).price_source, '');
+});
+
+test('isEstimate tells an estimate from a price the designer entered, for a form or an item', () => {
+  assert.equal(isEstimate({ price_source: listing }), true);
+  assert.equal(isEstimate({ price_source: '' }), false);
+  assert.equal(isEstimate({ price_source: '   ' }), false);
+  assert.equal(isEstimate({}), false);
+  assert.equal(isEstimate({ price_source: null }), false);
+  assert.equal(isEstimate({ ...blankForm(), price_source: listing }), true);
+  assert.equal(isEstimate(saveDraft({ ...blankForm(), name: 'x', price: '1', price_source: listing })), true);
+});
+
+test('the estimate label names the supplier host', () => {
+  assert.equal(estimateLabel('listing:canadabolts.ca'), 'Estimated from canadabolts.ca');
+  assert.equal(estimateLabel('listing:3dprintingcanada.com'), 'Estimated from 3dprintingcanada.com');
+  assert.equal(estimateLabel(''), '');
+  assert.equal(estimateLabel(undefined), '');
+  assert.equal(estimateLabel(null), '');
+  assert.equal(estimateLabel('listing:'), 'Estimated');
+  assert.equal(estimateLabel('other'), 'Estimated');
 });

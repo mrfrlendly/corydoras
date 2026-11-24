@@ -121,14 +121,16 @@ CREATE TABLE IF NOT EXISTS workshop_inventory (
     price_cents      INTEGER CHECK (price_cents >= 0),
     measure_unit     TEXT NOT NULL DEFAULT '',
     measure_full     INTEGER CHECK (measure_full >= 1),
-    measure_left     INTEGER CHECK (measure_left >= 0)
+    measure_left     INTEGER CHECK (measure_left >= 0),
+    price_source     TEXT NOT NULL DEFAULT ''
 );
 
 -- Category settings of the workshop inventory. The item text stays the identity;
 -- this table holds the column choice and categories that have no items yet.
 CREATE TABLE IF NOT EXISTS workshop_categories (
-    name    TEXT PRIMARY KEY COLLATE NOCASE,
-    columns TEXT
+    name     TEXT PRIMARY KEY COLLATE NOCASE,
+    columns  TEXT,
+    keywords TEXT
 );
 
 CREATE TABLE IF NOT EXISTS usage (
@@ -285,6 +287,8 @@ pub fn migrate(conn: &Connection) -> Result<()> {
         ("workshop_inventory", "measure_unit", "ALTER TABLE workshop_inventory ADD COLUMN measure_unit TEXT NOT NULL DEFAULT ''"),
         ("workshop_inventory", "measure_full", "ALTER TABLE workshop_inventory ADD COLUMN measure_full INTEGER CHECK (measure_full >= 1)"),
         ("workshop_inventory", "measure_left", "ALTER TABLE workshop_inventory ADD COLUMN measure_left INTEGER CHECK (measure_left >= 0)"),
+        ("workshop_inventory", "price_source", "ALTER TABLE workshop_inventory ADD COLUMN price_source TEXT NOT NULL DEFAULT ''"),
+        ("workshop_categories", "keywords", "ALTER TABLE workshop_categories ADD COLUMN keywords TEXT"),
         ("versions", "schema", "ALTER TABLE versions ADD COLUMN schema INTEGER NOT NULL DEFAULT 1"),
         ("versions", "warnings", "ALTER TABLE versions ADD COLUMN warnings TEXT NOT NULL DEFAULT '[]'"),
         ("projects", "process_id", "ALTER TABLE projects ADD COLUMN process_id TEXT"),

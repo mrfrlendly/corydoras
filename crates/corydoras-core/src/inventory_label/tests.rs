@@ -6,6 +6,11 @@ use serde_json::{json, Value};
 
 const MAX_BYTES: usize = 128 * 1024;
 
+/// The reader without a library: the built-in category list, as for a library with no categories.
+fn parse_labels(reply: &str) -> Result<Vec<InventoryDraft>> {
+    super::parse_labels(reply, &fallback_categories())
+}
+
 fn row(text: &str, name: &str, product: &str, specs: Value) -> Value {
     json!({"row_text": text, "name": name, "category": "fasteners", "product_type": product, "specs": specs})
 }
@@ -594,4 +599,80 @@ fn the_error_says_what_was_wrong() {
         shape.contains("did not match") && shape.contains("sequence"),
         "{shape}"
     );
+}
+
+fn names(list: &[&str]) -> Vec<String> {
+    list.iter().map(|s| s.to_string()).collect()
+}
+
+#[test]
+fn the_answer_is_checked_against_the_given_categories_ignoring_case() {
+    let library = names(&["Threaded Inserts", "Filament", "Other"]);
+    let answer = |category: Value| {
+        let mut item = row("M3 insert 50 pcs", "M3 insert", "insert", json!([]));
+        item["category"] = category;
+        super::parse_labels(&sheet("", vec![item]), &library).unwrap().remove(0).category
+    };
+    assert_eq!(answer(json!("threaded inserts")), "Threaded Inserts");
+    assert_eq!(answer(json!("  FILAMENT ")), "Filament");
+    assert_eq!(answer(json!("Other")), "Other");
+    // The built-in list does not apply once the library has categories, and unknown words fall back.
+    assert_eq!(answer(json!("Fasteners")), "Other");
+    assert_eq!(answer(json!("Threaded")), "Other");
+    assert_eq!(answer(Value::Null), "Other");
+    assert_eq!(answer(json!(7)), "Other");
+    // Without categories the built-in list is used.
+    let old = parse_labels(&sheet("", vec![row("M3 x 8", "M3", "screw", json!([]))])).unwrap();
+    assert_eq!(old[0].category, "Fasteners");
+}
+
+fn library_with(categories: &[&str]) -> (tempfile::TempDir, Library) {
+    let dir = tempfile::tempdir().unwrap();
+    let lib = Library::open(dir.path()).unwrap();
+    for name in categories {
+        lib.create_category(name).unwrap();
+    }
+    (dir, lib)
+}
+
+#[test]
+fn the_reader_offers_the_real_categories_and_other_as_the_fallback() {
+    let (_dir, lib) = library_with(&["Filament", "Bolts"]);
+    lib.save_inventory(None, &InventoryDraft { name: "A".into(), category: "Bolts".into(), ..Default::default() }).unwrap();
+    assert_eq!(answer_categories(&lib).unwrap(), ["Bolts", "Filament", "Other"]);
+    lib.create_category("other").unwrap();
+    assert_eq!(answer_categories(&lib).unwrap(), ["Bolts", "Filament", "other"]);
+    let (_empty_dir, empty) = library_with(&[]);
+    assert_eq!(answer_categories(&empty).unwrap(), fallback_categories());
+}
+
+#[tokio::test]
+async fn the_request_lists_the_library_categories_and_intake_fills_colour_and_category() {
+    let (_dir, lib) = library_with(&["Filament", "Adhesives", "Materials"]);
+    let reply = sheet(
+        "",
+        vec![
+            // The model chose a generic category; the name says filament and purple.
+            json!({"row_text": "Overture PETG Filament Purple 1 kg", "name": "Overture PETG Filament Purple",
+                "category": "Materials", "product_type": "filament"}),
+            // A printed colour stays as printed, and a category that is not generic stays.
+            json!({"row_text": "Glue stick Black", "name": "Glue stick Red", "category": "adhesives",
+                "colour": "Black", "product_type": "other"}),
+            // Nothing in the words: the answer stays.
+            json!({"row_text": "Mystery", "name": "Mystery", "category": "Fasteners", "product_type": "other"}),
+        ],
+    );
+    let server = serve(move |_| chat_reply(&reply, "stop")).await;
+    let provider = Provider::new(&server.base, "label-test", "").unwrap();
+    let drafts = request_labels(&lib, &provider, prepare_image(&png(32, 32)).unwrap())
+        .await
+        .unwrap();
+    let got: Vec<_> = drafts.iter().map(|d| (d.category.as_str(), d.colour.as_str())).collect();
+    assert_eq!(got, [("Filament", "Purple"), ("Adhesives", "Black"), ("Other", "")]);
+    let body = server.seen_at("/chat/completions")[0].json();
+    let prompt = body["messages"][1]["content"][0]["text"].as_str().unwrap();
+    assert!(prompt.ends_with("Categories: Adhesives, Filament, Materials, Other."), "{prompt}");
+    assert!(!prompt.contains("Fasteners"));
+    // The instruction about printed colour is unchanged.
+    assert!(prompt.contains("never judge a colour from the photo"));
 }

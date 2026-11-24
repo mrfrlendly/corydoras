@@ -33,7 +33,7 @@ export const LABEL_CATEGORIES = [
 export function blankForm(): WorkshopForm {
   return {
     name: '', category: '', brand: '', part_number: '', colour: '', dimensions: '',
-    quantity: '', pack_quantity: '', price: '', measure_unit: '', measure_full: '', measure_left: '',
+    quantity: '', pack_quantity: '', price: '', price_source: '', measure_unit: '', measure_full: '', measure_left: '',
     notes: '', specs: [], supplier: null,
   };
 }
@@ -43,6 +43,8 @@ export function editForm(item: InventoryDraft): WorkshopForm {
     name: item.name, category: item.category, brand: item.brand, part_number: item.part_number,
     colour: item.colour ?? '', dimensions: item.dimensions, quantity: item.quantity?.toString() ?? '',
     pack_quantity: item.pack_quantity?.toString() ?? '', price: priceText(item.price_cents),
+    // Older cards and drafts have no price source: the designer entered the price.
+    price_source: item.price_source ?? '',
     // Older cards and drafts have no measure fields.
     measure_unit: item.measure_unit ?? '', measure_full: item.measure_full?.toString() ?? '',
     measure_left: item.measure_left?.toString() ?? '',
@@ -119,6 +121,7 @@ function reviewMeasure(form: WorkshopForm, label: InventoryDraft): Pick<Workshop
 
 export function reviewLabel(form: WorkshopForm, label: InventoryDraft): WorkshopForm {
   const keep = (current: string, suggested: string) => current.trim() ? current : suggested;
+  const keepsPrice = (form.price ?? '').trim() !== '';
   const specs = form.specs.length ? form.specs : label.specs ?? [];
   return {
     ...form,
@@ -131,6 +134,8 @@ export function reviewLabel(form: WorkshopForm, label: InventoryDraft): Workshop
     dimensions: specs.length ? specSummary(specs) : keep(form.dimensions, label.dimensions),
     pack_quantity: keep(form.pack_quantity, label.pack_quantity?.toString() ?? ''),
     price: keep(form.price ?? '', priceText(label.price_cents)),
+    // The mark goes with the price that stays: the form's own, or the label's.
+    price_source: keepsPrice ? form.price_source ?? '' : label.price_cents == null ? '' : label.price_source ?? '',
     ...reviewMeasure(form, label),
     notes: keep(form.notes, label.notes),
   };
@@ -244,14 +249,41 @@ export function priceText(cents: number | null | undefined): string {
   return `${Math.floor(cents / 100)}.${String(cents % 100).padStart(2, '0')}`;
 }
 
+/** The draft to save. An empty category stays empty: the library runs its category intake on a new item and then maps an empty one to Other. */
 export function saveDraft(form: WorkshopForm): InventoryDraft {
   if (!form.name.trim()) throw new Error('Enter an item name.');
   const { price, ...fields } = form;
+  const price_cents = parsePrice(price ?? '');
   return {
-    ...fields, ...measure(form), name: form.name.trim(), category: form.category.trim() || 'Other', colour: form.colour.trim(),
+    ...fields, ...measure(form), name: form.name.trim(), category: form.category.trim(), colour: form.colour.trim(),
     quantity: quantity(form.quantity), pack_quantity: quantity(form.pack_quantity),
-    price_cents: parsePrice(price ?? ''),
+    price_cents,
+    // An estimate needs a price; a form from an older phone card has no source.
+    price_source: price_cents === null ? '' : form.price_source ?? '',
   };
+}
+
+/** Sets the price text. Any change of the price is the designer's own, so it clears the estimate mark. */
+export function withPrice(form: WorkshopForm, text: string): WorkshopForm {
+  const source = form.price_source ?? '';
+  // While the mark is set, form.price is still the estimate's price text; typing "24.9" over "24.90" is no change.
+  const same = (a: string, b: string) => {
+    try { return parsePrice(a) === parsePrice(b); } catch { return a.trim() === b.trim(); }
+  };
+  return { ...form, price: text, price_source: source && same(text, form.price ?? '') ? source : '' };
+}
+
+/** True when the price of an item or form is an estimate from a supplier listing and not one the designer entered. */
+export function isEstimate(value: { price_source?: string | null }): boolean {
+  return !!value.price_source?.trim();
+}
+
+/** "Estimated from canadabolts.ca" for a source such as listing:canadabolts.ca; '' when the price is not an estimate. */
+export function estimateLabel(priceSource: string | null | undefined): string {
+  const source = (priceSource ?? '').trim();
+  if (!source) return '';
+  const host = source.startsWith('listing:') ? source.slice('listing:'.length).trim() : '';
+  return host ? `Estimated from ${host}` : 'Estimated';
 }
 
 /** Categories are one category in any letter case, as in the library. */

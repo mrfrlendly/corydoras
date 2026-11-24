@@ -60,7 +60,7 @@ test('a currency code is three letters and is stored in upper case', () => {
   }
 });
 
-const categories = [{ name: 'Bolts', count: 3, columns: null }, { name: 'Filament', count: 0, columns: ['colour'] }];
+const categories = [{ name: 'Bolts', count: 3, columns: null, keywords: [] }, { name: 'Filament', count: 0, columns: ['colour'], keywords: [] }];
 
 test('category names are found and checked without regard to letter case', () => {
   assert.equal(findCategory(categories, 'bolts')?.name, 'Bolts');

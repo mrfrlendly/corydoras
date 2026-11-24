@@ -29,6 +29,9 @@ pub const COLUMN_IDS: &[&str] = &[
 ];
 
 const MAX_CATEGORY_CHARS: usize = 120;
+/// The most keywords of one category, and the length of each.
+pub const MAX_KEYWORDS: usize = 20;
+pub const MAX_KEYWORD_CHARS: usize = 40;
 const DEFAULT_CURRENCY: &str = "CAD";
 const CURRENCY_KEY: &str = "workshop_currency";
 const ALL_COLUMNS_KEY: &str = "workshop_all_columns";
@@ -39,6 +42,9 @@ pub struct CategoryInfo {
     pub name: String,
     pub count: i64,
     pub columns: Option<Vec<String>>,
+    /// Extra words that put an item into this category (see `inventory_intake`).
+    #[serde(default)]
+    pub keywords: Vec<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
@@ -88,6 +94,34 @@ fn read_columns(json: Option<String>) -> Option<Vec<String>> {
     json.and_then(|text| serde_json::from_str(&text).ok())
 }
 
+/// A keyword list that cannot be read counts as none, so a damaged value never blocks the list.
+fn read_keywords(json: Option<String>) -> Vec<String> {
+    json.and_then(|text| serde_json::from_str(&text).ok())
+        .unwrap_or_default()
+}
+
+fn checked_keywords(keywords: Vec<String>) -> Result<Vec<String>> {
+    ensure!(
+        keywords.len() <= MAX_KEYWORDS,
+        "Use at most {MAX_KEYWORDS} keywords for a category."
+    );
+    let mut checked: Vec<String> = Vec::with_capacity(keywords.len());
+    for keyword in keywords {
+        let keyword = keyword.trim().to_owned();
+        ensure!(
+            (1..=MAX_KEYWORD_CHARS).contains(&keyword.chars().count())
+                && !keyword.chars().any(char::is_control),
+            "Enter each keyword on one line with 1 to {MAX_KEYWORD_CHARS} characters."
+        );
+        ensure!(
+            !checked.iter().any(|k| k.to_lowercase() == keyword.to_lowercase()),
+            "Each keyword can be used once. {keyword} appears twice."
+        );
+        checked.push(keyword);
+    }
+    Ok(checked)
+}
+
 /// SQLite's NOCASE folds ASCII letters only, so the identity of a category does the same.
 fn fold(name: &str) -> String {
     name.to_ascii_lowercase()
@@ -131,57 +165,69 @@ fn setting(conn: &Connection, key: &str) -> Result<Option<String>> {
         .optional()?)
 }
 
+/// The categories that items use, with their counts, and the categories that were created
+/// without items. Sorted by name, ignoring case.
+pub(crate) fn categories_in(conn: &Connection) -> Result<Vec<CategoryInfo>> {
+    let mut by_name: HashMap<String, CategoryInfo> = HashMap::new();
+    // The most common spelling on items names a category that has no row.
+    let mut spelling_count: HashMap<String, i64> = HashMap::new();
+    let mut stmt = conn.prepare(
+        "SELECT category, count(*) FROM workshop_inventory GROUP BY category ORDER BY category",
+    )?;
+    let used = stmt
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    for (name, count) in used {
+        let entry = by_name.entry(fold(&name)).or_insert_with(|| CategoryInfo {
+            name: name.clone(),
+            count: 0,
+            columns: None,
+            keywords: Vec::new(),
+        });
+        let best = spelling_count.entry(fold(&name)).or_insert(0);
+        if count > *best {
+            *best = count;
+            entry.name = name;
+        }
+        entry.count += count;
+    }
+    let mut stmt = conn.prepare("SELECT name, columns, keywords FROM workshop_categories")?;
+    let rows = stmt
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, Option<String>>(1)?,
+                row.get::<_, Option<String>>(2)?,
+            ))
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    for (name, columns, keywords) in rows {
+        let entry = by_name.entry(fold(&name)).or_insert_with(|| CategoryInfo {
+            name: name.clone(),
+            count: 0,
+            columns: None,
+            keywords: Vec::new(),
+        });
+        entry.name = name;
+        entry.columns = read_columns(columns);
+        entry.keywords = read_keywords(keywords);
+    }
+    let mut categories: Vec<CategoryInfo> = by_name.into_values().collect();
+    categories.sort_by(|a, b| {
+        fold(&a.name)
+            .cmp(&fold(&b.name))
+            .then_with(|| a.name.cmp(&b.name))
+    });
+    Ok(categories)
+}
+
 impl Library {
     /// The categories that items use, with their counts, and the categories that were created
     /// without items. Sorted by name, ignoring case.
     pub fn list_categories(&self) -> Result<Vec<CategoryInfo>> {
-        let conn = self.c();
-        let mut by_name: HashMap<String, CategoryInfo> = HashMap::new();
-        // The most common spelling on items names a category that has no row.
-        let mut spelling_count: HashMap<String, i64> = HashMap::new();
-        let mut stmt = conn.prepare(
-            "SELECT category, count(*) FROM workshop_inventory GROUP BY category ORDER BY category",
-        )?;
-        let used = stmt
-            .query_map([], |row| {
-                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
-            })?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
-        for (name, count) in used {
-            let entry = by_name.entry(fold(&name)).or_insert_with(|| CategoryInfo {
-                name: name.clone(),
-                count: 0,
-                columns: None,
-            });
-            let best = spelling_count.entry(fold(&name)).or_insert(0);
-            if count > *best {
-                *best = count;
-                entry.name = name;
-            }
-            entry.count += count;
-        }
-        let mut stmt = conn.prepare("SELECT name, columns FROM workshop_categories")?;
-        let rows = stmt
-            .query_map([], |row| {
-                Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?))
-            })?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
-        for (name, columns) in rows {
-            let entry = by_name.entry(fold(&name)).or_insert_with(|| CategoryInfo {
-                name: name.clone(),
-                count: 0,
-                columns: None,
-            });
-            entry.name = name;
-            entry.columns = read_columns(columns);
-        }
-        let mut categories: Vec<CategoryInfo> = by_name.into_values().collect();
-        categories.sort_by(|a, b| {
-            fold(&a.name)
-                .cmp(&fold(&b.name))
-                .then_with(|| a.name.cmp(&b.name))
-        });
-        Ok(categories)
+        categories_in(&self.c())
     }
 
     pub fn create_category(&self, name: &str) -> Result<()> {
@@ -201,7 +247,7 @@ impl Library {
     }
 
     /// Gives every item of `from` the name `to` and returns how many items changed. When `to`
-    /// already exists the categories merge, and the columns of `to` stay. Renaming to the same
+    /// already exists the categories merge, and the columns and keywords of `to` stay (it takes the keywords of `from` only when it has none). Renaming to the same
     /// name in other letters only changes the letters.
     pub fn rename_category(&self, from: &str, to: &str) -> Result<i64> {
         let from = from.trim();
@@ -213,11 +259,11 @@ impl Library {
             // A merge keeps the spelling of the category that already exists.
             to = stored_spelling(&tx, &to)?.unwrap_or(to);
         }
-        let source: Option<Option<String>> = tx
+        let source: Option<(Option<String>, Option<String>)> = tx
             .query_row(
-                "SELECT columns FROM workshop_categories WHERE name = ?1",
+                "SELECT columns, keywords FROM workshop_categories WHERE name = ?1",
                 [from],
-                |row| row.get(0),
+                |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .optional()?;
         ensure!(
@@ -241,13 +287,16 @@ impl Library {
                  WHERE category = ?1 COLLATE NOCASE AND category <> ?1",
                 [&to],
             )?;
-            if let Some(columns) = source {
-                // The row of an existing target stays as it is. Otherwise the target takes the
-                // columns of the source. The source row goes either way.
+            if let Some((columns, keywords)) = source {
+                // The row of an existing target keeps its columns. Otherwise the target takes the
+                // columns of the source. The keywords of the target win too, unless it has none:
+                // then it takes the keywords of the source. The source row goes either way.
                 tx.execute(
-                    "INSERT INTO workshop_categories (name, columns) VALUES (?1, ?2)
-                     ON CONFLICT(name) DO NOTHING",
-                    params![to, columns],
+                    "INSERT INTO workshop_categories (name, columns, keywords) VALUES (?1, ?2, ?3)
+                     ON CONFLICT(name) DO UPDATE SET keywords = CASE
+                         WHEN workshop_categories.keywords IS NULL OR workshop_categories.keywords = '[]'
+                         THEN excluded.keywords ELSE workshop_categories.keywords END",
+                    params![to, columns, keywords],
                 )?;
                 tx.execute("DELETE FROM workshop_categories WHERE name = ?1", [from])?;
             }
@@ -283,6 +332,27 @@ impl Library {
             "INSERT INTO workshop_categories (name, columns) VALUES (?1, ?2)
              ON CONFLICT(name) DO UPDATE SET columns = excluded.columns",
             params![name, columns],
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Sets the extra words of a category. An empty list means none. The category row is made when absent.
+    pub fn set_category_keywords(&self, name: &str, keywords: Vec<String>) -> Result<()> {
+        let name = category_name(name)?;
+        let keywords = checked_keywords(keywords)?;
+        let json = if keywords.is_empty() {
+            None
+        } else {
+            Some(serde_json::to_string(&keywords)?)
+        };
+        let mut conn = self.c();
+        let tx = conn.transaction()?;
+        let name = stored_spelling(&tx, &name)?.unwrap_or(name);
+        tx.execute(
+            "INSERT INTO workshop_categories (name, columns, keywords) VALUES (?1, NULL, ?2)
+             ON CONFLICT(name) DO UPDATE SET keywords = excluded.keywords",
+            params![name, json],
         )?;
         tx.commit()?;
         Ok(())

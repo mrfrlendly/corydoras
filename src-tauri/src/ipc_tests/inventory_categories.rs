@@ -49,6 +49,10 @@ fn categories_columns_price_and_quantity_round_trip() {
         ("set_inventory_currency", json!({"code":"USD"})),
         ("set_inventory_quantity", json!({"id":"x","quantity":1})),
         ("set_inventory_open_amount", json!({"id":"x","left":100})),
+        ("suggest_inventory_fields", json!({"input":{"name":"PETG","brand":"","description":"","category":"","colour":""}})),
+        ("review_inventory_suggestions", json!({})),
+        ("apply_inventory_suggestions", json!({"changes":[]})),
+        ("set_inventory_category_keywords", json!({"name":"Bolts","keywords":["x"]})),
     ];
     for (cmd, args) in &refusals {
         let error = call(&w, cmd, args.clone()).unwrap_err();
@@ -71,7 +75,7 @@ fn categories_columns_price_and_quantity_round_trip() {
     // Create, set columns (the row is made when absent), refuse a duplicate and an unknown column.
     ok(&w, "create_inventory_category", json!({"name":"Bolts"}));
     assert!(call(&w, "create_inventory_category", json!({"name":"bolts"})).is_err());
-    assert_eq!(category(&w, "Bolts").unwrap(), json!({"name":"Bolts","count":0,"columns":null}));
+    assert_eq!(category(&w, "Bolts").unwrap(), json!({"name":"Bolts","count":0,"columns":null,"keywords":[]}));
     ok(&w, "set_inventory_category_columns", json!({"name":"Bolts","columns":["dimensions","price"]}));
     assert!(call(&w, "set_inventory_category_columns", json!({"name":"Bolts","columns":["dimensions","dimensions"]})).is_err());
     assert!(call(&w, "set_inventory_category_columns", json!({"name":"Bolts","columns":["weight"]})).is_err());
@@ -81,7 +85,7 @@ fn categories_columns_price_and_quantity_round_trip() {
     // Rename that merges: both items move, the target keeps its spelling and columns, nothing is lost.
     assert_eq!(ok(&w, "rename_inventory_category", json!({"from":"Bolt","to":"bolts"})), 2);
     assert!(category(&w, "Bolt").is_none());
-    assert_eq!(category(&w, "Bolts").unwrap(), json!({"name":"Bolts","count":2,"columns":["dimensions","price"]}));
+    assert_eq!(category(&w, "Bolts").unwrap(), json!({"name":"Bolts","count":2,"columns":["dimensions","price"],"keywords":[]}));
     let listed = send(&w, "list_inventory", InvokeBody::Json(json!({})), Default::default()).unwrap();
     let moved: Vec<_> = listed.as_array().unwrap().iter().map(|i| (i["category"].clone(), i["price_cents"].clone())).collect();
     assert_eq!(moved.len(), 2);
@@ -196,5 +200,75 @@ fn the_open_pack_round_trips_and_the_quick_edit_checks_the_item() {
     // The module switch closes the command too.
     send(&w, "set_inventory_enabled", InvokeBody::Json(json!({"enabled":false})), Default::default()).unwrap();
     assert!(call(&w, "set_inventory_open_amount", json!({"id":id,"left":1})).unwrap_err().contains("off"));
+    std::fs::remove_dir_all(dir).ok();
+}
+
+#[test]
+fn intake_suggestions_round_trip_through_review_and_apply() {
+    let dir = scratch();
+    let lib = Arc::new(Library::open(&dir.join("library")).unwrap());
+    let app = app_with(lib.clone());
+    let w = tauri::WebviewWindowBuilder::new(&app, "main", Default::default()).build().unwrap();
+    send(&w, "set_inventory_enabled", InvokeBody::Json(json!({"enabled":true})), Default::default()).unwrap();
+    for name in ["Filament", "Adhesives"] {
+        ok(&w, "create_inventory_category", json!({"name":name}));
+    }
+    let spool = save(&w, draft("Overture PETG Filament Purple", "Materials", Value::Null));
+    let glue = save(&w, draft("Gorilla Glue Sticks", "Other", Value::Null));
+    let id = |item: &Value| item["id"].as_str().unwrap().to_owned();
+
+    // The editor asks for suggestions with the names the TypeScript wrapper sends.
+    let input = |name: &str, category: &str, colour: &str| {
+        json!({"input":{"name":name,"brand":"","description":"","category":category,"colour":colour}})
+    };
+    let found = ok(&w, "suggest_inventory_fields", input("Overture PETG Filament Purple", "", ""));
+    assert_eq!(
+        found,
+        json!({"category":{"name":"Filament","reason":"name says \"filament\""},"colour":"Purple"})
+    );
+    let kept = ok(&w, "suggest_inventory_fields", input("Overture PETG Filament Purple", "Filament", "Teal"));
+    assert_eq!(kept, json!({"category":null,"colour":null}));
+
+    // Designer keywords: validated, listed with the category, and used by the rules.
+    ok(&w, "set_inventory_category_keywords", json!({"name":"Adhesives","keywords":["gorilla","  Stick "]}));
+    assert_eq!(category(&w, "Adhesives").unwrap()["keywords"], json!(["gorilla", "Stick"]));
+    assert!(call(&w, "set_inventory_category_keywords", json!({"name":"Adhesives","keywords":["a","A"]})).is_err());
+    assert!(call(&w, "set_inventory_category_keywords", json!({"name":"Adhesives","keywords":[""]})).is_err());
+
+    // Review changes nothing and names its reasons; apply changes only what was ticked.
+    let review = ok(&w, "review_inventory_suggestions", json!({}));
+    let review = review.as_array().unwrap();
+    assert_eq!(review.len(), 2);
+    let row = |item: &Value| review.iter().find(|r| r["id"] == item["id"]).unwrap().clone();
+    assert_eq!(
+        row(&spool),
+        json!({"id":id(&spool),"name":"Overture PETG Filament Purple","category_from":"Materials","category_to":"Filament",
+            "category_reason":"name says \"filament\"","colour_to":"Purple","colour_reason":"name says \"Purple\""})
+    );
+    assert_eq!(row(&glue)["category_to"], "Adhesives");
+    assert!(row(&glue)["colour_to"].is_null());
+    let listed = send(&w, "list_inventory", InvokeBody::Json(json!({})), Default::default()).unwrap();
+    assert!(listed.as_array().unwrap().iter().any(|i| i["category"] == "Materials"));
+
+    let changed = ok(&w, "apply_inventory_suggestions", json!({"changes":[
+        {"id":id(&spool),"category":"Filament","colour":"Purple"},
+        {"id":"missing","category":"Filament"}
+    ]}));
+    assert_eq!(changed, 1);
+    let listed = send(&w, "list_inventory", InvokeBody::Json(json!({})), Default::default()).unwrap();
+    let after = |item: &Value| listed.as_array().unwrap().iter().find(|i| i["id"] == item["id"]).unwrap().clone();
+    assert_eq!((after(&spool)["category"].clone(), after(&spool)["colour"].clone()), (json!("Filament"), json!("Purple")));
+    assert_eq!(after(&glue)["category"], "Other");
+    // The same ticks again change nothing: the review is stale.
+    assert_eq!(ok(&w, "apply_inventory_suggestions", json!({"changes":[{"id":id(&spool),"category":"Filament","colour":"Purple"}]})), 0);
+    assert_eq!(ok(&w, "apply_inventory_suggestions", json!({"changes":[{"id":id(&glue),"category":"Adhesives"}]})), 1);
+    assert!(ok(&w, "review_inventory_suggestions", json!({})).as_array().unwrap().is_empty());
+
+    // The price source travels with the draft.
+    let estimate = send(&w, "save_inventory", InvokeBody::Json(json!({"id":null,"draft":{"name":"Est","category":"Other",
+        "price_cents":1500,"price_source":"listing:www.canadabolts.ca"}})), Default::default()).unwrap();
+    assert_eq!(estimate["price_source"], "listing:www.canadabolts.ca");
+    let refused = send(&w, "save_inventory", InvokeBody::Json(json!({"id":null,"draft":{"name":"Est","price_source":"made up"}})), Default::default());
+    assert!(refused.is_err());
     std::fs::remove_dir_all(dir).ok();
 }

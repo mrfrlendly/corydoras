@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { addPack, LABEL_CATEGORIES, removeSpecRow, sourceLabel, specSummary, type WorkshopForm } from '../components/workshopForm';
+import { addPack, LABEL_CATEGORIES, removeSpecRow, sourceLabel, specSummary, withPrice, type WorkshopForm } from '../components/workshopForm';
 import { errText } from './errText';
 
 export interface Card { id: number; form: WorkshopForm }
@@ -49,7 +49,7 @@ export default function PhoneReview({ cards, categories, disabled, onChange, onD
             </label>)}
           <label className="field"><span>Price per pack</span>
             <input {...asPrinted} type="text" inputMode="decimal" maxLength={16} placeholder="Unknown" enterKeyHint="done"
-              disabled={disabled} value={form.price} onChange={e => set({ price: e.target.value })} />
+              disabled={disabled} value={form.price} onChange={e => onChange(card.id, withPrice(form, e.target.value))} />
           </label>
         </div>
         <button type="button" className="btn" disabled={disabled || !form.pack_quantity.trim()} onClick={() => {

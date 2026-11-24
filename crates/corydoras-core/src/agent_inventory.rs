@@ -14,7 +14,7 @@ pub const MAX_QUERY_CHARS: usize = 256;
 pub const MAX_LIMIT: usize = 50;
 pub const MAX_EXACT_INTEGER: i64 = (1 << 53) - 1;
 
-// Earlier inventory schemas lack the colour, photo, specs, price and measured-pack columns. A
+// Earlier inventory schemas lack the colour, photo, specs, price, price source and measured-pack columns. A
 // design check must still read those libraries without a migration or a write transaction.
 fn select_items(conn: &Connection) -> Result<String> {
     let have = conn
@@ -31,7 +31,7 @@ fn select_items(conn: &Connection) -> Result<String> {
     Ok(format!(
         "SELECT id, name, category, brand, part_number, dimensions, quantity, pack_quantity,
                 notes, supplier_url, supplier_title, supplier_details, {}, {}, {},
-                {}, {}, {}, {}
+                {}, {}, {}, {}, {}
                 FROM workshop_inventory",
         column("colour", "''"),
         column("photo_key", "NULL"),
@@ -40,6 +40,7 @@ fn select_items(conn: &Connection) -> Result<String> {
         column("measure_unit", "''"),
         column("measure_full", "NULL"),
         column("measure_left", "NULL"),
+        column("price_source", "''"),
     ))
 }
 
@@ -95,6 +96,7 @@ fn summary(record: &InventoryItem, currency: &str) -> Value {
         "quantity": draft.quantity, "quantity_unit": "item",
         "pack_quantity": draft.pack_quantity,
         "price_cents": draft.price_cents, "currency": currency,
+        "price_is_estimate": !draft.price_source.is_empty(),
         "unit_price": unit_price(draft.price_cents, price_divisor(draft)),
         "measure_unit": draft.measure_unit, "measure_full": draft.measure_full,
         "measure_left": draft.measure_left, "total_amount": draft.total_amount(),

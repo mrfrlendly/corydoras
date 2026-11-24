@@ -136,6 +136,16 @@ A pack that you use up, such as a filament spool, is one **On hand** plus a **Me
 
 Agents see price, currency, and unit price through the MCP tools. Price never confirms stock.
 
+### Listing intake
+
+New items get a category and a colour from what you enter, so you type less and fix less.
+
+- **Category.** The label reader and new items take a category from the name, using your own categories and the **Words** you set for each one in Manage categories. Only a missing or generic category (Other, Materials, Hardware, Consumables) is replaced. A category you chose is never changed. The editor shows what it set, with **Undo**.
+- **Colour.** An empty colour is taken from the name and shown with a colour badge. You can edit or undo it.
+- **Review suggestions.** On the list, this screen shows proposed category and colour changes for items you already have. Nothing changes until you tick the changes and apply them.
+- **Estimated price.** A supplier listing in your currency can fill an empty price. It is marked **est.** and fills only on a clear match. A price in another currency, for example GBP, is shown on the listing but not used. Change an estimate if you paid less.
+- **Supplier search** can be rate limited. It then says so, and you can try again a minute later.
+
 On the list, **-** and **+** change the count on hand by one. **Duplicate item** makes a copy of an item. Press **/** to search and **n** to add an item.
 
 ### Add items from your phone

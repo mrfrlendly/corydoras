@@ -94,7 +94,7 @@ pub(super) fn reviewed_record(w: &WebviewWindow<MockRuntime>, library: &Library)
     assert_eq!(
         draft,
         json!({"name":"Hex key","category":"Tools","brand":"Fixture Tools","part_number":"F-08",
-        "colour":"Blue","dimensions":"length 8 mm","quantity":null,"pack_quantity":2,"price_cents":null,"measure_unit":"","measure_full":null,"measure_left":null,"notes":"",
+        "colour":"Blue","dimensions":"length 8 mm","quantity":null,"pack_quantity":2,"price_cents":null,"price_source":"","measure_unit":"","measure_full":null,"measure_left":null,"notes":"",
         "specs":[{"role":"length","name":"","value":"8","unit":"mm","tolerance":"","source":"label","evidence":"8 mm"}],
         "supplier":null})
     );

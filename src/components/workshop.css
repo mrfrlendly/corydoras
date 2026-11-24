@@ -15,7 +15,7 @@
 .workshop-table { overflow-x: auto; border: 1px solid var(--rule); border-radius: var(--radius); background: var(--panel); }
 .workshop-table table { border-collapse: collapse; width: 100%; min-width: 540px; table-layout: fixed; }
 .workshop-clip { display: block; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-.workshop-table th, .workshop-table td { text-align: left; vertical-align: middle; padding: 8px 12px; overflow-wrap: anywhere; }
+.workshop-table th, .workshop-table td { text-align: left; vertical-align: middle; padding: 8px 12px; overflow-wrap: normal; hyphens: none; word-break: normal; }
 .workshop-table thead th { padding-block: 3px; font-size: 12px; font-weight: 600; color: var(--ink-2); background: var(--panel-2); }
 .workshop-table th[aria-sort] { color: var(--ink); }
 .workshop-table .workshop-numeric, .workshop-table .workshop-stock { text-align: right; }
@@ -27,10 +27,11 @@
 .workshop-table tbody tr { border-top: 1px solid var(--rule); }
 .workshop-table tbody tr:focus-within, .workshop-table tbody tr:hover { background: var(--hover); }
 .workshop-item-name { display: inline-flex; align-items: center; gap: 12px; width: 100%; color: inherit; text-align: left; padding: 0; border: 0; background: none; font: inherit; font-weight: 600; }
-.workshop-item-caption { display: block; min-width: 0; line-height: 1.4; overflow-wrap: anywhere; }
+.workshop-item-caption { display: block; min-width: 0; line-height: 1.4; overflow-wrap: anywhere; hyphens: none; }
 .workshop-item-sub { display: block; margin-top: 2px; font-weight: 400; }
 .workshop-stock { font-variant-numeric: tabular-nums; }
 .workshop-unknown { color: var(--ink-3); font-size: 12px; }
+.workshop-estimate { color: var(--ink-3); font-size: 11px; margin-left: 4px; }
 .workshop-thumb { flex: none; width: 54px; height: 48px; display: grid; place-items: center; overflow: hidden; background: var(--panel-2); border: 1px solid var(--rule); border-radius: var(--radius-sm); color: var(--ink-3); }
 .workshop-thumb img { display: block; width: 100%; height: 100%; object-fit: cover; }
 .workshop-colour { display: inline-flex; align-items: center; gap: 6px; }
@@ -192,3 +193,32 @@
 @media (max-width: 780px) {
   .workshop-measure-row { grid-template-columns: minmax(0, 1fr); }
 }
+
+/* Listing intake: fill-ins in the editor, listing prices, Review suggestions, category words */
+.workshop-field-cell { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.workshop-field-cell > .field { margin: 0; }
+.workshop-autofill { margin: 0; overflow-wrap: anywhere; }
+.workshop-input-badge { position: relative; display: block; }
+.workshop-input-badge > input { padding-right: 34px; }
+.workshop-input-badge > .workshop-swatch { position: absolute; right: 11px; top: 50%; transform: translateY(-50%); pointer-events: none; }
+.workshop-listing-price { margin: 0; font-variant-numeric: tabular-nums; }
+.workshop-listing-amount { font-weight: 600; }
+.workshop-listing-price.muted .workshop-listing-amount { font-weight: 400; }
+.workshop-cat-words { min-width: 0; overflow-wrap: anywhere; }
+.workshop-suggestions .workshop-heading { margin-bottom: 4px; }
+.workshop-suggestions > p.small { margin: 0 0 12px; }
+.workshop-suggest-empty { display: grid; justify-items: start; gap: 10px; }
+.workshop-suggest-empty p { margin: 0; }
+.workshop-suggest-table table { table-layout: auto; min-width: 560px; }
+.workshop-suggest-table th[scope=col] { vertical-align: bottom; }
+.workshop-suggest-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 2px 12px; }
+.workshop-suggest-all { display: inline-flex; align-items: center; gap: 6px; font-weight: 400; color: var(--ink-2); }
+.workshop-suggest-item { font-weight: 600; }
+.workshop-suggest-cell { display: flex; align-items: flex-start; gap: 8px; }
+.workshop-suggest-cell > input { flex: none; margin-top: 3px; }
+.workshop-suggest-cell > span { display: grid; gap: 2px; min-width: 0; }
+.workshop-suggest-reason { overflow-wrap: anywhere; }
+.workshop-suggest-actions { margin-top: 14px; }
+.workshop-cat-error { flex-basis: 100%; margin: 0; order: 3; }
+.workshop-table thead th { white-space: nowrap; }
+.workshop-table { position: relative; }

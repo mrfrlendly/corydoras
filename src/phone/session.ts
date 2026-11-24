@@ -50,7 +50,8 @@ export async function loadSession(): Promise<PhoneSession | null> {
     const failure = await run<string | null | undefined>('readonly', store => store.get('failure'));
     return {
       photo: new Blob([photo.bytes], { type: photo.type }),
-      cards: cards ?? null,
+      // Cards stored by an older phone page have no price source: the designer entered the price.
+      cards: cards?.map(card => ({ ...card, price_source: card.price_source ?? '' })) ?? null,
       batch: photo.batch ?? newBatchId(),
       failure: failure ?? null,
     };

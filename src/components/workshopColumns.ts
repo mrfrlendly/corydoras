@@ -101,6 +101,11 @@ export function stockValueCents(item: InventoryItem): number | null {
   return Math.round(pack !== null && pack >= 1 ? (quantity * price) / pack : quantity * price);
 }
 
+/** True when the item has a price that is an estimate from a supplier listing. The designer's own edit clears the mark. */
+export function isEstimatedPrice(item: Pick<InventoryItem, 'price_cents' | 'price_source'>): boolean {
+  return item.price_cents != null && !!item.price_source?.trim();
+}
+
 const def = (id: ColumnKey, label: string, numeric: boolean, sortValue: ColumnDef['sortValue'],
   sortGroup?: ColumnDef['sortGroup']): ColumnDef => ({ id, label, numeric, sortable: true, sortValue, sortGroup });
 
@@ -192,18 +197,22 @@ export interface ViewTotals {
   unpriced: number;
   /** Stock value of the items that have both a price and a count. Items missing either add nothing. */
   stockValueCents: number;
+  /** Items whose price is an estimate from a supplier listing. */
+  estimatedPrices: number;
 }
 
 export function viewTotals(items: readonly InventoryItem[]): ViewTotals {
   let withoutCount = 0;
   let unpriced = 0;
   let value = 0;
+  let estimatedPrices = 0;
   for (const item of items) {
+    if (isEstimatedPrice(item)) estimatedPrices += 1;
     if (item.quantity == null) withoutCount += 1;
     if (item.price_cents == null) unpriced += 1;
     value += stockValueCents(item) ?? 0;
   }
-  return { count: items.length, withoutCount, unpriced, stockValueCents: value };
+  return { count: items.length, withoutCount, unpriced, stockValueCents: value, estimatedPrices };
 }
 
 /** The item caption still shows the brand and part number that are not their own columns. */

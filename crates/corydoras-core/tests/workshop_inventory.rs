@@ -24,6 +24,7 @@ fn example() -> InventoryDraft {
             title: "A2-816 socket head screws".into(),
             url: "https://supplier.example.com/parts/a2-816".into(),
             details: "Stainless steel".into(),
+            ..Default::default()
         }),
         ..Default::default()
     }

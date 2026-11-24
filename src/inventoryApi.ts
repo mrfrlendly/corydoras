@@ -9,6 +9,10 @@ export interface SupplierListing {
   title: string;
   url: string;
   details: string;
+  /** The listing's price in whole cents of `currency`, when the supplier gives one. */
+  price_cents?: number | null;
+  /** Three-letter code of the supplier's currency, '' when unknown. */
+  currency?: string;
 }
 
 /** Where a spec came from: printed with its role, printed digits whose role is a notation, a table value, or typed. */
@@ -35,6 +39,8 @@ export interface InventoryDraft {
   pack_quantity: number | null;
   /** Retail price of one pack as bought, in whole cents of the library currency. */
   price_cents: number | null;
+  /** '' when the designer entered the price; 'listing:<host>' when it is an estimate from a supplier listing. */
+  price_source: string;
   /** Unit of a measured pack: '' (counted pieces), 'g', 'mL' or 'm'. */
   measure_unit: MeasureUnit;
   /** Amount in one full pack, in measure_unit, for example 1000 for a 1 kg spool. */
@@ -62,7 +68,32 @@ export interface CategoryInfo {
   name: string;
   count: number;
   columns: ColumnConfig;
+  /** Extra words that put an item in this category, set by the designer. */
+  keywords: string[];
 }
+
+/** What intake knows about an item that is being added. */
+export interface FieldInput {
+  name: string;
+  brand: string;
+  description: string;
+  category: string;
+  colour: string;
+}
+export interface CategorySuggestion { name: string; reason: string }
+export interface FieldSuggestions { category: CategorySuggestion | null; colour: string | null }
+/** One proposed change to an existing item, for the Review suggestions screen. */
+export interface ItemSuggestion {
+  id: string;
+  name: string;
+  category_from: string;
+  category_to: string | null;
+  category_reason: string;
+  colour_to: string | null;
+  colour_reason: string;
+}
+/** What the designer ticked. A field left out is not changed. */
+export interface SuggestionChange { id: string; category?: string; colour?: string }
 
 export interface ViewSettings {
   /** Three uppercase letters, for example CAD. */
@@ -137,6 +168,12 @@ export const inventoryApi = {
   viewSettings: () => invoke<ViewSettings>('get_inventory_view_settings'),
   setAllColumns: (columns: ColumnConfig) => invoke<void>('set_inventory_all_columns', { columns }),
   setCurrency: (code: string) => invoke<void>('set_inventory_currency', { code }),
+  suggestFields: (input: FieldInput) => invoke<FieldSuggestions>('suggest_inventory_fields', { input }),
+  reviewSuggestions: () => invoke<ItemSuggestion[]>('review_inventory_suggestions'),
+  /** Returns the number of items changed. */
+  applySuggestions: (changes: SuggestionChange[]) => invoke<number>('apply_inventory_suggestions', { changes }),
+  setCategoryKeywords: (name: string, keywords: string[]) =>
+    invoke<void>('set_inventory_category_keywords', { name, keywords }),
   /** Records what is left in the opened pack. null clears it. */
   setOpenAmount: (id: string, left: number | null) => invoke<InventoryItem>('set_inventory_open_amount', { id, left }),
   setQuantity: (id: string, quantity: number) => invoke<InventoryItem>('set_inventory_quantity', { id, quantity }),
